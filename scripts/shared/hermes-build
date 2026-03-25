@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source "$ROOT/lib/shell/common.sh"
+
+if [[ $# -ne 0 ]]; then
+  usage_error "$(basename "$0") takes no arguments"
+fi
+
+require_podman
+
+if image_exists; then
+  echo "==> Hermes image already exists: $HERMES_IMAGE_NAME"
+  echo "==> Skipping rebuild"
+  exit 0
+fi
+
+HERMES_REF="$(resolve_hermes_ref)"
+export HERMES_REF
+
+echo "==> Building Hermes image"
+echo "==> Upstream repo: $HERMES_REPO_URL"
+echo "==> Upstream ref:  $HERMES_REF"
+podman build \
+  --pull=always \
+  --label "hermes.repo_url=$HERMES_REPO_URL" \
+  --label "hermes.ref=$HERMES_REF" \
+  --build-arg "HERMES_REPO_URL=$HERMES_REPO_URL" \
+  --build-arg "HERMES_REF=$HERMES_REF" \
+  -t "$HERMES_IMAGE_NAME" \
+  -f "$ROOT/config/containers/Dockerfile" \
+  "$ROOT"
+echo "==> Hermes image build complete"

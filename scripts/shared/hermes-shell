@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source "$ROOT/lib/shell/common.sh"
+
+if [[ $# -ne 1 ]]; then
+  usage_error "$(basename "$0") requires exactly 1 argument: <workspace-name>"
+fi
+
+require_podman
+resolve_workspace "$1"
+container_exists || fail "container not found: $HERMES_CONTAINER_NAME (run $SCRIPT_DIR/hermes-start first)"
+container_running || fail "container not running: $HERMES_CONTAINER_NAME (run $SCRIPT_DIR/hermes-start first)"
+exec podman exec -it -w /workspace "$HERMES_CONTAINER_NAME" /bin/bash

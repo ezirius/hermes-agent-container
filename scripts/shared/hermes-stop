@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source "$ROOT/lib/shell/common.sh"
+
+if [[ $# -ne 1 ]]; then
+  usage_error "$(basename "$0") requires exactly 1 argument: <workspace-name>"
+fi
+
+require_podman
+resolve_workspace "$1"
+
+if container_exists; then
+  if container_running; then
+    echo "==> Stopping Hermes container: $HERMES_CONTAINER_NAME"
+    podman stop "$HERMES_CONTAINER_NAME" >/dev/null
+  else
+    echo "==> Hermes container already stopped: $HERMES_CONTAINER_NAME"
+  fi
+else
+  echo "==> No container found: $HERMES_CONTAINER_NAME"
+fi
