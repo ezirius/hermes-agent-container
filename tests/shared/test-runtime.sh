@@ -141,4 +141,33 @@ assert_contains "$STATE_DIR/podman.log" 'run -d --name hermes-agent-ezirius' 'bo
 assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/workspace:/workspace" 'bootstrap mounts persistent workspace directory'
 assert_contains "$STATE_DIR/podman.log" 'exec -i -w /workspace hermes-agent-ezirius hermes --help' 'bootstrap opens Hermes inside container'
 
+reset_state
+write_file "$STATE_DIR/container_exists" '1'
+"$ROOT/scripts/shared/hermes-status" ezirius > "$STATE_DIR/status.out"
+assert_contains "$STATE_DIR/podman.log" 'ps -a --filter name=hermes-agent-ezirius' 'status inspects container state'
+
+reset_state
+write_file "$STATE_DIR/container_exists" '1'
+"$ROOT/scripts/shared/hermes-logs" ezirius > "$STATE_DIR/logs.out"
+assert_contains "$STATE_DIR/podman.log" 'logs hermes-agent-ezirius' 'logs streams container logs'
+
+reset_state
+write_file "$STATE_DIR/container_exists" '1'
+write_file "$STATE_DIR/container_running" 'true'
+"$ROOT/scripts/shared/hermes-shell" ezirius > "$STATE_DIR/shell.out"
+assert_contains "$STATE_DIR/podman.log" 'exec -it -w /workspace hermes-agent-ezirius /bin/bash' 'shell opens bash inside container'
+
+reset_state
+write_file "$STATE_DIR/container_exists" '1'
+write_file "$STATE_DIR/container_running" 'true'
+"$ROOT/scripts/shared/hermes-stop" ezirius > "$STATE_DIR/stop.out"
+assert_contains "$STATE_DIR/stop.out" 'Stopping Hermes container:' 'stop reports running container stop'
+assert_contains "$STATE_DIR/podman.log" 'stop hermes-agent-ezirius' 'stop calls podman stop'
+
+reset_state
+write_file "$STATE_DIR/container_exists" '1'
+"$ROOT/scripts/shared/hermes-remove" ezirius > "$STATE_DIR/remove.out"
+assert_contains "$STATE_DIR/remove.out" 'Removing Hermes container:' 'remove reports container removal'
+assert_contains "$STATE_DIR/podman.log" 'rm -f hermes-agent-ezirius' 'remove calls podman rm'
+
 echo "Runtime behaviour checks passed"

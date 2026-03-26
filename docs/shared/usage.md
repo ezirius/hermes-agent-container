@@ -32,6 +32,7 @@ Workspace names resolve under `HERMES_BASE_ROOT`.
   - default: `latest-release`
   - `latest-release` resolves the latest upstream Hermes release tag and fails clearly if no upstream release entry is available
   - `hermes-upgrade` is the command that re-checks this and rebuilds when a newer upstream release appears
+  - if you set an explicit tag or branch here, upgrade compares that literal ref only and does not poll for branch-head movement
 - `HERMES_GITHUB_API_BASE`
   - GitHub API base used to resolve `latest-release`
   - default: `https://api.github.com`

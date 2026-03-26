@@ -160,7 +160,9 @@ try:
 except urllib.error.HTTPError as exc:
     if exc.code == 404:
         raise SystemExit("Latest upstream Hermes release not found")
-    raise
+    raise SystemExit(f"failed to resolve latest upstream Hermes release: HTTP {exc.code}")
+except urllib.error.URLError as exc:
+    raise SystemExit(f"failed to resolve latest upstream Hermes release: {exc.reason}")
 tag_name = latest.get("tag_name", "")
 if not tag_name:
     raise SystemExit("Latest upstream Hermes release did not include a tag name")

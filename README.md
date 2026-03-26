@@ -32,6 +32,14 @@ By default, the image resolves the latest upstream GitHub release and builds fro
 
 `bootstrap` builds the shared local Hermes image from the latest upstream GitHub release by default, upgrades it if the requested upstream source changed, starts the container for the selected workspace, and then opens Hermes interactively.
 
+Host requirements for the base setup are intentionally small:
+
+- Podman
+- network access for release resolution and image builds
+- a writable host base directory under `~/Documents/Ezirius/.applications-data/.hermes-agent`
+
+The Hermes gateway and CLI themselves do not need to be installed on the host.
+
 Each workspace lives under `HERMES_BASE_ROOT` with this host layout:
 
 ```text
@@ -63,6 +71,7 @@ The scripts create the workspace root and these data directories automatically. 
 - `bootstrap` performs the full `build -> upgrade -> start -> open` flow
 - by default, `hermes-build` and `hermes-upgrade` resolve the latest upstream Hermes release tag and fail clearly if no upstream release is available
 - in practice, repeated `bootstrap` runs are what keep you on the latest upstream release: `hermes-build` is no-op when the image exists, while `hermes-upgrade` re-checks the latest GitHub release and rebuilds only when it changed
+- if you set `HERMES_REF` to an explicit tag or branch, `hermes-upgrade` compares that literal ref only; it does not poll for branch-head movement
 
 Scripts that take no positional arguments reject them explicitly. Workspace-scoped scripts require exactly one workspace name, except `hermes-open` and `hermes-logs`, which accept a workspace name plus optional extra arguments.
 
@@ -73,12 +82,28 @@ This repo containerises Hermes itself. Inside the container, Hermes can use its 
 - `./scripts/shared/hermes-build`
 - `./scripts/shared/hermes-upgrade`
 - `./scripts/shared/hermes-start <workspace-name>`
-- `./scripts/shared/hermes-open <workspace-name>`
+- `./scripts/shared/hermes-open <workspace-name> [hermes args...]`
 - `./scripts/shared/hermes-status <workspace-name>`
-- `./scripts/shared/hermes-logs <workspace-name>`
+- `./scripts/shared/hermes-logs <workspace-name> [podman args...]`
 - `./scripts/shared/hermes-shell <workspace-name>`
 - `./scripts/shared/hermes-stop <workspace-name>`
 - `./scripts/shared/hermes-remove <workspace-name>`
+
+## GitHub setup on Maldoria
+
+This repo is configured to use the repo-specific SSH alias:
+
+- `github-maldoria-hermes-agent-container`
+
+If `git push` says it cannot resolve that hostname, the repo remote is already correct but your host SSH config has not been materialised yet. On Maldoria, run the managed setup from inside this repo:
+
+`/workspace/Development/OpenCode/installations-configurations/scripts/macos/git-configure`
+
+That workflow writes the matching `Host github-maldoria-hermes-agent-container` block into `~/.ssh/config`, exports the public key file `~/.ssh/maldoria-github-ezirius-hermes-agent-container.pub`, and points the repo remote at the alias.
+
+After that, test SSH auth with:
+
+`ssh -T git@github-maldoria-hermes-agent-container`
 
 ## Verification
 
