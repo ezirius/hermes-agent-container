@@ -25,6 +25,17 @@ require_python3() {
   command -v python3 >/dev/null 2>&1 || fail "python3 is required"
 }
 
+load_env_file() {
+  local env_file="$1"
+
+  [[ -f "$env_file" ]] || return 0
+
+  set -a
+  # shellcheck disable=SC1090
+  source "$env_file"
+  set +a
+}
+
 image_exists() {
   podman image exists "$HERMES_IMAGE_NAME"
 }
@@ -60,6 +71,8 @@ require_workspace_name() {
   local name="$1"
   [[ -n "$name" ]] || fail "workspace name must not be empty"
   [[ "$name" != */* ]] || fail "workspace name must not contain path separators"
+  [[ "$name" != "." ]] || fail "workspace name must not be '.'"
+  [[ "$name" != ".." ]] || fail "workspace name must not be '..'"
   [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || fail "workspace name may only contain letters, numbers, dots, underscores, and hyphens"
 }
 
@@ -73,7 +86,8 @@ resolve_workspace() {
   workspace_base_root="$(normalize_path "$HERMES_BASE_ROOT")"
   WORKSPACE_ROOT="$(normalize_absolute_path "$workspace_base_root/$WORKSPACE_NAME")"
   HERMES_ENV_FILE="$WORKSPACE_ROOT/.env"
-  HERMES_CONFIG_FILE="$WORKSPACE_ROOT/config.yaml"
+  HERMES_HOME_DIR="$WORKSPACE_ROOT/hermes-home"
+  HERMES_CONFIG_FILE="$HERMES_HOME_DIR/config.yaml"
   HERMES_WORKSPACE_DIR="$WORKSPACE_ROOT/workspace"
   HERMES_CONTAINER_NAME="${HERMES_PROJECT_PREFIX}-${WORKSPACE_NAME}"
 }
@@ -81,17 +95,64 @@ resolve_workspace() {
 ensure_workspace_dirs() {
   mkdir -p \
     "$WORKSPACE_ROOT" \
-    "$WORKSPACE_ROOT/cron" \
-    "$WORKSPACE_ROOT/sessions" \
-    "$WORKSPACE_ROOT/logs" \
-    "$WORKSPACE_ROOT/memories" \
-    "$WORKSPACE_ROOT/skills" \
-    "$WORKSPACE_ROOT/pairing" \
-    "$WORKSPACE_ROOT/hooks" \
-    "$WORKSPACE_ROOT/image_cache" \
-    "$WORKSPACE_ROOT/audio_cache" \
+    "$HERMES_HOME_DIR" \
+    "$HERMES_HOME_DIR/cron" \
+    "$HERMES_HOME_DIR/sessions" \
+    "$HERMES_HOME_DIR/logs" \
+    "$HERMES_HOME_DIR/memories" \
+    "$HERMES_HOME_DIR/skills" \
+    "$HERMES_HOME_DIR/pairing" \
+    "$HERMES_HOME_DIR/hooks" \
+    "$HERMES_HOME_DIR/image_cache" \
+    "$HERMES_HOME_DIR/audio_cache" \
     "$WORKSPACE_ROOT/workspace" \
-    "$WORKSPACE_ROOT/whatsapp/session"
+    "$HERMES_HOME_DIR/whatsapp/session"
+}
+
+migrate_legacy_workspace_layout() {
+  local path
+  local target
+
+  for path in \
+    ".hermes_history" \
+    ".update_check" \
+    "auth.json" \
+    "auth.lock" \
+    "config.yaml" \
+    "state.db" \
+    "state.db-shm" \
+    "state.db-wal" \
+    "bin" \
+    "cron" \
+    "logs" \
+    "memories" \
+    "pairing" \
+    "sandboxes" \
+    "sessions" \
+    "skills" \
+    "hooks" \
+    "image_cache" \
+    "audio_cache" \
+    "whatsapp"
+  do
+    if [[ ! -e "$WORKSPACE_ROOT/$path" ]]; then
+      continue
+    fi
+
+    target="$HERMES_HOME_DIR/$path"
+
+    if [[ -d "$WORKSPACE_ROOT/$path" ]]; then
+      mkdir -p "$target"
+      shopt -s dotglob nullglob
+      if [[ -d "$WORKSPACE_ROOT/$path" ]]; then
+        mv "$WORKSPACE_ROOT/$path"/* "$target"/ 2>/dev/null || true
+        rmdir "$WORKSPACE_ROOT/$path" 2>/dev/null || true
+      fi
+      shopt -u dotglob nullglob
+    elif [[ ! -e "$target" ]]; then
+      mv "$WORKSPACE_ROOT/$path" "$target"
+    fi
+  done
 }
 
 container_exists() {

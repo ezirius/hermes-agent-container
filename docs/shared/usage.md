@@ -17,10 +17,12 @@ Workspace names resolve under `HERMES_BASE_ROOT`.
 ## Environment and state
 
 - upstream Hermes stores its local data in `~/.hermes/`
-- this wrapper maps each workspace root to persistent Hermes state inside the container
-- `.env` and optional `config.yaml` live at the workspace root
-- the runtime state directories are created automatically
+- this wrapper maps `<workspace-root>/hermes-home` to persistent Hermes state inside the container
+- `.env` lives at the workspace root and optional `config.yaml` lives under `<workspace-root>/hermes-home`
+- the runtime state directories are created automatically under `hermes-home`
+- Hermes runs with `/data` mapped to `<workspace-root>/hermes-home`
 - Hermes runs with `/workspace` mapped to `<workspace-root>/workspace`
+- the workspace `.env` is passed into the container at start time so provider keys and Hermes env overrides are available inside Hermes
 
 ## Upstream source selection
 

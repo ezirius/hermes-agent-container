@@ -20,7 +20,7 @@ RUN apt-get update \
     ripgrep \
   && rm -rf /var/lib/apt/lists/*
 
-RUN useradd -m -u 1000 -s /bin/bash hermes
+RUN if ! id hermes >/dev/null 2>&1; then useradd -m -s /bin/bash hermes; fi
 USER hermes
 WORKDIR /home/hermes
 

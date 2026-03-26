@@ -135,10 +135,13 @@ write_file "$STATE_DIR/image_label_hermes_repo_url" 'https://github.com/NousRese
 write_file "$STATE_DIR/image_label_hermes_ref" 'v1.2.3'
 mkdir -p "$HERMES_BASE_ROOT/ezirius"
 touch "$HERMES_BASE_ROOT/ezirius/.env"
+printf 'OPENAI_API_KEY=test-key\n' >> "$HERMES_BASE_ROOT/ezirius/.env"
 "$ROOT/scripts/shared/bootstrap" ezirius --help > "$STATE_DIR/bootstrap.out"
 assert_contains "$STATE_DIR/bootstrap.out" 'No upgrade needed' 'bootstrap checks upgrade before start'
 assert_contains "$STATE_DIR/podman.log" 'run -d --name hermes-agent-ezirius' 'bootstrap starts container'
+assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/hermes-home:/data" 'bootstrap mounts Hermes home separately'
 assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/workspace:/workspace" 'bootstrap mounts persistent workspace directory'
+assert_contains "$STATE_DIR/podman.log" '--env-file /tmp/' 'bootstrap passes workspace env file into container'
 assert_contains "$STATE_DIR/podman.log" 'exec -i -w /workspace hermes-agent-ezirius hermes --help' 'bootstrap opens Hermes inside container'
 
 reset_state

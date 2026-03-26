@@ -11,7 +11,9 @@ fi
 
 require_podman
 resolve_workspace "$1"
+load_env_file "$HERMES_ENV_FILE"
 ensure_workspace_dirs
+migrate_legacy_workspace_layout
 
 if ! image_exists; then
   fail "image not found: $HERMES_IMAGE_NAME (run $SCRIPT_DIR/hermes-build first)"
@@ -37,10 +39,14 @@ if container_exists; then
 fi
 
 echo "==> Starting Hermes container"
-podman run -d \
+RUN_ARGS=(podman run -d \
   --name "$HERMES_CONTAINER_NAME" \
-  -v "$WORKSPACE_ROOT:/data" \
+  -v "$HERMES_HOME_DIR:/data" \
   -v "$HERMES_WORKSPACE_DIR:/workspace" \
-  -w /workspace \
-  "$HERMES_IMAGE_NAME" >/dev/null
+  -w /workspace)
+if [[ -f "$HERMES_ENV_FILE" ]]; then
+  RUN_ARGS+=(--env-file "$HERMES_ENV_FILE")
+fi
+RUN_ARGS+=("$HERMES_IMAGE_NAME")
+"${RUN_ARGS[@]}" >/dev/null
 echo "==> Hermes container started: $HERMES_CONTAINER_NAME"

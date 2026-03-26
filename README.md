@@ -26,6 +26,8 @@ By default, the image resolves the latest upstream GitHub release and builds fro
 
 2. Add at least one Hermes LLM provider key to the workspace `.env`.
 
+   The wrapper passes this workspace `.env` into the container at start time, so provider keys and Hermes environment overrides are available inside Hermes.
+
 3. Start Hermes:
 
    `./scripts/shared/bootstrap ezirius`
@@ -45,22 +47,24 @@ Each workspace lives under `HERMES_BASE_ROOT` with this host layout:
 ```text
 <workspace-root>/
 ├── .env
-├── config.yaml         # optional
-├── cron/
-├── sessions/
-├── logs/
-├── memories/
-├── skills/
-├── pairing/
-├── hooks/
-├── image_cache/
-├── audio_cache/
+├── hermes-home/
+│   ├── config.yaml     # optional
+│   ├── cron/
+│   ├── sessions/
+│   ├── logs/
+│   ├── memories/
+│   ├── skills/
+│   ├── pairing/
+│   ├── hooks/
+│   ├── image_cache/
+│   ├── audio_cache/
+│   └── whatsapp/
+│       └── session/
 ├── workspace/
-└── whatsapp/
-    └── session/
+└── ...your own workspace files...
 ```
 
-The scripts create the workspace root and these data directories automatically. You still need to create the workspace `.env` file yourself. Hermes runs with `/workspace` mapped to `<workspace-root>/workspace`.
+The scripts create the workspace root and these data directories automatically. You still need to create the workspace `.env` file yourself. Hermes runs with `/data` mapped to `<workspace-root>/hermes-home` and `/workspace` mapped to `<workspace-root>/workspace`.
 
 ## Workflow
 
