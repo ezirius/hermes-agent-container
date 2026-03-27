@@ -5,6 +5,21 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$ROOT/lib/shell/common.sh"
 
+if [[ ${1-} == "--help" ]]; then
+  show_help "Usage: $(basename "$0") <workspace-name> [podman args...]
+
+Show logs for the Hermes Gateway container for one workspace.
+
+Arguments:
+- <workspace-name>           required workspace name under HERMES_BASE_ROOT
+- [podman args...]          optional arguments forwarded to podman logs
+
+Common podman log args:
+- -f                        follow logs
+- --tail 100                show the last 100 lines
+- --since 10m               show logs from the last 10 minutes"
+fi
+
 if [[ $# -lt 1 ]]; then
   usage_error "$(basename "$0") requires at least 1 argument: <workspace-name> [podman args...]"
 fi

@@ -5,6 +5,15 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$ROOT/lib/shell/common.sh"
 
+if [[ ${1-} == "--help" ]]; then
+  show_help "Usage: $(basename "$0") <workspace-name>
+
+Remove the Hermes Gateway container for one workspace.
+
+This removes the container only. Persistent workspace data under HERMES_BASE_ROOT
+is left intact."
+fi
+
 if [[ $# -ne 1 ]]; then
   usage_error "$(basename "$0") requires exactly 1 argument: <workspace-name>"
 fi

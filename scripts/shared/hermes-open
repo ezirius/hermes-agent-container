@@ -5,6 +5,26 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$ROOT/lib/shell/common.sh"
 
+if [[ ${1-} == "--help" ]]; then
+  show_help "Usage: $(basename "$0") <workspace-name> [hermes args...]
+
+Run the Hermes CLI inside the running workspace container.
+
+Arguments:
+- <workspace-name>           required workspace name under HERMES_BASE_ROOT
+- [hermes args...]          optional Hermes CLI args passed directly to hermes
+
+Common Hermes args:
+- setup                     run the setup wizard
+- model                     choose provider and model
+- tools                     configure enabled tools
+- doctor                    diagnose local problems
+- gateway                   run gateway subcommands
+- chat                      start the chat interface
+
+If no Hermes args are provided, the bare Hermes CLI is started."
+fi
+
 if [[ $# -lt 1 ]]; then
   usage_error "$(basename "$0") requires at least 1 argument: <workspace-name> [hermes args...]"
 fi

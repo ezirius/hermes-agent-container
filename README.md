@@ -22,7 +22,7 @@ By default, the image resolves the latest upstream GitHub release and builds fro
 
 1. Create the workspace directory and env file:
 
-   `mkdir -p "$HOME/Documents/Ezirius/.applications-data/.hermes-agent/ezirius" && touch "$HOME/Documents/Ezirius/.applications-data/.hermes-agent/ezirius/.env"`
+   `mkdir -p "$HOME/Documents/Ezirius/.applications-data/.hermes-agent/ezirius/hermes-home" && touch "$HOME/Documents/Ezirius/.applications-data/.hermes-agent/ezirius/hermes-home/.env"`
 
 2. Add at least one Hermes LLM provider key to the workspace `.env`.
 
@@ -32,7 +32,13 @@ By default, the image resolves the latest upstream GitHub release and builds fro
 
    `./scripts/shared/bootstrap ezirius`
 
-`bootstrap` builds the shared local Hermes image from the latest upstream GitHub release by default, upgrades it if the requested upstream source changed, starts the container for the selected workspace, and then opens Hermes interactively.
+`bootstrap` builds the shared local Hermes image from the latest upstream GitHub release by default, upgrades it if the requested upstream source changed, starts the Hermes Gateway container for the selected workspace, and then opens Hermes interactively.
+
+Common forwarded `bootstrap` examples:
+
+- `./scripts/shared/bootstrap ezirius setup`
+- `./scripts/shared/bootstrap ezirius model`
+- `./scripts/shared/bootstrap ezirius doctor`
 
 Host requirements for the base setup are intentionally small:
 
@@ -46,8 +52,8 @@ Each workspace lives under `HERMES_BASE_ROOT` with this host layout:
 
 ```text
 <workspace-root>/
-├── .env
 ├── hermes-home/
+│   ├── .env
 │   ├── config.yaml     # optional
 │   ├── cron/
 │   ├── sessions/
@@ -64,18 +70,22 @@ Each workspace lives under `HERMES_BASE_ROOT` with this host layout:
 └── ...your own workspace files...
 ```
 
-The scripts create the workspace root and these data directories automatically. You still need to create the workspace `.env` file yourself. Hermes runs with `/data` mapped to `<workspace-root>/hermes-home` and `/workspace` mapped to `<workspace-root>/workspace`.
+The scripts create the workspace root and these data directories automatically. You still need to create the workspace env file yourself at `<workspace-root>/hermes-home/.env`. Hermes runs with `/data` mapped to `<workspace-root>/hermes-home` and `/workspace` mapped to `<workspace-root>/workspace`.
+
+The image includes Matrix support (`matrix-nio[e2e]` plus `libolm`) so Matrix and encrypted Matrix rooms can work inside the container. The wrapper also applies a small local upstream patch during image build so Matrix sync failures are logged more clearly and a failed initial sync does not get reported as a successful connection.
 
 ## Workflow
 
 - `hermes-build` ensures the shared image exists
-- `hermes-upgrade` rebuilds the shared image only when the requested upstream source changed
-- `hermes-start` starts or reuses the local Hermes container only
+- `hermes-upgrade` rebuilds the shared image when the requested upstream source changed or when the local wrapper image recipe changed
+- `hermes-start` starts or reuses the local Hermes Gateway container only
 - `hermes-open` runs the Hermes CLI inside the running container
 - `bootstrap` performs the full `build -> upgrade -> start -> open` flow
 - by default, `hermes-build` and `hermes-upgrade` resolve the latest upstream Hermes release tag and fail clearly if no upstream release is available
-- in practice, repeated `bootstrap` runs are what keep you on the latest upstream release: `hermes-build` is no-op when the image exists, while `hermes-upgrade` re-checks the latest GitHub release and rebuilds only when it changed
+- in practice, repeated `bootstrap` runs are what keep you on the latest upstream release and current wrapper behaviour: `hermes-build` is no-op when the image exists, while `hermes-upgrade` re-checks the latest GitHub release and also compares the local wrapper build fingerprint before deciding whether to rebuild
 - if you set `HERMES_REF` to an explicit tag or branch, `hermes-upgrade` compares that literal ref only; it does not poll for branch-head movement
+
+The local wrapper build fingerprint covers the image recipe files under `config/containers/` and `config/patches/`. That means changes such as the Matrix sync diagnostics patch now trigger a rebuild automatically on the next `hermes-upgrade` or `bootstrap`, even when the upstream Hermes release tag has not changed.
 
 Scripts that take no positional arguments reject them explicitly. Workspace-scoped scripts require exactly one workspace name, except `hermes-open` and `hermes-logs`, which accept a workspace name plus optional extra arguments.
 
@@ -92,6 +102,23 @@ This repo containerises Hermes itself. Inside the container, Hermes can use its 
 - `./scripts/shared/hermes-shell <workspace-name>`
 - `./scripts/shared/hermes-stop <workspace-name>`
 - `./scripts/shared/hermes-remove <workspace-name>`
+
+Most useful extra arguments for `hermes-open`:
+
+- `./scripts/shared/hermes-open ezirius setup`
+- `./scripts/shared/hermes-open ezirius model`
+- `./scripts/shared/hermes-open ezirius tools`
+- `./scripts/shared/hermes-open ezirius doctor`
+- `./scripts/shared/hermes-open ezirius gateway`
+- `./scripts/shared/hermes-open ezirius chat`
+
+Most useful extra arguments for `hermes-logs`:
+
+- `./scripts/shared/hermes-logs ezirius -f`
+- `./scripts/shared/hermes-logs ezirius --tail 100`
+- `./scripts/shared/hermes-logs ezirius --since 10m`
+
+All wrapper scripts also support `--help` and document their argument contracts there.
 
 ## GitHub setup on Maldoria
 

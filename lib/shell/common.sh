@@ -17,6 +17,11 @@ usage_error() {
   exit 1
 }
 
+show_help() {
+  printf '%s\n' "$1"
+  exit 0
+}
+
 require_podman() {
   command -v podman >/dev/null 2>&1 || fail "podman is required"
 }
@@ -49,6 +54,36 @@ image_label() {
     value=""
   fi
   printf '%s' "$value"
+}
+
+local_build_fingerprint() {
+  require_python3
+
+  python3 - "$ROOT" <<'PY'
+import hashlib
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+paths = [root / "config/containers/Dockerfile"]
+patches_dir = root / "config/patches"
+if patches_dir.exists():
+    paths.extend(sorted(path for path in patches_dir.rglob("*") if path.is_file()))
+
+digest = hashlib.sha256()
+for path in paths:
+    relative = path.relative_to(root).as_posix()
+    digest.update(relative.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(path.read_bytes())
+    digest.update(b"\0")
+
+print(digest.hexdigest())
+PY
+}
+
+current_image_build_fingerprint() {
+  image_label hermes.wrapper_fingerprint
 }
 
 normalize_path() {
@@ -85,8 +120,8 @@ resolve_workspace() {
   WORKSPACE_INPUT="$input"
   workspace_base_root="$(normalize_path "$HERMES_BASE_ROOT")"
   WORKSPACE_ROOT="$(normalize_absolute_path "$workspace_base_root/$WORKSPACE_NAME")"
-  HERMES_ENV_FILE="$WORKSPACE_ROOT/.env"
   HERMES_HOME_DIR="$WORKSPACE_ROOT/hermes-home"
+  HERMES_ENV_FILE="$HERMES_HOME_DIR/.env"
   HERMES_CONFIG_FILE="$HERMES_HOME_DIR/config.yaml"
   HERMES_WORKSPACE_DIR="$WORKSPACE_ROOT/workspace"
   HERMES_CONTAINER_NAME="${HERMES_PROJECT_PREFIX}-${WORKSPACE_NAME}"
@@ -153,6 +188,10 @@ migrate_legacy_workspace_layout() {
       mv "$WORKSPACE_ROOT/$path" "$target"
     fi
   done
+
+  if [[ -f "$WORKSPACE_ROOT/.env" && ! -e "$HERMES_ENV_FILE" ]]; then
+    mv "$WORKSPACE_ROOT/.env" "$HERMES_ENV_FILE"
+  fi
 }
 
 container_exists() {

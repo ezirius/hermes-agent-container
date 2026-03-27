@@ -48,10 +48,11 @@ case "$subcommand" in
       inspect) log_call "image inspect $*"; format="$2"; case "$format" in
         '{{ index .Labels "hermes.repo_url" }}') printf '%s\n' "$(read_value image_label_hermes_repo_url)" ;;
         '{{ index .Labels "hermes.ref" }}') printf '%s\n' "$(read_value image_label_hermes_ref)" ;;
+        '{{ index .Labels "hermes.wrapper_fingerprint" }}') printf '%s\n' "$(read_value image_label_hermes_wrapper_fingerprint)" ;;
         '{{.Id}}') printf '%s\n' "$(read_value image_id)" ;;
         *) exit 1 ;;
       esac ;;
-      rm) log_call "image rm $*"; rm -f "$STATE_DIR/image_exists" "$STATE_DIR/image_label_hermes_repo_url" "$STATE_DIR/image_label_hermes_ref" "$STATE_DIR/image_id" ;;
+      rm) log_call "image rm $*"; rm -f "$STATE_DIR/image_exists" "$STATE_DIR/image_label_hermes_repo_url" "$STATE_DIR/image_label_hermes_ref" "$STATE_DIR/image_label_hermes_wrapper_fingerprint" "$STATE_DIR/image_id" ;;
       *) exit 1 ;;
     esac ;;
   build)
@@ -64,6 +65,7 @@ case "$subcommand" in
           case "$2" in
             hermes.repo_url=*) write_value image_label_hermes_repo_url "${2#hermes.repo_url=}" ;;
             hermes.ref=*) write_value image_label_hermes_ref "${2#hermes.ref=}" ;;
+            hermes.wrapper_fingerprint=*) write_value image_label_hermes_wrapper_fingerprint "${2#hermes.wrapper_fingerprint=}" ;;
           esac
           shift 2 ;;
         *) shift ;;
@@ -101,6 +103,7 @@ export HERMES_BASE_ROOT="$TMPDIR/workspaces"
 export HERMES_IMAGE_NAME="mock-hermes-image"
 export HERMES_REPO_URL="https://github.com/NousResearch/hermes-agent.git"
 export HERMES_REF="v1.2.3"
+EXPECTED_BUILD_FINGERPRINT="$({ ROOT="$ROOT" bash -lc '. "$ROOT/lib/shell/common.sh"; local_build_fingerprint'; })"
 
 reset_state
 write_file "$STATE_DIR/image_exists" "1"
@@ -111,12 +114,15 @@ assert_not_contains "$STATE_DIR/podman.log" 'build ' 'build skip path does not b
 reset_state
 "$ROOT/scripts/shared/hermes-build" > "$STATE_DIR/build-run.out"
 assert_contains "$STATE_DIR/build-run.out" 'Building Hermes image' 'build reports image build'
+assert_contains "$STATE_DIR/build-run.out" 'Local build fingerprint:' 'build reports local build fingerprint'
 assert_contains "$STATE_DIR/podman.log" 'build --pull=always' 'build invokes podman build'
+assert_contains "$STATE_DIR/podman.log" 'hermes.wrapper_fingerprint=' 'build labels image with local fingerprint'
 
 reset_state
 write_file "$STATE_DIR/image_exists" "1"
 write_file "$STATE_DIR/image_label_hermes_repo_url" 'https://github.com/NousResearch/hermes-agent.git'
 write_file "$STATE_DIR/image_label_hermes_ref" 'v1.2.3'
+write_file "$STATE_DIR/image_label_hermes_wrapper_fingerprint" "$EXPECTED_BUILD_FINGERPRINT"
 "$ROOT/scripts/shared/hermes-upgrade" > "$STATE_DIR/upgrade-skip.out"
 assert_contains "$STATE_DIR/upgrade-skip.out" 'No upgrade needed' 'upgrade skips when source matches'
 
@@ -130,19 +136,40 @@ assert_contains "$STATE_DIR/podman.log" 'image rm -f mock-hermes-image' 'upgrade
 
 reset_state
 write_file "$STATE_DIR/image_exists" "1"
+write_file "$STATE_DIR/image_label_hermes_repo_url" 'https://github.com/NousResearch/hermes-agent.git'
+write_file "$STATE_DIR/image_label_hermes_ref" 'v1.2.3'
+write_file "$STATE_DIR/image_label_hermes_wrapper_fingerprint" 'stale-fingerprint'
+"$ROOT/scripts/shared/hermes-upgrade" > "$STATE_DIR/upgrade-fingerprint-run.out"
+assert_contains "$STATE_DIR/upgrade-fingerprint-run.out" 'Upgrading Hermes image: mock-hermes-image' 'upgrade rebuilds when local build fingerprint differs'
+assert_contains "$STATE_DIR/upgrade-fingerprint-run.out" 'Target local build fingerprint:' 'upgrade reports target local build fingerprint'
+
+reset_state
+write_file "$STATE_DIR/image_exists" "1"
 write_file "$STATE_DIR/image_id" 'image-a'
 write_file "$STATE_DIR/image_label_hermes_repo_url" 'https://github.com/NousResearch/hermes-agent.git'
 write_file "$STATE_DIR/image_label_hermes_ref" 'v1.2.3'
+write_file "$STATE_DIR/image_label_hermes_wrapper_fingerprint" "$EXPECTED_BUILD_FINGERPRINT"
 mkdir -p "$HERMES_BASE_ROOT/ezirius"
-touch "$HERMES_BASE_ROOT/ezirius/.env"
-printf 'OPENAI_API_KEY=test-key\n' >> "$HERMES_BASE_ROOT/ezirius/.env"
+mkdir -p "$HERMES_BASE_ROOT/ezirius/hermes-home"
+touch "$HERMES_BASE_ROOT/ezirius/hermes-home/.env"
+printf 'OPENAI_API_KEY=test-key\n' >> "$HERMES_BASE_ROOT/ezirius/hermes-home/.env"
 "$ROOT/scripts/shared/bootstrap" ezirius --help > "$STATE_DIR/bootstrap.out"
 assert_contains "$STATE_DIR/bootstrap.out" 'No upgrade needed' 'bootstrap checks upgrade before start'
 assert_contains "$STATE_DIR/podman.log" 'run -d --name hermes-agent-ezirius' 'bootstrap starts container'
 assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/hermes-home:/data" 'bootstrap mounts Hermes home separately'
 assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/workspace:/workspace" 'bootstrap mounts persistent workspace directory'
 assert_contains "$STATE_DIR/podman.log" '--env-file /tmp/' 'bootstrap passes workspace env file into container'
+assert_contains "$STATE_DIR/podman.log" 'hermes gateway' 'bootstrap starts the Hermes gateway inside the container'
 assert_contains "$STATE_DIR/podman.log" 'exec -i -w /workspace hermes-agent-ezirius hermes --help' 'bootstrap opens Hermes inside container'
+
+reset_state
+write_file "$STATE_DIR/image_exists" '1'
+write_file "$STATE_DIR/image_id" 'image-a'
+write_file "$STATE_DIR/container_exists" '1'
+write_file "$STATE_DIR/container_running" 'false'
+write_file "$STATE_DIR/container_image_id" 'image-a'
+"$ROOT/scripts/shared/hermes-start" ezirius > "$STATE_DIR/start-reuse.out"
+assert_contains "$STATE_DIR/start-reuse.out" 'Starting existing stopped Hermes Gateway container:' 'start reports restarting stopped gateway container'
 
 reset_state
 write_file "$STATE_DIR/container_exists" '1'
@@ -164,7 +191,7 @@ reset_state
 write_file "$STATE_DIR/container_exists" '1'
 write_file "$STATE_DIR/container_running" 'true'
 "$ROOT/scripts/shared/hermes-stop" ezirius > "$STATE_DIR/stop.out"
-assert_contains "$STATE_DIR/stop.out" 'Stopping Hermes container:' 'stop reports running container stop'
+assert_contains "$STATE_DIR/stop.out" 'Stopping Hermes Gateway container:' 'stop reports running container stop'
 assert_contains "$STATE_DIR/podman.log" 'stop hermes-agent-ezirius' 'stop calls podman stop'
 
 reset_state

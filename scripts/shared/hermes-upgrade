@@ -5,6 +5,17 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$ROOT/lib/shell/common.sh"
 
+if [[ ${1-} == "--help" ]]; then
+  show_help "Usage: $(basename "$0")
+
+Refresh the shared Hermes image when the requested upstream source changed
+or when the local wrapper image recipe changed.
+
+By default this re-checks the latest upstream GitHub release. If the local
+image already matches both the requested source and the local wrapper build
+fingerprint, no changes are made."
+fi
+
 if [[ $# -ne 0 ]]; then
   usage_error "$(basename "$0") takes no arguments"
 fi
@@ -18,14 +29,17 @@ if ! image_exists; then
 fi
 
 HERMES_REF="$(resolve_hermes_ref)"
+LOCAL_BUILD_FINGERPRINT="$(local_build_fingerprint)"
 export HERMES_REF
 CURRENT_REPO_URL="$(image_label hermes.repo_url)"
 CURRENT_REF="$(image_label hermes.ref)"
+CURRENT_BUILD_FINGERPRINT="$(current_image_build_fingerprint)"
 
-if [[ -n "$CURRENT_REPO_URL" && -n "$CURRENT_REF" && "$CURRENT_REPO_URL" == "$HERMES_REPO_URL" && "$CURRENT_REF" == "$HERMES_REF" ]]; then
+if [[ -n "$CURRENT_REPO_URL" && -n "$CURRENT_REF" && -n "$CURRENT_BUILD_FINGERPRINT" && "$CURRENT_REPO_URL" == "$HERMES_REPO_URL" && "$CURRENT_REF" == "$HERMES_REF" && "$CURRENT_BUILD_FINGERPRINT" == "$LOCAL_BUILD_FINGERPRINT" ]]; then
   echo "==> Hermes image already matches requested source: $HERMES_IMAGE_NAME"
   echo "==> Upstream repo: $CURRENT_REPO_URL"
   echo "==> Upstream ref:  $CURRENT_REF"
+  echo "==> Local build fingerprint: $CURRENT_BUILD_FINGERPRINT"
   echo "==> No upgrade needed"
   exit 0
 fi
@@ -33,5 +47,6 @@ fi
 echo "==> Upgrading Hermes image: $HERMES_IMAGE_NAME"
 echo "==> Target upstream repo: $HERMES_REPO_URL"
 echo "==> Target upstream ref:  $HERMES_REF"
+echo "==> Target local build fingerprint: $LOCAL_BUILD_FINGERPRINT"
 podman image rm -f "$HERMES_IMAGE_NAME" >/dev/null
 exec "$SCRIPT_DIR/hermes-build"

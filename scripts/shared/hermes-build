@@ -5,6 +5,16 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$ROOT/lib/shell/common.sh"
 
+if [[ ${1-} == "--help" ]]; then
+  show_help "Usage: $(basename "$0")
+
+Ensure the shared Hermes image exists.
+
+This command resolves the latest upstream Hermes GitHub release by default,
+builds the local image when missing, and exits without rebuilding when the
+image already exists."
+fi
+
 if [[ $# -ne 0 ]]; then
   usage_error "$(basename "$0") takes no arguments"
 fi
@@ -18,15 +28,18 @@ if image_exists; then
 fi
 
 HERMES_REF="$(resolve_hermes_ref)"
+LOCAL_BUILD_FINGERPRINT="$(local_build_fingerprint)"
 export HERMES_REF
 
 echo "==> Building Hermes image"
 echo "==> Upstream repo: $HERMES_REPO_URL"
 echo "==> Upstream ref:  $HERMES_REF"
+echo "==> Local build fingerprint: $LOCAL_BUILD_FINGERPRINT"
 podman build \
   --pull=always \
   --label "hermes.repo_url=$HERMES_REPO_URL" \
   --label "hermes.ref=$HERMES_REF" \
+  --label "hermes.wrapper_fingerprint=$LOCAL_BUILD_FINGERPRINT" \
   --build-arg "HERMES_REPO_URL=$HERMES_REPO_URL" \
   --build-arg "HERMES_REF=$HERMES_REF" \
   -t "$HERMES_IMAGE_NAME" \

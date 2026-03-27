@@ -5,6 +5,19 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$ROOT/lib/shell/common.sh"
 
+if [[ ${1-} == "--help" ]]; then
+  show_help "Usage: $(basename "$0") <workspace-name>
+
+Start or reuse the Hermes Gateway container for one workspace.
+
+Arguments:
+- <workspace-name>           required workspace name under HERMES_BASE_ROOT
+
+The wrapper mounts:
+- <workspace>/hermes-home -> /data
+- <workspace>/workspace   -> /workspace"
+fi
+
 if [[ $# -ne 1 ]]; then
   usage_error "$(basename "$0") requires exactly 1 argument: <workspace-name>"
 fi
@@ -22,23 +35,23 @@ fi
 if container_exists; then
   if container_running; then
     if [[ "$(container_image_id)" == "$(image_id)" ]]; then
-      echo "==> Hermes container already running: $HERMES_CONTAINER_NAME"
+      echo "==> Hermes Gateway container already running: $HERMES_CONTAINER_NAME"
       exit 0
     fi
-    echo "==> Recreating running container with updated local image: $HERMES_CONTAINER_NAME"
+    echo "==> Recreating running Hermes Gateway container with updated local image: $HERMES_CONTAINER_NAME"
     podman rm -f "$HERMES_CONTAINER_NAME" >/dev/null
   elif [[ "$(container_image_id)" != "$(image_id)" ]]; then
-    echo "==> Removing existing container with old image: $HERMES_CONTAINER_NAME"
+    echo "==> Removing existing Hermes Gateway container with old image: $HERMES_CONTAINER_NAME"
     podman rm -f "$HERMES_CONTAINER_NAME" >/dev/null
   else
-    echo "==> Starting existing stopped container: $HERMES_CONTAINER_NAME"
+    echo "==> Starting existing stopped Hermes Gateway container: $HERMES_CONTAINER_NAME"
     podman start "$HERMES_CONTAINER_NAME" >/dev/null
-    echo "==> Hermes container started: $HERMES_CONTAINER_NAME"
+    echo "==> Hermes Gateway container started: $HERMES_CONTAINER_NAME"
     exit 0
   fi
 fi
 
-echo "==> Starting Hermes container"
+echo "==> Starting Hermes Gateway container"
 RUN_ARGS=(podman run -d \
   --name "$HERMES_CONTAINER_NAME" \
   -v "$HERMES_HOME_DIR:/data" \
@@ -47,6 +60,6 @@ RUN_ARGS=(podman run -d \
 if [[ -f "$HERMES_ENV_FILE" ]]; then
   RUN_ARGS+=(--env-file "$HERMES_ENV_FILE")
 fi
-RUN_ARGS+=("$HERMES_IMAGE_NAME")
+RUN_ARGS+=("$HERMES_IMAGE_NAME" hermes gateway)
 "${RUN_ARGS[@]}" >/dev/null
-echo "==> Hermes container started: $HERMES_CONTAINER_NAME"
+echo "==> Hermes Gateway container started: $HERMES_CONTAINER_NAME"

@@ -17,6 +17,7 @@ resolve_workspace "ezirius"
 assert_eq "ezirius" "$WORKSPACE_NAME" "workspace name resolves"
 assert_eq "$ROOT/.tmp/workspaces/ezirius" "$WORKSPACE_ROOT" "workspace root resolves under base root"
 assert_eq "$ROOT/.tmp/workspaces/ezirius/hermes-home" "$HERMES_HOME_DIR" "Hermes home resolves under workspace root"
+assert_eq "$ROOT/.tmp/workspaces/ezirius/hermes-home/.env" "$HERMES_ENV_FILE" "Hermes env file resolves under Hermes home"
 assert_eq "$ROOT/.tmp/workspaces/ezirius/workspace" "$HERMES_WORKSPACE_DIR" "workspace dir resolves under workspace root"
 
 ensure_workspace_dirs
@@ -24,11 +25,13 @@ test -d "$HERMES_HOME_DIR/sessions"
 test -d "$HERMES_WORKSPACE_DIR"
 
 touch "$WORKSPACE_ROOT/auth.json"
+touch "$WORKSPACE_ROOT/.env"
 mkdir -p "$WORKSPACE_ROOT/logs"
 touch "$WORKSPACE_ROOT/logs/runtime.log"
 migrate_legacy_workspace_layout
 test -f "$HERMES_HOME_DIR/auth.json"
 test -f "$HERMES_HOME_DIR/logs/runtime.log"
+test -f "$HERMES_ENV_FILE"
 test ! -e "$WORKSPACE_ROOT/auth.json"
 
 ERR_FILE="$(mktemp)"
