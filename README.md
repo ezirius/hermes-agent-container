@@ -26,7 +26,7 @@ By default, the image resolves the latest upstream GitHub release and builds fro
 
 2. Add at least one Hermes LLM provider key to the workspace `.env`.
 
-   The wrapper passes this workspace `.env` into the container at start time, so provider keys and Hermes environment overrides are available inside Hermes.
+   Hermes reads this file itself from `/data/.env` when the gateway process starts, so provider keys and Hermes environment overrides are picked up when the gateway process starts again inside the container.
 
 3. Start Hermes:
 
@@ -66,13 +66,19 @@ Each workspace lives under `HERMES_BASE_ROOT` with this host layout:
 │   ├── audio_cache/
 │   └── whatsapp/
 │       └── session/
-├── workspace/
-└── ...your own workspace files...
+└── workspace/
+    └── ...your own workspace files...
 ```
 
-The scripts create the workspace root and these data directories automatically. You still need to create the workspace env file yourself at `<workspace-root>/hermes-home/.env`. Hermes runs with `/data` mapped to `<workspace-root>/hermes-home` and `/workspace` mapped to `<workspace-root>/workspace`.
+The scripts create the workspace root and these data directories automatically. You still need to create the workspace env file yourself at `<workspace-root>/hermes-home/.env`. Hermes runs with `/data` mapped to `<workspace-root>/hermes-home` and `/workspace` mapped to `<workspace-root>/workspace`. Upstream Hermes then reads `/data/.env` and `/data/config.yaml` directly on process start. Files you want Hermes to work on should live under `<workspace-root>/workspace`, because the workspace root itself is not mounted wholesale.
 
-The image includes Matrix support (`matrix-nio[e2e]` plus `libolm`) so Matrix and encrypted Matrix rooms can work inside the container. The wrapper also applies a small local upstream patch during image build so Matrix sync failures are logged more clearly and a failed initial sync does not get reported as a successful connection.
+In practice that means:
+
+- editing `hermes-home/.env` or `hermes-home/config.yaml` does not require an image rebuild
+- stopping and starting the workspace container is enough for Hermes to read the updated files again
+- rebuilding is only needed when the wrapper image recipe changes or when you want a newer upstream Hermes ref
+
+The image includes Matrix support (`matrix-nio[e2e]` plus `libolm`) so Matrix and encrypted Matrix rooms can work inside the container. The wrapper also applies small local upstream patches during image build so Matrix sync failures are logged more clearly, failed initial syncs do not get reported as successful connections, and Matrix encrypted-state storage follows `HERMES_HOME` instead of hardcoded `~/.hermes` paths. For extra compatibility with any remaining upstream `~/.hermes` paths, the image also links `/home/hermes/.hermes` to `/data`.
 
 ## Workflow
 
@@ -84,12 +90,24 @@ The image includes Matrix support (`matrix-nio[e2e]` plus `libolm`) so Matrix an
 - by default, `hermes-build` and `hermes-upgrade` resolve the latest upstream Hermes release tag and fail clearly if no upstream release is available
 - in practice, repeated `bootstrap` runs are what keep you on the latest upstream release and current wrapper behaviour: `hermes-build` is no-op when the image exists, while `hermes-upgrade` re-checks the latest GitHub release and also compares the local wrapper build fingerprint before deciding whether to rebuild
 - if you set `HERMES_REF` to an explicit tag or branch, `hermes-upgrade` compares that literal ref only; it does not poll for branch-head movement
+- the gateway container is created with Podman restart policy `unless-stopped`, so crashes and host reboots recover automatically while a manual stop remains stopped
 
-The local wrapper build fingerprint covers the image recipe files under `config/containers/` and `config/patches/`. That means changes such as the Matrix sync diagnostics patch now trigger a rebuild automatically on the next `hermes-upgrade` or `bootstrap`, even when the upstream Hermes release tag has not changed.
+Container lifecycle details:
+
+- if the workspace container already exists and is stopped on the same image, `hermes-start` uses `podman start`
+- if the image changed, `hermes-start` removes the old container and recreates it on the new image
+- because Hermes reads `/data/.env` and `/data/config.yaml` on process start, a plain stop/start is enough for config changes in those files
+
+The local wrapper build fingerprint covers the image recipe files under `config/containers/` and `config/patches/`. That means changes such as the Matrix sync diagnostics patch, Matrix store path patch, or compatibility-link setup now trigger a rebuild automatically on the next `hermes-upgrade` or `bootstrap`, even when the upstream Hermes release tag has not changed.
 
 Scripts that take no positional arguments reject them explicitly. Workspace-scoped scripts require exactly one workspace name, except `hermes-open` and `hermes-logs`, which accept a workspace name plus optional extra arguments.
 
 This repo containerises Hermes itself. Inside the container, Hermes can use its normal `local` terminal backend safely because the container is the execution boundary. In the current design that means Hermes runs commands inside its own long-lived container rather than spawning nested Docker sandboxes. If you want Hermes to use Docker as an internal execution backend too, you must separately provide a container runtime socket into the Hermes container.
+
+For Matrix specifically, encrypted-state persistence now follows the mounted Hermes home in two ways:
+
+- the image patches upstream Matrix storage to use `HERMES_HOME/matrix/store`
+- `/home/hermes/.hermes` is also linked to `/data` as a compatibility fallback for any remaining hardcoded `~/.hermes` paths
 
 ## Useful commands
 

@@ -18,6 +18,7 @@ assert_eq "ezirius" "$WORKSPACE_NAME" "workspace name resolves"
 assert_eq "$ROOT/.tmp/workspaces/ezirius" "$WORKSPACE_ROOT" "workspace root resolves under base root"
 assert_eq "$ROOT/.tmp/workspaces/ezirius/hermes-home" "$HERMES_HOME_DIR" "Hermes home resolves under workspace root"
 assert_eq "$ROOT/.tmp/workspaces/ezirius/hermes-home/.env" "$HERMES_ENV_FILE" "Hermes env file resolves under Hermes home"
+assert_eq "$ROOT/.tmp/workspaces/ezirius/hermes-home/config.yaml" "$HERMES_CONFIG_FILE" "Hermes config file resolves under Hermes home"
 assert_eq "$ROOT/.tmp/workspaces/ezirius/workspace" "$HERMES_WORKSPACE_DIR" "workspace dir resolves under workspace root"
 
 ensure_workspace_dirs

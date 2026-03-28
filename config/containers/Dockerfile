@@ -29,10 +29,13 @@ WORKDIR /home/hermes
 
 RUN git clone --depth 1 --branch "$HERMES_REF" "$HERMES_REPO_URL" /home/hermes/hermes-agent \
   && python3 /tmp/hermes-patches/apply-hermes-matrix-sync-diagnostics.py \
+  && python3 /tmp/hermes-patches/apply-hermes-matrix-store-home.py \
   && python3 -m venv /home/hermes/venv \
   && /home/hermes/venv/bin/pip install --upgrade pip \
   && /home/hermes/venv/bin/pip install -e "/home/hermes/hermes-agent[all]" \
-  && /home/hermes/venv/bin/pip install 'matrix-nio[e2e]'
+  && /home/hermes/venv/bin/pip install 'matrix-nio[e2e]' \
+  && rm -rf /home/hermes/.hermes \
+  && ln -s /data /home/hermes/.hermes
 
 ENV PATH=/home/hermes/venv/bin:$PATH
 ENV HERMES_HOME=/data

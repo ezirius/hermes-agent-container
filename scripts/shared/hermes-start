@@ -15,7 +15,11 @@ Arguments:
 
 The wrapper mounts:
 - <workspace>/hermes-home -> /data
-- <workspace>/workspace   -> /workspace"
+- <workspace>/workspace   -> /workspace
+
+Hermes reads /data/.env and /data/config.yaml itself when the gateway process
+starts. The container is created with restart policy unless-stopped so crashes
+and host reboots recover automatically, while a manual stop stays stopped."
 fi
 
 if [[ $# -ne 1 ]]; then
@@ -24,7 +28,6 @@ fi
 
 require_podman
 resolve_workspace "$1"
-load_env_file "$HERMES_ENV_FILE"
 ensure_workspace_dirs
 migrate_legacy_workspace_layout
 
@@ -54,12 +57,10 @@ fi
 echo "==> Starting Hermes Gateway container"
 RUN_ARGS=(podman run -d \
   --name "$HERMES_CONTAINER_NAME" \
+  --restart unless-stopped \
   -v "$HERMES_HOME_DIR:/data" \
   -v "$HERMES_WORKSPACE_DIR:/workspace" \
   -w /workspace)
-if [[ -f "$HERMES_ENV_FILE" ]]; then
-  RUN_ARGS+=(--env-file "$HERMES_ENV_FILE")
-fi
 RUN_ARGS+=("$HERMES_IMAGE_NAME" hermes gateway)
 "${RUN_ARGS[@]}" >/dev/null
 echo "==> Hermes Gateway container started: $HERMES_CONTAINER_NAME"

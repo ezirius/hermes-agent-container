@@ -153,13 +153,15 @@ mkdir -p "$HERMES_BASE_ROOT/ezirius"
 mkdir -p "$HERMES_BASE_ROOT/ezirius/hermes-home"
 touch "$HERMES_BASE_ROOT/ezirius/hermes-home/.env"
 printf 'OPENAI_API_KEY=test-key\n' >> "$HERMES_BASE_ROOT/ezirius/hermes-home/.env"
+printf 'HERMES_IMAGE_NAME=workspace-override\n' >> "$HERMES_BASE_ROOT/ezirius/hermes-home/.env"
 "$ROOT/scripts/shared/bootstrap" ezirius --help > "$STATE_DIR/bootstrap.out"
 assert_contains "$STATE_DIR/bootstrap.out" 'No upgrade needed' 'bootstrap checks upgrade before start'
 assert_contains "$STATE_DIR/podman.log" 'run -d --name hermes-agent-ezirius' 'bootstrap starts container'
+assert_contains "$STATE_DIR/podman.log" '--restart unless-stopped' 'bootstrap configures unless-stopped restart policy'
 assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/hermes-home:/data" 'bootstrap mounts Hermes home separately'
 assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/workspace:/workspace" 'bootstrap mounts persistent workspace directory'
-assert_contains "$STATE_DIR/podman.log" '--env-file /tmp/' 'bootstrap passes workspace env file into container'
-assert_contains "$STATE_DIR/podman.log" 'hermes gateway' 'bootstrap starts the Hermes gateway inside the container'
+assert_not_contains "$STATE_DIR/podman.log" '--env-file ' 'bootstrap does not inject workspace env via podman'
+assert_contains "$STATE_DIR/podman.log" 'mock-hermes-image hermes gateway' 'bootstrap keeps wrapper image selection outside workspace env'
 assert_contains "$STATE_DIR/podman.log" 'exec -i -w /workspace hermes-agent-ezirius hermes --help' 'bootstrap opens Hermes inside container'
 
 reset_state

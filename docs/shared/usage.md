@@ -12,6 +12,8 @@
 
 `hermes-start` starts the Hermes Gateway inside the container. `hermes-open` then opens the Hermes CLI in that same running container.
 
+If the workspace container already exists on the current image, `hermes-start` reuses it. If it is stopped, the wrapper uses `podman start`; if the image changed, the wrapper recreates the container on the new image.
+
 Common forwarded `bootstrap` examples:
 
 - `./scripts/shared/bootstrap ezirius setup`
@@ -30,9 +32,11 @@ Workspace names resolve under `HERMES_BASE_ROOT`.
 - the runtime state directories are created automatically under `hermes-home`
 - Hermes runs with `/data` mapped to `<workspace-root>/hermes-home`
 - Hermes runs with `/workspace` mapped to `<workspace-root>/workspace`
-- `hermes-home/.env` is passed into the container at start time so provider keys and Hermes env overrides are available inside Hermes
+- upstream Hermes reads `/data/.env` and `/data/config.yaml` directly when the gateway process starts
+- editing `hermes-home/.env` or `hermes-home/config.yaml` therefore only needs a container stop/start, not an image rebuild
 - the image includes Matrix support (`matrix-nio[e2e]` plus `libolm`) so Matrix messaging and encrypted Matrix rooms can work inside the container
-- the image build also applies a small local Matrix patch so failed initial syncs are surfaced clearly instead of being logged as connected
+- the image build also applies local Matrix patches so failed initial syncs are surfaced clearly and Matrix encrypted-state storage follows `HERMES_HOME`
+- `/home/hermes/.hermes` is linked to `/data` as a compatibility safeguard for any remaining upstream hardcoded `~/.hermes` paths
 
 ## Upstream source selection
 
@@ -49,12 +53,14 @@ Workspace names resolve under `HERMES_BASE_ROOT`.
   - GitHub API base used to resolve `latest-release`
   - default: `https://api.github.com`
 
-The local wrapper build fingerprint covers the image recipe files under `config/containers/` and `config/patches/`. That means local image-behaviour changes such as the Matrix sync diagnostics patch trigger a rebuild automatically on the next `hermes-upgrade` or `bootstrap`, even if the upstream Hermes ref stays the same.
+The local wrapper build fingerprint covers the image recipe files under `config/containers/` and `config/patches/`. That means local image-behaviour changes such as the Matrix sync diagnostics patch, Matrix store path patch, or compatibility-link setup trigger a rebuild automatically on the next `hermes-upgrade` or `bootstrap`, even if the upstream Hermes ref stays the same.
 
 ## Runtime model
 
 - Hermes itself runs in a persistent container
-- the workspace root is mounted so memory, sessions, skills, logs, and other state persist across container restarts
+- only `<workspace-root>/hermes-home` and `<workspace-root>/workspace` are mounted, and Hermes state persists through the `/data` mount
+- the container restart policy is `unless-stopped`, so crashes and host reboots recover automatically while a manual stop stays stopped
+- rebuilding is only for image-recipe or upstream-source changes; runtime config changes live in the mounted files under `hermes-home`
 - Hermes can safely use its normal `local` backend inside this container, so terminal work runs inside the Hermes container itself
 - if you want Hermes to use Docker as an internal execution backend too, you must separately mount a runtime socket and CLI support into this container
 
@@ -91,5 +97,5 @@ All wrapper scripts support `--help` and document their argument contracts there
 
 - Hermes upstream normal install is host-based, not container-first; this repo is a thin wrapper around that upstream model
 - `hermes-build` takes no positional arguments
-- `hermes-upgrade` takes no positional arguments and rebuilds only when the requested upstream source changed
+- `hermes-upgrade` takes no positional arguments and rebuilds when the requested upstream source changed or when the local wrapper image recipe changed
 - workspace-scoped commands require exactly one workspace name, except `hermes-open` and `hermes-logs`, which accept optional extra arguments after the workspace

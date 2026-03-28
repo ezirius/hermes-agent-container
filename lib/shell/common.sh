@@ -30,17 +30,6 @@ require_python3() {
   command -v python3 >/dev/null 2>&1 || fail "python3 is required"
 }
 
-load_env_file() {
-  local env_file="$1"
-
-  [[ -f "$env_file" ]] || return 0
-
-  set -a
-  # shellcheck disable=SC1090
-  source "$env_file"
-  set +a
-}
-
 image_exists() {
   podman image exists "$HERMES_IMAGE_NAME"
 }

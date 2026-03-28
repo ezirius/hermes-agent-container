@@ -51,6 +51,8 @@ assert_contains "$HELP_FILE" 'Common Hermes args:' 'open help documents key forw
 
 "$ROOT/scripts/shared/hermes-start" --help > "$HELP_FILE"
 assert_contains "$HELP_FILE" 'The wrapper mounts:' 'start help documents mount layout'
+assert_contains "$HELP_FILE" '/data/.env and /data/config.yaml' 'start help documents upstream config loading'
+assert_contains "$HELP_FILE" 'unless-stopped' 'start help documents restart policy'
 
 "$ROOT/scripts/shared/hermes-logs" --help > "$HELP_FILE"
 assert_contains "$HELP_FILE" 'Common podman log args:' 'logs help documents key forwarded arguments'

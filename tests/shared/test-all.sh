@@ -21,6 +21,10 @@ bash -n \
   "$ROOT/tests/shared/test-ref-resolution.sh" \
   "$ROOT/tests/shared/test-runtime.sh"
 
+python3 -m py_compile \
+  "$ROOT/config/patches/apply-hermes-matrix-sync-diagnostics.py" \
+  "$ROOT/config/patches/apply-hermes-matrix-store-home.py"
+
 "$ROOT/tests/shared/test-layout.sh"
 "$ROOT/tests/shared/test-common.sh"
 "$ROOT/tests/shared/test-args.sh"
