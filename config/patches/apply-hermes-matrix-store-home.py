@@ -14,14 +14,8 @@ def replace_once(old: str, new: str, description: str) -> None:
 
 
 replace_once(
-    "from gateway.config import Platform, PlatformConfig\n",
-    "from gateway.config import Platform, PlatformConfig\nfrom hermes_constants import get_hermes_home\n",
-    "hermes home import",
-)
-
-replace_once(
     '_STORE_DIR = Path.home() / ".hermes" / "matrix" / "store"\n',
-    '_STORE_DIR = get_hermes_home() / "matrix" / "store"\n',
+    '_STORE_DIR = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes")) / "matrix" / "store"\n',
     "matrix store path",
 )
 

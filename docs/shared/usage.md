@@ -10,7 +10,7 @@
 
 `bootstrap` runs `hermes-build`, then `hermes-upgrade`, then `hermes-start`, then `hermes-open`.
 
-`hermes-start` starts the Hermes Gateway inside the container. `hermes-open` then opens the Hermes CLI in that same running container.
+`hermes-start` starts the Hermes Gateway inside the persistent workspace container. `hermes-open` then opens the Hermes CLI in a transient interactive container that shares the same `/data` and `/workspace` mounts.
 
 If the workspace container already exists on the current image, `hermes-start` reuses it. If it is stopped, the wrapper uses `podman start`; if the image changed, the wrapper recreates the container on the new image.
 
@@ -61,6 +61,7 @@ The local wrapper build fingerprint covers the image recipe files under `config/
 - only `<workspace-root>/hermes-home` and `<workspace-root>/workspace` are mounted, and Hermes state persists through the `/data` mount
 - the container restart policy is `unless-stopped`, so crashes and host reboots recover automatically while a manual stop stays stopped
 - rebuilding is only for image-recipe or upstream-source changes; runtime config changes live in the mounted files under `hermes-home`
+- on macOS hosts, interactive CLI and shell entry uses transient `podman run -it` containers and can wrap TTY allocation with `script` to reduce host-side Podman exec-session drops
 - Hermes can safely use its normal `local` backend inside this container, so terminal work runs inside the Hermes container itself
 - if you want Hermes to use Docker as an internal execution backend too, you must separately mount a runtime socket and CLI support into this container
 

@@ -55,4 +55,10 @@ if bash -lc 'set -euo pipefail; source "$1"; resolve_workspace ".."' _ "$ROOT/li
 fi
 grep -Fq "workspace name must not be '..'" "$ERR_FILE"
 
+if bash -lc 'set -euo pipefail; source "$1"; export HERMES_PODMAN_TTY_WRAPPER=bad; should_wrap_podman_tty_with_script' _ "$ROOT/lib/shell/common.sh" >/dev/null 2> "$ERR_FILE"; then
+  printf 'assertion failed: unsupported tty wrapper modes should fail\n' >&2
+  exit 1
+fi
+grep -Fq 'unsupported HERMES_PODMAN_TTY_WRAPPER value: bad' "$ERR_FILE"
+
 echo "Common helper checks passed"

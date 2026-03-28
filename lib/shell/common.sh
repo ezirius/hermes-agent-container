@@ -30,6 +30,49 @@ require_python3() {
   command -v python3 >/dev/null 2>&1 || fail "python3 is required"
 }
 
+use_interactive_tty() {
+  if [[ ${HERMES_FORCE_EXEC_TTY:-} == "1" ]]; then
+    return 0
+  fi
+
+  [[ -t 0 ]]
+}
+
+should_wrap_podman_tty_with_script() {
+  local mode="${HERMES_PODMAN_TTY_WRAPPER:-auto}"
+
+  case "$mode" in
+    none)
+      return 1
+      ;;
+    script)
+      command -v script >/dev/null 2>&1
+      return $?
+      ;;
+    auto)
+      [[ ${OSTYPE-} == darwin* ]] && command -v script >/dev/null 2>&1
+      return $?
+      ;;
+    *)
+      fail "unsupported HERMES_PODMAN_TTY_WRAPPER value: $mode"
+      ;;
+  esac
+}
+
+exec_podman_interactive_command() {
+  local subcommand="$1"
+  shift
+
+  if use_interactive_tty; then
+    if should_wrap_podman_tty_with_script; then
+      exec script -q /dev/null podman "$subcommand" -it "$@"
+    fi
+    exec podman "$subcommand" -it "$@"
+  fi
+
+  exec podman "$subcommand" -i "$@"
+}
+
 image_exists() {
   podman image exists "$HERMES_IMAGE_NAME"
 }

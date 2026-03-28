@@ -61,6 +61,6 @@ RUN_ARGS=(podman run -d \
   -v "$HERMES_HOME_DIR:/data" \
   -v "$HERMES_WORKSPACE_DIR:/workspace" \
   -w /workspace)
-RUN_ARGS+=("$HERMES_IMAGE_NAME" hermes gateway)
+RUN_ARGS+=("$HERMES_IMAGE_NAME" hermes gateway run)
 "${RUN_ARGS[@]}" >/dev/null
 echo "==> Hermes Gateway container started: $HERMES_CONTAINER_NAME"

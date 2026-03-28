@@ -12,7 +12,7 @@ Start the full Hermes flow for one workspace:
 - ensure the shared image exists
 - refresh it if the requested upstream release changed or the local wrapper image recipe changed
 - start or reuse the workspace container
-- open Hermes inside the running container
+- open Hermes in a transient interactive container that shares the workspace mounts
 
 Arguments:
 - <workspace-name>           required workspace name under HERMES_BASE_ROOT

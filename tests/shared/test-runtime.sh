@@ -97,6 +97,18 @@ esac
 EOF
 chmod +x "$MOCK_BIN/podman"
 
+cat > "$MOCK_BIN/script" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+STATE_DIR="${STATE_DIR:?}"
+printf '%s\n' "script $*" >> "$STATE_DIR/podman.log"
+[[ "$1" == "-q" ]] || exit 1
+[[ "$2" == "/dev/null" ]] || exit 1
+shift 2
+exec "$@"
+EOF
+chmod +x "$MOCK_BIN/script"
+
 export PATH="$MOCK_BIN:$PATH"
 export STATE_DIR
 export HERMES_BASE_ROOT="$TMPDIR/workspaces"
@@ -161,8 +173,11 @@ assert_contains "$STATE_DIR/podman.log" '--restart unless-stopped' 'bootstrap co
 assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/hermes-home:/data" 'bootstrap mounts Hermes home separately'
 assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/workspace:/workspace" 'bootstrap mounts persistent workspace directory'
 assert_not_contains "$STATE_DIR/podman.log" '--env-file ' 'bootstrap does not inject workspace env via podman'
-assert_contains "$STATE_DIR/podman.log" 'mock-hermes-image hermes gateway' 'bootstrap keeps wrapper image selection outside workspace env'
-assert_contains "$STATE_DIR/podman.log" 'exec -i -w /workspace hermes-agent-ezirius hermes --help' 'bootstrap opens Hermes inside container'
+assert_contains "$STATE_DIR/podman.log" 'mock-hermes-image hermes gateway run' 'bootstrap keeps wrapper image selection outside workspace env and runs foreground gateway command'
+assert_contains "$STATE_DIR/podman.log" 'run -i --rm' 'bootstrap opens Hermes with a transient interactive container'
+assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/hermes-home:/data" 'bootstrap interactive Hermes container mounts Hermes home'
+assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/workspace:/workspace" 'bootstrap interactive Hermes container mounts workspace'
+assert_contains "$STATE_DIR/podman.log" 'mock-hermes-image hermes --help' 'bootstrap opens Hermes CLI from the shared image'
 
 reset_state
 write_file "$STATE_DIR/image_exists" '1'
@@ -187,7 +202,14 @@ reset_state
 write_file "$STATE_DIR/container_exists" '1'
 write_file "$STATE_DIR/container_running" 'true'
 "$ROOT/scripts/shared/hermes-shell" ezirius > "$STATE_DIR/shell.out"
-assert_contains "$STATE_DIR/podman.log" 'exec -it -w /workspace hermes-agent-ezirius /bin/bash' 'shell opens bash inside container'
+assert_contains "$STATE_DIR/podman.log" 'run -i --rm' 'shell uses a transient non-tty container when no tty is available'
+assert_contains "$STATE_DIR/podman.log" 'mock-hermes-image /bin/bash' 'shell starts bash from the shared image'
+
+reset_state
+write_file "$STATE_DIR/container_exists" '1'
+write_file "$STATE_DIR/container_running" 'true'
+HERMES_FORCE_EXEC_TTY=1 OSTYPE=darwin24 "$ROOT/scripts/shared/hermes-shell" ezirius > "$STATE_DIR/shell-darwin.out"
+assert_contains "$STATE_DIR/podman.log" 'script -q /dev/null podman run -it --rm' 'shell uses script tty wrapper for transient macOS interactive container'
 
 reset_state
 write_file "$STATE_DIR/container_exists" '1'

@@ -85,12 +85,13 @@ The image includes Matrix support (`matrix-nio[e2e]` plus `libolm`) so Matrix an
 - `hermes-build` ensures the shared image exists
 - `hermes-upgrade` rebuilds the shared image when the requested upstream source changed or when the local wrapper image recipe changed
 - `hermes-start` starts or reuses the local Hermes Gateway container only
-- `hermes-open` runs the Hermes CLI inside the running container
+- `hermes-open` runs the Hermes CLI in a transient interactive container that shares the workspace mounts of the running gateway container
 - `bootstrap` performs the full `build -> upgrade -> start -> open` flow
 - by default, `hermes-build` and `hermes-upgrade` resolve the latest upstream Hermes release tag and fail clearly if no upstream release is available
 - in practice, repeated `bootstrap` runs are what keep you on the latest upstream release and current wrapper behaviour: `hermes-build` is no-op when the image exists, while `hermes-upgrade` re-checks the latest GitHub release and also compares the local wrapper build fingerprint before deciding whether to rebuild
 - if you set `HERMES_REF` to an explicit tag or branch, `hermes-upgrade` compares that literal ref only; it does not poll for branch-head movement
 - the gateway container is created with Podman restart policy `unless-stopped`, so crashes and host reboots recover automatically while a manual stop remains stopped
+- on macOS hosts, interactive `hermes-open` and `hermes-shell` calls run in transient interactive containers and can wrap Podman TTY allocation with `script` to reduce known remote-session issues
 
 Container lifecycle details:
 
