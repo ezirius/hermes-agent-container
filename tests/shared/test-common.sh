@@ -23,17 +23,34 @@ assert_eq "$ROOT/.tmp/workspaces/ezirius/workspace" "$HERMES_WORKSPACE_DIR" "wor
 
 ensure_workspace_dirs
 test -d "$HERMES_HOME_DIR/sessions"
+test -d "$HERMES_HOME_DIR/cache/images"
+test -d "$HERMES_HOME_DIR/cache/audio"
+test -d "$HERMES_HOME_DIR/platforms/whatsapp/session"
 test -d "$HERMES_WORKSPACE_DIR"
 
 touch "$WORKSPACE_ROOT/auth.json"
 touch "$WORKSPACE_ROOT/.env"
-mkdir -p "$WORKSPACE_ROOT/logs"
-touch "$WORKSPACE_ROOT/logs/runtime.log"
+mkdir -p "$WORKSPACE_ROOT/logs" "$WORKSPACE_ROOT/image_cache" "$WORKSPACE_ROOT/audio_cache" "$WORKSPACE_ROOT/whatsapp/session"
+touch "$WORKSPACE_ROOT/logs/runtime.log" "$WORKSPACE_ROOT/image_cache/legacy-image" "$WORKSPACE_ROOT/audio_cache/legacy-audio" "$WORKSPACE_ROOT/whatsapp/session/legacy-wa"
+mkdir -p "$HERMES_HOME_DIR/image_cache" "$HERMES_HOME_DIR/audio_cache" "$HERMES_HOME_DIR/whatsapp/session"
+touch "$HERMES_HOME_DIR/image_cache/home-image" "$HERMES_HOME_DIR/audio_cache/home-audio" "$HERMES_HOME_DIR/whatsapp/session/home-wa"
 migrate_legacy_workspace_layout
 test -f "$HERMES_HOME_DIR/auth.json"
 test -f "$HERMES_HOME_DIR/logs/runtime.log"
 test -f "$HERMES_ENV_FILE"
+test -f "$HERMES_HOME_DIR/cache/images/legacy-image"
+test -f "$HERMES_HOME_DIR/cache/images/home-image"
+test -f "$HERMES_HOME_DIR/cache/audio/legacy-audio"
+test -f "$HERMES_HOME_DIR/cache/audio/home-audio"
+test -f "$HERMES_HOME_DIR/platforms/whatsapp/session/legacy-wa"
+test -f "$HERMES_HOME_DIR/platforms/whatsapp/session/home-wa"
 test ! -e "$WORKSPACE_ROOT/auth.json"
+test ! -e "$WORKSPACE_ROOT/image_cache"
+test ! -e "$WORKSPACE_ROOT/audio_cache"
+test ! -e "$WORKSPACE_ROOT/whatsapp"
+test ! -e "$HERMES_HOME_DIR/image_cache"
+test ! -e "$HERMES_HOME_DIR/audio_cache"
+test ! -e "$HERMES_HOME_DIR/whatsapp"
 
 ERR_FILE="$(mktemp)"
 trap 'rm -f "$ERR_FILE"' EXIT
@@ -60,6 +77,18 @@ if bash -lc 'set -euo pipefail; source "$1"; export HERMES_PODMAN_TTY_WRAPPER=ba
   exit 1
 fi
 grep -Fq 'unsupported HERMES_PODMAN_TTY_WRAPPER value: bad' "$ERR_FILE"
+
+if bash -lc 'set -euo pipefail; source "$1"; export HERMES_PODMAN_TTY_WRAPPER=script; PATH="/nonexistent"; should_wrap_podman_tty_with_script' _ "$ROOT/lib/shell/common.sh" >/dev/null 2> "$ERR_FILE"; then
+  printf 'assertion failed: explicit script tty mode should fail when script is unavailable\n' >&2
+  exit 1
+fi
+grep -Fq "HERMES_PODMAN_TTY_WRAPPER=script requires 'script' to be installed" "$ERR_FILE"
+
+if bash -lc 'set -euo pipefail; source "$1"; export HERMES_BASE_ROOT="~other/tmp"; resolve_workspace ezirius' _ "$ROOT/lib/shell/common.sh" >/dev/null 2> "$ERR_FILE"; then
+  printf 'assertion failed: unsupported ~user path forms should fail\n' >&2
+  exit 1
+fi
+grep -Fq 'unsupported path form: ~other/tmp (use an absolute path or ~/...)' "$ERR_FILE"
 
 EXPECTED_BUILD_FINGERPRINT="$(python3 - "$ROOT" <<'PY'
 import hashlib

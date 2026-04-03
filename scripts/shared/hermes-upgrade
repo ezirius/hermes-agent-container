@@ -44,9 +44,21 @@ if [[ -n "$CURRENT_REPO_URL" && -n "$CURRENT_REF" && -n "$CURRENT_BUILD_FINGERPR
   exit 0
 fi
 
+TEMP_IMAGE_NAME="${HERMES_IMAGE_NAME}-upgrade-tmp"
+
+cleanup_temp_image() {
+  podman image rm -f "$TEMP_IMAGE_NAME" >/dev/null 2>&1 || true
+}
+trap cleanup_temp_image EXIT
+
 echo "==> Upgrading Hermes image: $HERMES_IMAGE_NAME"
 echo "==> Target upstream repo: $HERMES_REPO_URL"
 echo "==> Target upstream ref:  $HERMES_REF"
 echo "==> Target local build fingerprint: $LOCAL_BUILD_FINGERPRINT"
+echo "==> Building replacement image first: $TEMP_IMAGE_NAME"
+HERMES_IMAGE_NAME="$TEMP_IMAGE_NAME" "$SCRIPT_DIR/hermes-build" >/dev/null
 podman image rm -f "$HERMES_IMAGE_NAME" >/dev/null
-exec "$SCRIPT_DIR/hermes-build"
+podman tag "$TEMP_IMAGE_NAME" "$HERMES_IMAGE_NAME"
+cleanup_temp_image
+trap - EXIT
+echo "==> Hermes image upgrade complete"

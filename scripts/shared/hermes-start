@@ -31,6 +31,7 @@ require_podman
 resolve_workspace "$1"
 ensure_workspace_dirs
 migrate_legacy_workspace_layout
+ensure_workspace_dirs
 
 if ! image_exists; then
   fail "image not found: $HERMES_IMAGE_NAME (run $SCRIPT_DIR/hermes-build first)"

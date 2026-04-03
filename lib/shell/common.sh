@@ -46,8 +46,8 @@ should_wrap_podman_tty_with_script() {
       return 1
       ;;
     script)
-      command -v script >/dev/null 2>&1
-      return $?
+      command -v script >/dev/null 2>&1 || fail "HERMES_PODMAN_TTY_WRAPPER=script requires 'script' to be installed"
+      return 0
       ;;
     auto)
       [[ ${OSTYPE-} == darwin* ]] && command -v script >/dev/null 2>&1
@@ -135,14 +135,24 @@ current_image_build_fingerprint() {
 
 normalize_path() {
   local value="$1"
-  if [[ "$value" == ~* ]]; then
-    printf '%s' "${value/#\~/$HOME}"
-  else
-    printf '%s' "$value"
-  fi
+  case "$value" in
+    "~")
+      printf '%s' "${HOME:?HOME is required}"
+      ;;
+    "~/"*)
+      printf '%s' "${HOME:?HOME is required}/${value#~/}"
+      ;;
+    "~"*)
+      fail "unsupported path form: $value (use an absolute path or ~/...)"
+      ;;
+    *)
+      printf '%s' "$value"
+      ;;
+  esac
 }
 
 normalize_absolute_path() {
+  require_python3
   python3 - "$1" <<'PY'
 import os, sys
 print(os.path.abspath(sys.argv[1]))
@@ -185,10 +195,30 @@ ensure_workspace_dirs() {
     "$HERMES_HOME_DIR/skills" \
     "$HERMES_HOME_DIR/pairing" \
     "$HERMES_HOME_DIR/hooks" \
-    "$HERMES_HOME_DIR/image_cache" \
-    "$HERMES_HOME_DIR/audio_cache" \
-    "$WORKSPACE_ROOT/workspace" \
-    "$HERMES_HOME_DIR/whatsapp/session"
+    "$HERMES_HOME_DIR/cache/images" \
+    "$HERMES_HOME_DIR/cache/audio" \
+    "$HERMES_HOME_DIR/platforms/whatsapp/session" \
+    "$WORKSPACE_ROOT/workspace"
+}
+
+move_path_contents() {
+  local source="$1"
+  local target="$2"
+
+  [[ -e "$source" ]] || return 0
+
+  if [[ -d "$source" ]]; then
+    mkdir -p "$target"
+    shopt -s dotglob nullglob
+    if [[ -d "$source" ]]; then
+      mv "$source"/* "$target"/ 2>/dev/null || true
+      rmdir "$source" 2>/dev/null || true
+    fi
+    shopt -u dotglob nullglob
+  elif [[ ! -e "$target" ]]; then
+    mkdir -p "$(dirname "$target")"
+    mv "$source" "$target"
+  fi
 }
 
 migrate_legacy_workspace_layout() {
@@ -212,29 +242,25 @@ migrate_legacy_workspace_layout() {
     "sandboxes" \
     "sessions" \
     "skills" \
-    "hooks" \
-    "image_cache" \
-    "audio_cache" \
-    "whatsapp"
+    "hooks"
   do
     if [[ ! -e "$WORKSPACE_ROOT/$path" ]]; then
       continue
     fi
 
     target="$HERMES_HOME_DIR/$path"
-
-    if [[ -d "$WORKSPACE_ROOT/$path" ]]; then
-      mkdir -p "$target"
-      shopt -s dotglob nullglob
-      if [[ -d "$WORKSPACE_ROOT/$path" ]]; then
-        mv "$WORKSPACE_ROOT/$path"/* "$target"/ 2>/dev/null || true
-        rmdir "$WORKSPACE_ROOT/$path" 2>/dev/null || true
-      fi
-      shopt -u dotglob nullglob
-    elif [[ ! -e "$target" ]]; then
-      mv "$WORKSPACE_ROOT/$path" "$target"
-    fi
+    move_path_contents "$WORKSPACE_ROOT/$path" "$target"
   done
+
+  move_path_contents "$WORKSPACE_ROOT/image_cache" "$HERMES_HOME_DIR/cache/images"
+  move_path_contents "$WORKSPACE_ROOT/audio_cache" "$HERMES_HOME_DIR/cache/audio"
+  move_path_contents "$WORKSPACE_ROOT/whatsapp/session" "$HERMES_HOME_DIR/platforms/whatsapp/session"
+  [[ -d "$WORKSPACE_ROOT/whatsapp" ]] && rmdir "$WORKSPACE_ROOT/whatsapp" 2>/dev/null || true
+
+  move_path_contents "$HERMES_HOME_DIR/image_cache" "$HERMES_HOME_DIR/cache/images"
+  move_path_contents "$HERMES_HOME_DIR/audio_cache" "$HERMES_HOME_DIR/cache/audio"
+  move_path_contents "$HERMES_HOME_DIR/whatsapp/session" "$HERMES_HOME_DIR/platforms/whatsapp/session"
+  [[ -d "$HERMES_HOME_DIR/whatsapp" ]] && rmdir "$HERMES_HOME_DIR/whatsapp" 2>/dev/null || true
 
   if [[ -f "$WORKSPACE_ROOT/.env" && ! -e "$HERMES_ENV_FILE" ]]; then
     mv "$WORKSPACE_ROOT/.env" "$HERMES_ENV_FILE"
@@ -267,6 +293,9 @@ github_repo_slug() {
     http://github.com/*)
       repo_url="${repo_url#http://github.com/}"
       ;;
+    ssh://git@github.com/*)
+      repo_url="${repo_url#ssh://git@github.com/}"
+      ;;
     git@github.com:*)
       repo_url="${repo_url#git@github.com:}"
       ;;
@@ -276,7 +305,8 @@ github_repo_slug() {
   esac
 
   repo_url="${repo_url%.git}"
-  [[ "$repo_url" = */* ]] || fail "could not derive owner/repo from HERMES_REPO_URL: $1"
+  repo_url="${repo_url%/}"
+  [[ "$repo_url" =~ ^[^/]+/[^/]+$ ]] || fail "could not derive owner/repo from HERMES_REPO_URL: $1"
   printf '%s' "$repo_url"
 }
 

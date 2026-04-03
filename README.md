@@ -82,17 +82,19 @@ Each workspace lives under `HERMES_BASE_ROOT` with this host layout:
 │   ├── skills/
 │   ├── pairing/
 │   ├── hooks/
-│   ├── image_cache/
-│   ├── audio_cache/
-│   └── whatsapp/
-│       └── session/
+│   ├── cache/
+│   │   ├── images/
+│   │   └── audio/
+│   └── platforms/
+│       └── whatsapp/
+│           └── session/
 └── workspace/
     └── ...your own workspace files...
 ```
 
-The scripts create the workspace root and runtime directories automatically. Hermes runs with `/opt/data` mapped to `<workspace-root>/hermes-home` and `/workspace` mapped to `<workspace-root>/workspace`.
+The scripts create the workspace root and runtime directories automatically. New workspaces follow the latest upstream release layout under `hermes-home`, including consolidated cache paths like `cache/images`, `cache/audio`, and `platforms/whatsapp/session`. Hermes runs with `/opt/data` mapped to `<workspace-root>/hermes-home` and `/workspace` mapped to `<workspace-root>/workspace`.
 
-On first run, the wrapper seeds `.env`, `config.yaml`, `SOUL.md`, and `AGENTS.md` into `hermes-home` when they are missing. The wrapper also patches upstream context discovery so the operative `AGENTS.md` is the host-backed `/opt/data/AGENTS.md`, not only the internal upstream checkout copy, without suppressing other project-local context files under `/workspace`.
+On first run, the wrapper seeds `.env`, `config.yaml`, `SOUL.md`, and `AGENTS.md` into `hermes-home` when they are missing. The wrapper also patches upstream context discovery so the operative default `AGENTS.md` is the host-backed `/opt/data/AGENTS.md`, not only the internal upstream checkout copy. Other project-local context files under `/workspace` still load normally, but a project-local `AGENTS.md` does not override the host-backed one unless you remove or replace `/opt/data/AGENTS.md`.
 
 In practice that means:
 
@@ -156,6 +158,8 @@ For Matrix state persistence:
 
 - upstream Hermes resolves Matrix storage through `HERMES_HOME`
 - the wrapper also links `/home/hermes/.hermes` to `/opt/data` as a compatibility fallback for any remaining hardcoded `~/.hermes` paths
+- the wrapper-managed mautrix store persists inbound Megolm sessions in `mautrix_crypto.json` so imported room keys can survive restart on the same device
+- if you import room keys while Hermes is already running, restart the workspace container once so the live crypto machine reloads them from disk
 
 ### Matrix validation on the real Podman host
 

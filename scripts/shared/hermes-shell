@@ -20,6 +20,10 @@ require_podman
 resolve_workspace "$1"
 container_exists || fail "container not found: $HERMES_CONTAINER_NAME (run $SCRIPT_DIR/hermes-start first)"
 container_running || fail "container not running: $HERMES_CONTAINER_NAME (run $SCRIPT_DIR/hermes-start first)"
+if [[ "$(container_image_id)" != "$(image_id)" ]]; then
+  echo "==> Workspace container image is stale; reconciling with the current shared image"
+  "$SCRIPT_DIR/hermes-start" "$WORKSPACE_NAME" >/dev/null
+fi
 exec_podman_interactive_command run \
   --rm \
   --entrypoint /bin/bash \

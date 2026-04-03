@@ -19,4 +19,4 @@ require_podman
 resolve_workspace "$1"
 
 container_exists || fail "container not found: $HERMES_CONTAINER_NAME"
-podman ps -a --filter "name=$HERMES_CONTAINER_NAME"
+podman inspect "$HERMES_CONTAINER_NAME"

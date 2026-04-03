@@ -28,18 +28,18 @@ def replace_regex_once(path: Path, pattern: str, replacement: str, description: 
 
 # Update dependency metadata.
 pyproject = ROOT / "pyproject.toml"
-replace_once(
+replace_regex_once(
     pyproject,
-    'matrix = ["matrix-nio[e2e]>=0.24.0,<1"]',
+    r'^matrix\s*=\s*\["matrix-nio\[e2e\]>=0\.24\.0,<1"\]$',
     'matrix = ["mautrix>=0.20.8,<1", "python-olm>=3.2.16,<4", "unpaddedbase64>=2.1.0,<3", "base58>=2.1.1,<3"]',
     "pyproject matrix dependency",
 )
 
 # Update gateway bootstrap warning text.
 run_py = ROOT / "gateway/run.py"
-replace_once(
+replace_regex_once(
     run_py,
-    'logger.warning("Matrix: matrix-nio not installed or credentials not set. Run: pip install \'matrix-nio[e2e]\'")',
+    r"logger\.warning\(\"Matrix: matrix-nio not installed or credentials not set\. Run: pip install 'matrix-nio\[e2e\]'\"\)",
     'logger.warning("Matrix: mautrix not installed or credentials not set. Run: pip install \'hermes-agent[matrix]\'")',
     "gateway warning text",
 )

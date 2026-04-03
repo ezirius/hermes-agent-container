@@ -2,7 +2,7 @@ FROM debian:13.4
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG HERMES_REPO_URL=https://github.com/NousResearch/hermes-agent.git
-ARG HERMES_REF=latest-release
+ARG HERMES_REF
 
 LABEL hermes.repo_url=$HERMES_REPO_URL
 LABEL hermes.ref=$HERMES_REF
@@ -34,10 +34,15 @@ RUN chmod +x /usr/local/bin/hermes-entrypoint.sh \
 
 WORKDIR /home/hermes
 
+RUN test -n "$HERMES_REF" \
+  && test "$HERMES_REF" != "latest-release" \
+  || (echo >&2 "HERMES_REF must be set to a real upstream tag or branch before building" && exit 1)
+
 RUN git clone --depth 1 --branch "$HERMES_REF" "$HERMES_REPO_URL" /home/hermes/hermes-agent \
   && python3 /tmp/hermes-patches/apply-hermes-mautrix-migration.py \
   && python3 /tmp/hermes-patches/apply-hermes-host-agents-context.py \
   && python3 -m pip install -e "/home/hermes/hermes-agent[all]" --break-system-packages \
+  && python3 -m pip install -e "/home/hermes/hermes-agent[matrix]" --break-system-packages \
   && cd /home/hermes/hermes-agent \
   && npm install \
   && npx playwright install --with-deps chromium \

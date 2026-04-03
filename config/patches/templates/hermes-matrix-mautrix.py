@@ -35,9 +35,27 @@ _STARTUP_GRACE_SECONDS = 5
 def check_matrix_requirements() -> bool:
     token = os.getenv("MATRIX_ACCESS_TOKEN", "")
     password = os.getenv("MATRIX_PASSWORD", "")
+    user_id = os.getenv("MATRIX_USER_ID", "")
     homeserver = os.getenv("MATRIX_HOMESERVER", "")
-    if not token and not password:
-        logger.debug("Matrix: neither MATRIX_ACCESS_TOKEN nor MATRIX_PASSWORD set")
+    stored_auth_path = _STORE_DIR / "mautrix_auth.json"
+    stored_auth: Dict[str, Any] = {}
+
+    if stored_auth_path.exists():
+        try:
+            raw = json.loads(stored_auth_path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                stored_auth = raw
+        except Exception:
+            stored_auth = {}
+
+    effective_token = token or str(stored_auth.get("access_token", ""))
+    effective_user_id = user_id or str(stored_auth.get("user_id", ""))
+
+    if not effective_token and not password:
+        logger.debug("Matrix: neither MATRIX_ACCESS_TOKEN, stored auth token, nor MATRIX_PASSWORD set")
+        return False
+    if password and not effective_token and not effective_user_id:
+        logger.warning("Matrix: MATRIX_USER_ID not set for password-based login")
         return False
     if not homeserver:
         logger.warning("Matrix: MATRIX_HOMESERVER not set")
@@ -54,11 +72,10 @@ def check_matrix_requirements() -> bool:
 
 
 class _LiteFileCryptoStore:
-    """Lightweight persistence wrapper around mautrix MemoryCryptoStore.
+    """Lightweight file-backed wrapper around mautrix MemoryCryptoStore.
 
-    This preserves account, device ID and sync token across restarts. Session/device
-    data stays in memory per runtime. That is not perfect, but it preserves stable
-    device identity and reduces churn while keeping the wrapper self-contained.
+    This preserves account, device ID, sync token, and inbound Megolm sessions
+    across restarts while remaining self-contained in the wrapper runtime.
     """
 
     def __init__(self, account_id: str, pickle_key: str, path: Path) -> None:
@@ -68,18 +85,87 @@ class _LiteFileCryptoStore:
         self._path = path
         self.account_id = self._store.account_id
         self.pickle_key = self._store.pickle_key
+        self._raw_state: Dict[str, Any] = {}
+        self._saw_inbound_sessions = False
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._store, name)
 
-    async def open(self) -> None:
+    def _load_raw_state(self) -> Dict[str, Any]:
         if not self._path.exists():
-            return
+            return {}
         try:
             raw = json.loads(self._path.read_text(encoding="utf-8"))
         except Exception as exc:
             logger.warning("Matrix: failed to read mautrix crypto state: %s", exc)
-            return
+            return {}
+        if not isinstance(raw, dict):
+            logger.warning("Matrix: expected JSON object in mautrix crypto state, got %s", type(raw).__name__)
+            return {}
+        return raw
+
+    @staticmethod
+    def _serialise_group_session(session_id: str, session: Any) -> Dict[str, Any]:
+        return {
+            "room_id": str(session.room_id),
+            "sender_key": str(session.sender_key),
+            "signing_key": str(session.signing_key),
+            "session_id": session_id,
+            "session_key": session.export_session(session.first_known_index),
+            "forwarding_curve25519_key_chain": list(getattr(session, "forwarding_chain", []) or []),
+        }
+
+    async def _restore_group_sessions(self, raw_sessions: Any) -> int:
+        from mautrix.crypto.sessions import InboundGroupSession
+
+        if not isinstance(raw_sessions, list):
+            return 0
+
+        restored = 0
+        for item in raw_sessions:
+            if not isinstance(item, dict):
+                continue
+            room_id = item.get("room_id")
+            sender_key = item.get("sender_key")
+            signing_key = item.get("signing_key")
+            session_key = item.get("session_key")
+            session_id = item.get("session_id")
+            if not all([room_id, sender_key, signing_key, session_key]):
+                continue
+            try:
+                session = InboundGroupSession.import_session(
+                    session_key,
+                    signing_key=signing_key,
+                    sender_key=sender_key,
+                    room_id=room_id,
+                    forwarding_chain=item.get("forwarding_curve25519_key_chain")
+                    or item.get("forwarding_chain")
+                    or [],
+                )
+                resolved_session_id = session_id or session.id
+                if resolved_session_id != session.id:
+                    logger.warning(
+                        "Matrix: inbound session ID mismatch for room %s: file=%s actual=%s; using actual ID",
+                        room_id,
+                        resolved_session_id,
+                        session.id,
+                    )
+                    resolved_session_id = session.id
+                await self._store.put_group_session(room_id, sender_key, resolved_session_id, session)
+                restored += 1
+            except Exception as exc:
+                logger.warning(
+                    "Matrix: failed to restore inbound Megolm session %s for room %s: %s",
+                    session_id or "<unknown>",
+                    room_id,
+                    exc,
+                )
+        return restored
+
+    async def open(self) -> None:
+        raw = self._load_raw_state()
+        self._raw_state = dict(raw)
+        self._saw_inbound_sessions = "inbound_sessions" in raw
 
         try:
             device_id = raw.get("device_id")
@@ -99,12 +185,15 @@ class _LiteFileCryptoStore:
                     shared=shared,
                 )
                 await self._store.put_account(account)
+            restored = await self._restore_group_sessions(raw.get("inbound_sessions") or [])
+            if restored:
+                logger.info("Matrix: restored %s inbound Megolm session(s)", restored)
         except Exception as exc:
             logger.warning("Matrix: failed to restore mautrix crypto state: %s", exc)
 
     async def flush(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        payload: Dict[str, Any] = {}
+        payload: Dict[str, Any] = self._load_raw_state() or dict(self._raw_state)
         try:
             payload["device_id"] = await self._store.get_device_id()
             payload["next_batch"] = await self._store.get_next_batch()
@@ -112,10 +201,20 @@ class _LiteFileCryptoStore:
             if account is not None:
                 payload["account_pickle"] = account.pickle(self.pickle_key).decode("latin1")
                 payload["account_shared"] = bool(getattr(account, "shared", False))
+            inbound_sessions = getattr(self._store, "_inbound_sessions", None) or {}
+            if inbound_sessions:
+                payload["inbound_sessions"] = [
+                    self._serialise_group_session(session_id, session)
+                    for (_, session_id), session in sorted(inbound_sessions.items())
+                ]
+            elif not self._saw_inbound_sessions:
+                payload.pop("inbound_sessions", None)
         except Exception as exc:
             logger.warning("Matrix: failed to snapshot mautrix crypto state: %s", exc)
             return
         self._path.write_text(json.dumps(payload), encoding="utf-8")
+        self._raw_state = dict(payload)
+        self._saw_inbound_sessions = "inbound_sessions" in payload
 
     async def close(self) -> None:
         await self.flush()
@@ -174,6 +273,45 @@ class MatrixAdapter(BasePlatformAdapter):
         self._processed_events_set.add(event_id)
         return False
 
+    def _load_stored_auth(self, auth_state_path: Path) -> Dict[str, Any]:
+        if not auth_state_path.exists():
+            return {}
+        try:
+            raw = json.loads(auth_state_path.read_text(encoding="utf-8"))
+            return raw if isinstance(raw, dict) else {}
+        except Exception:
+            return {}
+
+    async def _cleanup_failed_connect(self) -> None:
+        client = self._client
+        self._client = None
+        self._sync_task = None
+        if client is not None:
+            try:
+                client.stop()
+                syncing_task = getattr(client, "syncing_task", None)
+                if syncing_task:
+                    try:
+                        await syncing_task
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        if self._crypto_store:
+            try:
+                await self._crypto_store.close()
+            except Exception:
+                pass
+            self._crypto_store = None
+        if self._state_store:
+            try:
+                await self._state_store.close()
+            except Exception:
+                pass
+            self._state_store = None
+
     async def connect(self) -> bool:
         from mautrix.client import Client
         from mautrix.client.state_store.file import FileStateStore
@@ -191,19 +329,15 @@ class MatrixAdapter(BasePlatformAdapter):
         self._state_store = FileStateStore(state_store_path)
         await self._state_store.open()
 
-        account_id = self._user_id or "matrix-user"
-        self._crypto_store = _LiteFileCryptoStore(account_id, self._pickle_key, crypto_store_path)
-        await self._crypto_store.open()
-
-        stored_device_id = self._device_id or (await self._crypto_store.get_device_id()) or ""
-        stored_auth: Dict[str, Any] = {}
-        if auth_state_path.exists():
-            try:
-                stored_auth = json.loads(auth_state_path.read_text(encoding="utf-8"))
-            except Exception:
-                stored_auth = {}
+        stored_auth = self._load_stored_auth(auth_state_path)
         effective_token = self._access_token or stored_auth.get("access_token", "")
         effective_user_id = self._user_id or stored_auth.get("user_id", "")
+        account_id = effective_user_id or "matrix-user"
+        self._crypto_store = _LiteFileCryptoStore(account_id, self._pickle_key, crypto_store_path)
+        await self._crypto_store.open()
+        self._crypto_store.account_id = account_id
+
+        stored_device_id = self._device_id or (await self._crypto_store.get_device_id()) or ""
 
         client = Client(
             effective_user_id or "@unknown:invalid",
@@ -214,66 +348,104 @@ class MatrixAdapter(BasePlatformAdapter):
         )
         self._client = client
 
-        if effective_token:
-            whoami = await client.whoami()
-            self._user_id = str(whoami.user_id)
-            self._device_id = str(getattr(whoami, "device_id", stored_device_id or ""))
-            client.mxid = self._user_id
-            client.device_id = self._device_id
-            logger.info("Matrix: using access token for %s (device %s)", self._user_id, self._device_id or "unknown")
-        elif self._password and (effective_user_id or self._user_id):
-            login_resp = await client.login(
-                identifier=effective_user_id or self._user_id,
-                password=self._password,
-                device_name=self._device_name,
-                device_id=stored_device_id or None,
-            )
-            self._user_id = str(login_resp.user_id)
-            self._device_id = str(login_resp.device_id)
-            self._access_token = str(login_resp.access_token)
-            auth_state_path.write_text(
-                json.dumps(
-                    {
-                        "user_id": self._user_id,
-                        "device_id": self._device_id,
-                        "access_token": self._access_token,
-                    }
-                ),
-                encoding="utf-8",
-            )
-            logger.info("Matrix: logged in as %s (device %s)", self._user_id, self._device_id)
-        else:
-            logger.error("Matrix: need MATRIX_ACCESS_TOKEN or MATRIX_USER_ID + MATRIX_PASSWORD")
-            return False
-
-        if self._device_id:
-            await self._crypto_store.put_device_id(self._device_id)
-
-        if self._encryption:
-            crypto = OlmMachine(client, self._crypto_store, self._state_store)
-            await crypto.load()
-            client.crypto = crypto
-            logger.info("Matrix: mautrix crypto initialised")
-
-        from mautrix.types import EventType
-        client.add_event_handler(EventType.ROOM_MESSAGE, self._on_room_message_event)
-        client.add_event_handler(EventType.STICKER, self._on_sticker_event)
-        client.add_event_handler(EventType.REACTION, self._on_reaction_event)
-        client.add_event_handler(EventType.ROOM_REDACTION, self._on_redaction_event)
-        client.add_event_handler(EventType.ROOM_MEMBER, self._on_member_event)
-        client.add_event_handler(EventType.find("m.direct", EventType.Class.ACCOUNT_DATA), self._on_account_data_event)
-
         try:
-            joined = await client.get_joined_rooms()
-            self._joined_rooms = set(str(room_id) for room_id in joined)
-        except Exception as exc:
-            logger.warning("Matrix: failed to list joined rooms: %s", exc)
+            if effective_token:
+                try:
+                    whoami = await client.whoami()
+                    self._user_id = str(whoami.user_id)
+                    self._device_id = str(getattr(whoami, "device_id", stored_device_id or ""))
+                    self._access_token = effective_token
+                    client.mxid = self._user_id
+                    client.device_id = self._device_id
+                    logger.info("Matrix: using access token for %s (device %s)", self._user_id, self._device_id or "unknown")
+                except Exception as exc:
+                    if self._password and effective_user_id:
+                        logger.warning("Matrix: stored access token failed, falling back to password login: %s", exc)
+                        login_resp = await client.login(
+                            identifier=effective_user_id,
+                            password=self._password,
+                            device_name=self._device_name,
+                            device_id=stored_device_id or None,
+                        )
+                        self._user_id = str(login_resp.user_id)
+                        self._device_id = str(login_resp.device_id)
+                        self._access_token = str(login_resp.access_token)
+                        auth_state_path.write_text(
+                            json.dumps(
+                                {
+                                    "user_id": self._user_id,
+                                    "device_id": self._device_id,
+                                    "access_token": self._access_token,
+                                }
+                            ),
+                            encoding="utf-8",
+                        )
+                        client.mxid = self._user_id
+                        client.device_id = self._device_id
+                        client.api.token = self._access_token
+                        logger.info("Matrix: logged in as %s (device %s)", self._user_id, self._device_id)
+                    else:
+                        raise
+            elif self._password and effective_user_id:
+                login_resp = await client.login(
+                    identifier=effective_user_id,
+                    password=self._password,
+                    device_name=self._device_name,
+                    device_id=stored_device_id or None,
+                )
+                self._user_id = str(login_resp.user_id)
+                self._device_id = str(login_resp.device_id)
+                self._access_token = str(login_resp.access_token)
+                auth_state_path.write_text(
+                    json.dumps(
+                        {
+                            "user_id": self._user_id,
+                            "device_id": self._device_id,
+                            "access_token": self._access_token,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                client.mxid = self._user_id
+                client.device_id = self._device_id
+                client.api.token = self._access_token
+                logger.info("Matrix: logged in as %s (device %s)", self._user_id, self._device_id)
+            else:
+                logger.error("Matrix: need MATRIX_ACCESS_TOKEN or MATRIX_USER_ID + MATRIX_PASSWORD")
+                await self._cleanup_failed_connect()
+                return False
 
-        self._startup_ts = time.time()
-        self._closing = False
-        self._sync_task = client.start(None)
-        self._mark_connected()
-        return True
+            if self._device_id:
+                await self._crypto_store.put_device_id(self._device_id)
+
+            if self._encryption:
+                crypto = OlmMachine(client, self._crypto_store, self._state_store)
+                await crypto.load()
+                client.crypto = crypto
+                logger.info("Matrix: mautrix crypto initialised")
+
+            from mautrix.types import EventType
+            client.add_event_handler(EventType.ROOM_MESSAGE, self._on_room_message_event)
+            client.add_event_handler(EventType.STICKER, self._on_sticker_event)
+            client.add_event_handler(EventType.REACTION, self._on_reaction_event)
+            client.add_event_handler(EventType.ROOM_REDACTION, self._on_redaction_event)
+            client.add_event_handler(EventType.ROOM_MEMBER, self._on_member_event)
+            client.add_event_handler(EventType.find("m.direct", EventType.Class.ACCOUNT_DATA), self._on_account_data_event)
+
+            try:
+                joined = await client.get_joined_rooms()
+                self._joined_rooms = set(str(room_id) for room_id in joined)
+            except Exception as exc:
+                logger.warning("Matrix: failed to list joined rooms: %s", exc)
+
+            self._startup_ts = time.time()
+            self._closing = False
+            self._sync_task = client.start(None)
+            self._mark_connected()
+            return True
+        except Exception:
+            await self._cleanup_failed_connect()
+            raise
 
     async def disconnect(self) -> None:
         self._closing = True
@@ -366,9 +538,16 @@ class MatrixAdapter(BasePlatformAdapter):
         if not self._client:
             return SendResult(success=False, error="Matrix client not connected")
 
-        encrypted_bytes, encrypted_file = encrypt_attachment(data)
-        mxc = await self._client.upload_media(encrypted_bytes, mime_type="application/octet-stream", filename=filename, size=len(encrypted_bytes))
-        encrypted_file.url = mxc
+        use_encrypted_media = bool(self._encryption and getattr(self._client, "crypto", None))
+        upload_bytes = data
+        upload_mime = mime
+        encrypted_file = None
+        if use_encrypted_media:
+            upload_bytes, encrypted_file = encrypt_attachment(data)
+            upload_mime = "application/octet-stream"
+        mxc = await self._client.upload_media(upload_bytes, mime_type=upload_mime, filename=filename, size=len(upload_bytes))
+        if encrypted_file is not None:
+            encrypted_file.url = mxc
 
         if msgtype == "m.image":
             info = ImageInfo(mimetype=mime, size=len(data))
@@ -380,7 +559,11 @@ class MatrixAdapter(BasePlatformAdapter):
             info = FileInfo(mimetype=mime, size=len(data))
 
         body = caption or filename
-        content = MediaMessageEventContent(msgtype=msgtype, body=body, info=info, file=encrypted_file, filename=filename)
+        content = MediaMessageEventContent(msgtype=msgtype, body=body, info=info, filename=filename)
+        if encrypted_file is not None:
+            content.file = encrypted_file
+        else:
+            content.url = mxc
         if is_voice:
             content["org.matrix.msc3245.voice"] = {}
         relates_to = self._build_relates_to(reply_to=reply_to, metadata=metadata)

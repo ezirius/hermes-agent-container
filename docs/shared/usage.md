@@ -40,13 +40,16 @@ Workspace names resolve under `HERMES_BASE_ROOT`.
 - the image uses an upstream-style entrypoint to bootstrap and then run Hermes
 - the wrapper seeds `.env`, `config.yaml`, `SOUL.md`, and `AGENTS.md` into `hermes-home` on first run when missing
 - upstream Hermes reads `/opt/data/.env` and `/opt/data/config.yaml` directly when the gateway process starts
-- the wrapper patches upstream context discovery so the operative `AGENTS.md` is the host-backed `/opt/data/AGENTS.md` without suppressing other project-local context files under `/workspace`
+- the wrapper patches upstream context discovery so the operative default `AGENTS.md` is the host-backed `/opt/data/AGENTS.md`; other project-local context files under `/workspace` still load normally, but a project-local `AGENTS.md` does not override the host-backed one unless you replace or remove `/opt/data/AGENTS.md`
 - editing `hermes-home/.env` or `hermes-home/config.yaml` only needs a container stop/start, not an image rebuild
 - for image-recipe changes, the normal path is `hermes-upgrade` then `hermes-start <workspace>`; you do not need `hermes-remove` unless you explicitly want manual container cleanup first
 - the runtime state directories are created automatically under `hermes-home`
+- new workspaces follow the latest upstream release layout, including `cache/images`, `cache/audio`, and `platforms/whatsapp/session`; legacy wrapper paths are migrated forward on start when possible
 - the image includes Matrix support via a wrapper-managed mautrix migration patch over the upstream Matrix adapter
 - upstream Hermes resolves Matrix encrypted-state storage through `HERMES_HOME`
 - `/home/hermes/.hermes` is linked to `/opt/data` as a compatibility safeguard for any remaining upstream hardcoded `~/.hermes` paths
+- the wrapper-managed mautrix store persists inbound Megolm sessions in `mautrix_crypto.json` so imported room keys survive restart on the same device
+- if you import room keys while Hermes is already running, restart the workspace container once so the live crypto machine reloads them from disk
 
 ## Workspaces versus profiles
 

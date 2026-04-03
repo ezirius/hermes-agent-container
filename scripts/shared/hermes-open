@@ -37,6 +37,11 @@ shift
 container_exists || fail "container not found: $HERMES_CONTAINER_NAME (run $SCRIPT_DIR/hermes-start first)"
 container_running || fail "container not running: $HERMES_CONTAINER_NAME (run $SCRIPT_DIR/hermes-start first)"
 
+if [[ "$(container_image_id)" != "$(image_id)" ]]; then
+  echo "==> Workspace container image is stale; reconciling with the current shared image"
+  "$SCRIPT_DIR/hermes-start" "$WORKSPACE_NAME" >/dev/null
+fi
+
 RUN_ARGS=(--rm \
   -v "$HERMES_HOME_DIR:/opt/data" \
   -v "$HERMES_WORKSPACE_DIR:/workspace" \

@@ -44,7 +44,14 @@ case "$subcommand" in
   image)
     action="${1:?}"; shift || true
     case "$action" in
-      exists) log_call "image exists $*"; [[ "$(read_value image_exists)" == "1" ]] ;;
+      exists)
+        log_call "image exists $*"
+        target="${1:-}"
+        if [[ -n "$target" && -f "$STATE_DIR/${target}_exists" ]]; then
+          [[ "$(read_value ${target}_exists)" == "1" ]]
+        else
+          [[ "$(read_value image_exists)" == "1" ]]
+        fi ;;
       inspect) log_call "image inspect $*"; format="$2"; case "$format" in
         '{{ index .Labels "hermes.repo_url" }}') printf '%s\n' "$(read_value image_label_hermes_repo_url)" ;;
         '{{ index .Labels "hermes.ref" }}') printf '%s\n' "$(read_value image_label_hermes_ref)" ;;
@@ -52,25 +59,63 @@ case "$subcommand" in
         '{{.Id}}') printf '%s\n' "$(read_value image_id)" ;;
         *) exit 1 ;;
       esac ;;
-      rm) log_call "image rm $*"; rm -f "$STATE_DIR/image_exists" "$STATE_DIR/image_label_hermes_repo_url" "$STATE_DIR/image_label_hermes_ref" "$STATE_DIR/image_label_hermes_wrapper_fingerprint" "$STATE_DIR/image_id" ;;
+      rm)
+        log_call "image rm $*"
+        target="${*: -1}"
+        if [[ "$target" == "mock-hermes-image-upgrade-tmp" ]]; then
+          rm -f "$STATE_DIR/mock-hermes-image-upgrade-tmp_exists"
+        else
+          rm -f "$STATE_DIR/image_exists" "$STATE_DIR/image_label_hermes_repo_url" "$STATE_DIR/image_label_hermes_ref" "$STATE_DIR/image_label_hermes_wrapper_fingerprint" "$STATE_DIR/image_id"
+        fi ;;
       *) exit 1 ;;
     esac ;;
+  tag)
+    log_call "tag $*"
+    write_value image_exists 1
+    write_value image_id "$(read_value temp_image_id)"
+    write_value image_label_hermes_repo_url "$(read_value temp_image_label_hermes_repo_url)"
+    write_value image_label_hermes_ref "$(read_value temp_image_label_hermes_ref)"
+    write_value image_label_hermes_wrapper_fingerprint "$(read_value temp_image_label_hermes_wrapper_fingerprint)" ;;
   build)
     log_call "build $*"
-    write_value image_exists 1
-    write_value image_id image-a
+    target_image=""
     while [[ $# -gt 0 ]]; do
       case "$1" in
+        -t)
+          target_image="$2"
+          shift 2 ;;
         --label)
           case "$2" in
-            hermes.repo_url=*) write_value image_label_hermes_repo_url "${2#hermes.repo_url=}" ;;
-            hermes.ref=*) write_value image_label_hermes_ref "${2#hermes.ref=}" ;;
-            hermes.wrapper_fingerprint=*) write_value image_label_hermes_wrapper_fingerprint "${2#hermes.wrapper_fingerprint=}" ;;
+            hermes.repo_url=*)
+              if [[ "$target_image" == "mock-hermes-image-upgrade-tmp" ]]; then
+                write_value temp_image_label_hermes_repo_url "${2#hermes.repo_url=}"
+              else
+                write_value image_label_hermes_repo_url "${2#hermes.repo_url=}"
+              fi ;;
+            hermes.ref=*)
+              if [[ "$target_image" == "mock-hermes-image-upgrade-tmp" ]]; then
+                write_value temp_image_label_hermes_ref "${2#hermes.ref=}"
+              else
+                write_value image_label_hermes_ref "${2#hermes.ref=}"
+              fi ;;
+            hermes.wrapper_fingerprint=*)
+              if [[ "$target_image" == "mock-hermes-image-upgrade-tmp" ]]; then
+                write_value temp_image_label_hermes_wrapper_fingerprint "${2#hermes.wrapper_fingerprint=}"
+              else
+                write_value image_label_hermes_wrapper_fingerprint "${2#hermes.wrapper_fingerprint=}"
+              fi ;;
           esac
           shift 2 ;;
         *) shift ;;
       esac
-    done ;;
+    done
+    if [[ "$target_image" == "mock-hermes-image-upgrade-tmp" ]]; then
+      write_value mock-hermes-image-upgrade-tmp_exists 1
+      write_value temp_image_id image-b
+    else
+      write_value image_exists 1
+      write_value image_id image-a
+    fi ;;
   container)
     action="${1:?}"; shift || true
     case "$action" in
@@ -79,6 +124,10 @@ case "$subcommand" in
     esac ;;
   inspect)
     log_call "inspect $*"
+    if [[ $# -eq 1 ]]; then
+      printf '{"Name":"%s"}\n' "$1"
+      exit 0
+    fi
     format="$2"
     case "$format" in
       '{{.State.Running}}') printf '%s\n' "$(read_value container_running)" ;;
@@ -144,7 +193,10 @@ write_file "$STATE_DIR/image_label_hermes_repo_url" 'https://github.com/NousRese
 write_file "$STATE_DIR/image_label_hermes_ref" 'v1.2.2'
 "$ROOT/scripts/shared/hermes-upgrade" > "$STATE_DIR/upgrade-run.out"
 assert_contains "$STATE_DIR/upgrade-run.out" 'Upgrading Hermes image: mock-hermes-image' 'upgrade rebuilds when ref differs'
-assert_contains "$STATE_DIR/podman.log" 'image rm -f mock-hermes-image' 'upgrade removes image before rebuild'
+assert_contains "$STATE_DIR/upgrade-run.out" 'Building replacement image first: mock-hermes-image-upgrade-tmp' 'upgrade stages a replacement image before swapping'
+assert_contains "$STATE_DIR/podman.log" 'image exists mock-hermes-image-upgrade-tmp' 'upgrade checks whether the staged image already exists'
+assert_contains "$STATE_DIR/podman.log" 'image rm -f mock-hermes-image' 'upgrade removes the old image only after replacement build'
+assert_contains "$STATE_DIR/podman.log" 'tag mock-hermes-image-upgrade-tmp mock-hermes-image' 'upgrade retags the staged image into place'
 
 reset_state
 write_file "$STATE_DIR/image_exists" "1"
@@ -154,6 +206,7 @@ write_file "$STATE_DIR/image_label_hermes_wrapper_fingerprint" 'stale-fingerprin
 "$ROOT/scripts/shared/hermes-upgrade" > "$STATE_DIR/upgrade-fingerprint-run.out"
 assert_contains "$STATE_DIR/upgrade-fingerprint-run.out" 'Upgrading Hermes image: mock-hermes-image' 'upgrade rebuilds when local build fingerprint differs'
 assert_contains "$STATE_DIR/upgrade-fingerprint-run.out" 'Target local build fingerprint:' 'upgrade reports target local build fingerprint'
+assert_contains "$STATE_DIR/podman.log" 'tag mock-hermes-image-upgrade-tmp mock-hermes-image' 'fingerprint-driven upgrade also swaps in the staged image'
 
 reset_state
 write_file "$STATE_DIR/image_exists" "1"
@@ -212,7 +265,7 @@ assert_contains "$STATE_DIR/start-reuse.out" 'Starting existing stopped Hermes G
 reset_state
 write_file "$STATE_DIR/container_exists" '1'
 "$ROOT/scripts/shared/hermes-status" ezirius > "$STATE_DIR/status.out"
-assert_contains "$STATE_DIR/podman.log" 'ps -a --filter name=hermes-agent-ezirius' 'status inspects container state'
+assert_contains "$STATE_DIR/podman.log" 'inspect hermes-agent-ezirius' 'status inspects the exact target container'
 
 reset_state
 write_file "$STATE_DIR/container_exists" '1'
@@ -220,13 +273,27 @@ write_file "$STATE_DIR/container_exists" '1'
 assert_contains "$STATE_DIR/podman.log" 'logs hermes-agent-ezirius' 'logs streams container logs'
 
 reset_state
+write_file "$STATE_DIR/image_exists" '1'
+write_file "$STATE_DIR/image_id" 'image-a'
 write_file "$STATE_DIR/container_exists" '1'
 write_file "$STATE_DIR/container_running" 'true'
+write_file "$STATE_DIR/container_image_id" 'image-a'
 "$ROOT/scripts/shared/hermes-open" ezirius doctor > "$STATE_DIR/open.out"
 assert_contains "$STATE_DIR/podman.log" 'run -i --rm' 'open uses a transient non-tty container when no tty is available'
 assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/hermes-home:/opt/data" 'open mounts Hermes home at /opt/data'
 assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/workspace:/workspace" 'open mounts the workspace at /workspace'
 assert_contains "$STATE_DIR/podman.log" 'mock-hermes-image doctor' 'open forwards Hermes CLI arguments through the shared image'
+
+reset_state
+write_file "$STATE_DIR/image_exists" '1'
+write_file "$STATE_DIR/image_id" 'image-b'
+write_file "$STATE_DIR/container_exists" '1'
+write_file "$STATE_DIR/container_running" 'true'
+write_file "$STATE_DIR/container_image_id" 'image-a'
+"$ROOT/scripts/shared/hermes-open" ezirius doctor > "$STATE_DIR/open-stale.out"
+assert_contains "$STATE_DIR/open-stale.out" 'Workspace container image is stale; reconciling with the current shared image' 'open detects stale running gateway image'
+assert_contains "$STATE_DIR/podman.log" 'rm -f hermes-agent-ezirius' 'open reconciles stale gateway image through hermes-start'
+assert_contains "$STATE_DIR/podman.log" 'run -d --name hermes-agent-ezirius' 'open restarts the gateway container before launching the transient CLI'
 
 reset_state
 write_file "$STATE_DIR/container_exists" '1'
@@ -235,12 +302,26 @@ HERMES_FORCE_EXEC_TTY=1 OSTYPE=darwin24 "$ROOT/scripts/shared/hermes-open" eziri
 assert_contains "$STATE_DIR/podman.log" 'script -q /dev/null podman run -it --rm' 'open uses script tty wrapper for transient macOS interactive container'
 
 reset_state
+write_file "$STATE_DIR/image_exists" '1'
+write_file "$STATE_DIR/image_id" 'image-a'
 write_file "$STATE_DIR/container_exists" '1'
 write_file "$STATE_DIR/container_running" 'true'
+write_file "$STATE_DIR/container_image_id" 'image-a'
 "$ROOT/scripts/shared/hermes-shell" ezirius > "$STATE_DIR/shell.out"
 assert_contains "$STATE_DIR/podman.log" 'run -i --rm' 'shell uses a transient non-tty container when no tty is available'
 assert_contains "$STATE_DIR/podman.log" '--entrypoint /bin/bash' 'shell bypasses the entrypoint for direct bash access'
 assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/hermes-home:/opt/data" 'shell mounts Hermes home at /opt/data'
+
+reset_state
+write_file "$STATE_DIR/image_exists" '1'
+write_file "$STATE_DIR/image_id" 'image-b'
+write_file "$STATE_DIR/container_exists" '1'
+write_file "$STATE_DIR/container_running" 'true'
+write_file "$STATE_DIR/container_image_id" 'image-a'
+"$ROOT/scripts/shared/hermes-shell" ezirius > "$STATE_DIR/shell-stale.out"
+assert_contains "$STATE_DIR/shell-stale.out" 'Workspace container image is stale; reconciling with the current shared image' 'shell detects stale running gateway image'
+assert_contains "$STATE_DIR/podman.log" 'rm -f hermes-agent-ezirius' 'shell reconciles stale gateway image through hermes-start'
+assert_contains "$STATE_DIR/podman.log" 'run -d --name hermes-agent-ezirius' 'shell restarts the gateway container before launching the transient shell'
 
 reset_state
 write_file "$STATE_DIR/container_exists" '1'
