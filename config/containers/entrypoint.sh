@@ -2,8 +2,8 @@
 # Wrapper entrypoint aligned closely to the latest upstream release.
 set -e
 
-HERMES_HOME="/opt/data"
-INSTALL_DIR="/home/hermes/hermes-agent"
+HERMES_HOME="${HERMES_HOME:-/opt/data}"
+INSTALL_DIR="${INSTALL_DIR:-/home/hermes/hermes-agent}"
 
 mkdir -p "$HERMES_HOME"/{cron,sessions,logs,hooks,memories,skills}
 

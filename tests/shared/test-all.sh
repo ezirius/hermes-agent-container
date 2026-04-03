@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
 bash -n \
   "$ROOT/lib/shell/common.sh" \
+  "$ROOT/config/containers/entrypoint.sh" \
   "$ROOT/scripts/shared/bootstrap" \
   "$ROOT/scripts/shared/hermes-build" \
   "$ROOT/scripts/shared/hermes-upgrade" \
@@ -20,10 +21,13 @@ bash -n \
   "$ROOT/tests/shared/test-common.sh" \
   "$ROOT/tests/shared/test-args.sh" \
   "$ROOT/tests/shared/test-ref-resolution.sh" \
-  "$ROOT/tests/shared/test-runtime.sh"
+  "$ROOT/tests/shared/test-runtime.sh" \
+  "$ROOT/tests/shared/test-entrypoint.sh" \
+  "$ROOT/tests/shared/test-patches.sh"
 
 python3 -m py_compile \
   "$ROOT/config/patches/apply-hermes-mautrix-migration.py" \
+  "$ROOT/config/patches/apply-hermes-host-agents-context.py" \
   "$ROOT/config/patches/templates/hermes-matrix-mautrix.py"
 
 "$ROOT/tests/shared/test-layout.sh"
@@ -31,5 +35,7 @@ python3 -m py_compile \
 "$ROOT/tests/shared/test-args.sh"
 "$ROOT/tests/shared/test-ref-resolution.sh"
 "$ROOT/tests/shared/test-runtime.sh"
+"$ROOT/tests/shared/test-entrypoint.sh"
+"$ROOT/tests/shared/test-patches.sh"
 
 echo "All Hermes checks passed"

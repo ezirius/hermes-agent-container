@@ -9,7 +9,7 @@ Upstream already provides the official single-container Docker image and Docker 
 - release tracking with local rebuild fingerprinting
 - Podman-first lifecycle commands and macOS TTY handling
 
-By default, the image resolves the latest upstream GitHub release and builds from that release tag.
+By default, the image resolves the latest upstream GitHub release and builds from the latest upstream release tag. It does not use upstream main as the default baseline.
 
 ## When to use this wrapper
 

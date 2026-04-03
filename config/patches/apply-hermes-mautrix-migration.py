@@ -46,10 +46,51 @@ replace_once(
 
 # Update user-facing Matrix docs in upstream checkout.
 matrix_doc = ROOT / "website/docs/user-guide/messaging/matrix.md"
-text = matrix_doc.read_text(encoding="utf-8")
-text = text.replace("matrix-nio Python SDK", "mautrix Python framework", 1)
-text = text.replace("The bot connects via the `matrix-nio` Python SDK,", "The bot connects via the `mautrix` Python framework,", 1)
-text = text.replace("E2EE requires the `matrix-nio` library with encryption extras and the `libolm` C library:", "E2EE requires the `mautrix` Python framework, `python-olm`, and the `libolm` C library:", 1)
-text = text.replace("# Install matrix-nio with E2EE support\npip install 'matrix-nio[e2e]'\n\n# Or install with hermes extras\npip install 'hermes-agent[matrix]'", "# Install with hermes Matrix extras\npip install 'hermes-agent[matrix]'", 1)
-text = text.replace("If `matrix-nio[e2e]` is not installed or `libolm` is missing, the bot falls back to a plain (unencrypted) client automatically. You'll see a warning in the logs.", "If Matrix crypto dependencies are missing, the Matrix adapter is unavailable. In encrypted-room deployments, fix the dependency issue before starting Hermes.", 1)
-matrix_doc.write_text(text, encoding="utf-8")
+replace_once(
+    matrix_doc,
+    "`matrix-nio` Python SDK",
+    "`mautrix` Python framework",
+    "matrix doc intro sdk wording",
+)
+replace_once(
+    matrix_doc,
+    "E2EE requires the `matrix-nio` library with encryption extras and the `libolm` C library:",
+    "E2EE requires the `mautrix` Python framework, `python-olm`, and the `libolm` C library:",
+    "matrix doc requirements wording",
+)
+replace_once(
+    matrix_doc,
+    "# Install matrix-nio with E2EE support\npip install 'matrix-nio[e2e]'\n\n# Or install with hermes extras\npip install 'hermes-agent[matrix]'",
+    "# Install with hermes Matrix extras\npip install 'hermes-agent[matrix]'",
+    "matrix doc install block",
+)
+replace_once(
+    matrix_doc,
+    "- Stores encryption keys in `~/.hermes/matrix/store/`",
+    "- Stores encryption keys under `HERMES_HOME` in `platforms/matrix/store/`",
+    "matrix doc crypto storage path",
+)
+replace_once(
+    matrix_doc,
+    "If `matrix-nio[e2e]` is not installed or `libolm` is missing, the bot falls back to a plain (unencrypted) client automatically. You'll see a warning in the logs.",
+    "If Matrix crypto dependencies are missing, the Matrix adapter is unavailable. In encrypted-room deployments, fix the dependency issue before starting Hermes.",
+    "matrix doc dependency failure mode",
+)
+replace_once(
+    matrix_doc,
+    '### "matrix-nio not installed" error',
+    '### "mautrix dependencies not installed" error',
+    "matrix doc troubleshooting heading",
+)
+replace_once(
+    matrix_doc,
+    '**Cause**: The `matrix-nio` Python package is not installed.',
+    '**Cause**: The `mautrix` Python packages are not installed.',
+    "matrix doc troubleshooting cause",
+)
+replace_once(
+    matrix_doc,
+    "**Fix**: Install it:\n\n```bash\npip install 'matrix-nio[e2e]'\n```\n\nOr with Hermes extras:\n\n```bash\npip install 'hermes-agent[matrix]'\n```",
+    "**Fix**: Install the Hermes Matrix extras:\n\n```bash\npip install 'hermes-agent[matrix]'\n```",
+    "matrix doc troubleshooting install block",
+)

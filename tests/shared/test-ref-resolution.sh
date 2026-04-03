@@ -22,18 +22,51 @@ assert_eq() {
 
 mkdir -p "$TMPDIR/repos/NousResearch/hermes-agent/releases" "$TMPDIR/repos/NousResearch/hermes-agent"
 printf '{"tag_name":"v1.2.3"}\n' > "$TMPDIR/repos/NousResearch/hermes-agent/releases/latest"
-python3 -m http.server 18082 --bind 127.0.0.1 --directory "$TMPDIR" >/dev/null 2>&1 &
-SERVER_PID=$!
-sleep 1
+PORT_FILE="$TMPDIR/http.port"
+python3 -u - "$TMPDIR" "$PORT_FILE" >"$TMPDIR/http.log" 2>&1 <<'PY' &
+import functools
+import http.server
+import pathlib
+import sys
 
-assert_eq 'v1.2.3' "$(HERMES_REF=latest-release HERMES_GITHUB_API_BASE=http://127.0.0.1:18082 resolve_hermes_ref)" 'latest release is preferred when available'
+root = pathlib.Path(sys.argv[1])
+port_file = pathlib.Path(sys.argv[2])
+handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(root))
+server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+port_file.write_text(str(server.server_port), encoding="utf-8")
+server.serve_forever()
+PY
+SERVER_PID=$!
+
+for _ in $(seq 1 50); do
+  if [[ -s "$PORT_FILE" ]]; then
+    break
+  fi
+  sleep 0.1
+done
+[[ -s "$PORT_FILE" ]] || { printf 'assertion failed: test HTTP server did not publish a port\n' >&2; exit 1; }
+API_BASE="http://127.0.0.1:$(cat "$PORT_FILE")"
+
+for _ in $(seq 1 50); do
+  if python3 - "$API_BASE" >/dev/null 2>&1 <<'PY'
+import sys, urllib.request
+with urllib.request.urlopen(sys.argv[1] + '/repos/NousResearch/hermes-agent/releases/latest', timeout=1) as response:
+    raise SystemExit(0 if response.status == 200 else 1)
+PY
+  then
+    break
+  fi
+  sleep 0.1
+done
+
+assert_eq 'v1.2.3' "$(HERMES_REF=latest-release HERMES_GITHUB_API_BASE=$API_BASE resolve_hermes_ref)" 'latest release is preferred when available'
 rm -f "$TMPDIR/repos/NousResearch/hermes-agent/releases/latest"
 ERR_FILE="$TMPDIR/release.err"
-if HERMES_REF=latest-release HERMES_GITHUB_API_BASE=http://127.0.0.1:18082 resolve_hermes_ref >/dev/null 2> "$ERR_FILE"; then
+if HERMES_REF=latest-release HERMES_GITHUB_API_BASE=$API_BASE resolve_hermes_ref >/dev/null 2> "$ERR_FILE"; then
   printf 'assertion failed: latest-release should fail when the release endpoint is unavailable\n' >&2
   exit 1
 fi
 grep -Fq 'Latest upstream Hermes release not found' "$ERR_FILE"
-assert_eq 'main' "$(HERMES_REF=main resolve_hermes_ref)" 'explicit ref bypasses remote resolution'
+assert_eq 'v9.9.9-test' "$(HERMES_REF=v9.9.9-test resolve_hermes_ref)" 'explicit ref bypasses remote resolution'
 
 echo "Ref resolution checks passed"
