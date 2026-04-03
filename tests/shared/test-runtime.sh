@@ -170,14 +170,35 @@ printf 'HERMES_IMAGE_NAME=workspace-override\n' >> "$HERMES_BASE_ROOT/ezirius/he
 assert_contains "$STATE_DIR/bootstrap.out" 'No upgrade needed' 'bootstrap checks upgrade before start'
 assert_contains "$STATE_DIR/podman.log" 'run -d --name hermes-agent-ezirius' 'bootstrap starts container'
 assert_contains "$STATE_DIR/podman.log" '--restart unless-stopped' 'bootstrap configures unless-stopped restart policy'
-assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/hermes-home:/data" 'bootstrap mounts Hermes home separately'
+assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/hermes-home:/opt/data" 'bootstrap mounts Hermes home separately'
 assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/workspace:/workspace" 'bootstrap mounts persistent workspace directory'
 assert_not_contains "$STATE_DIR/podman.log" '--env-file ' 'bootstrap does not inject workspace env via podman'
-assert_contains "$STATE_DIR/podman.log" 'mock-hermes-image hermes gateway run' 'bootstrap keeps wrapper image selection outside workspace env and runs foreground gateway command'
+assert_contains "$STATE_DIR/podman.log" 'mock-hermes-image gateway run' 'bootstrap keeps wrapper image selection outside workspace env and runs gateway through the entrypoint model'
 assert_contains "$STATE_DIR/podman.log" 'run -i --rm' 'bootstrap opens Hermes with a transient interactive container'
-assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/hermes-home:/data" 'bootstrap interactive Hermes container mounts Hermes home'
+assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/hermes-home:/opt/data" 'bootstrap interactive Hermes container mounts Hermes home'
 assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/workspace:/workspace" 'bootstrap interactive Hermes container mounts workspace'
-assert_contains "$STATE_DIR/podman.log" 'mock-hermes-image hermes --help' 'bootstrap opens Hermes CLI from the shared image'
+assert_contains "$STATE_DIR/podman.log" 'mock-hermes-image --help' 'bootstrap opens Hermes CLI from the shared image through the entrypoint model'
+
+reset_state
+write_file "$STATE_DIR/image_exists" '1'
+write_file "$STATE_DIR/image_id" 'image-a'
+write_file "$STATE_DIR/container_exists" '1'
+write_file "$STATE_DIR/container_running" 'true'
+write_file "$STATE_DIR/container_image_id" 'image-a'
+mkdir -p "$HERMES_BASE_ROOT/test/hermes-home" "$HERMES_BASE_ROOT/test/workspace"
+touch "$HERMES_BASE_ROOT/test/hermes-home/.env"
+touch "$HERMES_BASE_ROOT/test/workspace/old.txt"
+"$ROOT/scripts/shared/bootstrap-test" doctor > "$STATE_DIR/bootstrap-test.out"
+assert_contains "$STATE_DIR/podman.log" 'rm -f hermes-agent-test' 'bootstrap-test removes the previous test container'
+assert_contains "$STATE_DIR/podman.log" 'image rm -f hermes-agent-local-test' 'bootstrap-test removes the previous test image'
+assert_contains "$STATE_DIR/podman.log" 'container exists hermes-agent-test' 'bootstrap-test resolves the dedicated test container before cleanup'
+assert_contains "$STATE_DIR/podman.log" 'build --pull=always --label hermes.repo_url=https://github.com/NousResearch/hermes-agent.git --label hermes.ref=v1.2.3' 'bootstrap-test rebuilds the test image from scratch'
+assert_contains "$STATE_DIR/podman.log" 'run -d --name hermes-agent-test' 'bootstrap-test starts the dedicated test container'
+assert_contains "$STATE_DIR/podman.log" 'hermes-agent-local-test gateway run' 'bootstrap-test uses the dedicated test image for the gateway'
+assert_contains "$STATE_DIR/podman.log" 'hermes-agent-local-test doctor' 'bootstrap-test opens Hermes from the dedicated test image'
+assert_not_contains "$STATE_DIR/podman.log" 'hermes-agent-ezirius' 'bootstrap-test does not touch the live ezirius container'
+assert_not_contains "$STATE_DIR/podman.log" 'mock-hermes-image' 'bootstrap-test does not use the live image name'
+test ! -e "$HERMES_BASE_ROOT/test/workspace/old.txt"
 
 reset_state
 write_file "$STATE_DIR/image_exists" '1'
@@ -201,9 +222,25 @@ assert_contains "$STATE_DIR/podman.log" 'logs hermes-agent-ezirius' 'logs stream
 reset_state
 write_file "$STATE_DIR/container_exists" '1'
 write_file "$STATE_DIR/container_running" 'true'
+"$ROOT/scripts/shared/hermes-open" ezirius doctor > "$STATE_DIR/open.out"
+assert_contains "$STATE_DIR/podman.log" 'run -i --rm' 'open uses a transient non-tty container when no tty is available'
+assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/hermes-home:/opt/data" 'open mounts Hermes home at /opt/data'
+assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/workspace:/workspace" 'open mounts the workspace at /workspace'
+assert_contains "$STATE_DIR/podman.log" 'mock-hermes-image doctor' 'open forwards Hermes CLI arguments through the shared image'
+
+reset_state
+write_file "$STATE_DIR/container_exists" '1'
+write_file "$STATE_DIR/container_running" 'true'
+HERMES_FORCE_EXEC_TTY=1 OSTYPE=darwin24 "$ROOT/scripts/shared/hermes-open" ezirius chat > "$STATE_DIR/open-darwin.out"
+assert_contains "$STATE_DIR/podman.log" 'script -q /dev/null podman run -it --rm' 'open uses script tty wrapper for transient macOS interactive container'
+
+reset_state
+write_file "$STATE_DIR/container_exists" '1'
+write_file "$STATE_DIR/container_running" 'true'
 "$ROOT/scripts/shared/hermes-shell" ezirius > "$STATE_DIR/shell.out"
 assert_contains "$STATE_DIR/podman.log" 'run -i --rm' 'shell uses a transient non-tty container when no tty is available'
-assert_contains "$STATE_DIR/podman.log" 'mock-hermes-image /bin/bash' 'shell starts bash from the shared image'
+assert_contains "$STATE_DIR/podman.log" '--entrypoint /bin/bash' 'shell bypasses the entrypoint for direct bash access'
+assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/hermes-home:/opt/data" 'shell mounts Hermes home at /opt/data'
 
 reset_state
 write_file "$STATE_DIR/container_exists" '1'

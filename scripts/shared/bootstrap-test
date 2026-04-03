@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source "$ROOT/lib/shell/common.sh"
+
+TEST_WORKSPACE="test"
+TEST_IMAGE_NAME="hermes-agent-local-test"
+
+if [[ ${1-} == "--help" ]]; then
+  show_help "Usage: $(basename "$0") [hermes args...]
+
+Run a full destructive rebuild of the dedicated test lane:
+- remove any existing test container
+- remove the existing test image
+- delete the test workspace data under HERMES_BASE_ROOT/test
+- rebuild from scratch
+- start the fresh test workspace container
+- open Hermes interactively in that test workspace
+
+This command only uses:
+- workspace: test
+- image: hermes-agent-local-test
+
+It does not touch live workspaces such as ezirius.
+
+Any extra arguments are forwarded to hermes-open."
+fi
+
+require_podman
+export HERMES_IMAGE_NAME="$TEST_IMAGE_NAME"
+resolve_workspace "$TEST_WORKSPACE"
+
+[[ "$WORKSPACE_NAME" == "$TEST_WORKSPACE" ]] || fail "bootstrap-test must use the dedicated test workspace only"
+[[ "$HERMES_CONTAINER_NAME" == "${HERMES_PROJECT_PREFIX}-${TEST_WORKSPACE}" ]] || fail "bootstrap-test resolved an unexpected test container name"
+
+"$SCRIPT_DIR/hermes-remove" "$TEST_WORKSPACE"
+podman image rm -f "$HERMES_IMAGE_NAME" >/dev/null 2>&1 || true
+rm -rf "$WORKSPACE_ROOT"
+
+"$SCRIPT_DIR/hermes-build"
+"$SCRIPT_DIR/hermes-start" "$TEST_WORKSPACE"
+exec "$SCRIPT_DIR/hermes-open" "$TEST_WORKSPACE" "$@"

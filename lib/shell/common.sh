@@ -97,10 +97,25 @@ import pathlib
 import sys
 
 root = pathlib.Path(sys.argv[1])
-paths = [root / "config/containers/Dockerfile"]
-patches_dir = root / "config/patches"
-if patches_dir.exists():
-    paths.extend(sorted(path for path in patches_dir.rglob("*") if path.is_file()))
+tracked_dirs = [root / "config/containers", root / "config/patches"]
+paths = []
+for tracked_dir in tracked_dirs:
+    if not tracked_dir.exists():
+        continue
+    paths.extend(
+        sorted(
+            path
+            for path in tracked_dir.rglob("*")
+            if path.is_file()
+            and "__pycache__" not in path.parts
+            and path.suffix != ".pyc"
+            and path.name != ".DS_Store"
+        )
+    )
+
+if not paths:
+    raise SystemExit("no local image recipe files found for fingerprinting")
+
 
 digest = hashlib.sha256()
 for path in paths:

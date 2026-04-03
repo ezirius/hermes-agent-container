@@ -34,6 +34,15 @@ assert_rejects "$ROOT/scripts/shared/bootstrap" 'requires at least 1 argument'
 assert_rejects "$ROOT/scripts/shared/hermes-logs" 'requires at least 1 argument'
 
 HELP_FILE="$TMPDIR/help.out"
+"$ROOT/scripts/shared/bootstrap-test" --help > "$HELP_FILE"
+assert_contains "$HELP_FILE" 'destructive rebuild of the dedicated test lane' 'bootstrap-test help documents destructive test behaviour'
+assert_contains "$HELP_FILE" 'workspace: test' 'bootstrap-test help documents fixed test workspace'
+assert_contains "$HELP_FILE" 'image: hermes-agent-local-test' 'bootstrap-test help documents fixed test image'
+assert_contains "$HELP_FILE" 'does not touch live workspaces such as ezirius' 'bootstrap-test help documents live-lane isolation'
+assert_contains "$HELP_FILE" 'Any extra arguments are forwarded to hermes-open.' 'bootstrap-test help documents forwarded Hermes args'
+
+
+HELP_FILE="$TMPDIR/help.out"
 "$ROOT/scripts/shared/bootstrap" --help > "$HELP_FILE"
 assert_contains "$HELP_FILE" 'Common forwarded Hermes args:' 'bootstrap help documents key forwarded arguments'
 
@@ -49,10 +58,11 @@ assert_contains "$HELP_FILE" 'transient interactive container' 'bootstrap help d
 
 "$ROOT/scripts/shared/hermes-open" --help > "$HELP_FILE"
 assert_contains "$HELP_FILE" 'Common Hermes args:' 'open help documents key forwarded arguments'
+assert_contains "$HELP_FILE" 'gateway                   run gateway subcommands' 'open help documents gateway forwarding'
 
 "$ROOT/scripts/shared/hermes-start" --help > "$HELP_FILE"
 assert_contains "$HELP_FILE" 'The wrapper mounts:' 'start help documents mount layout'
-assert_contains "$HELP_FILE" '/data/.env and /data/config.yaml' 'start help documents upstream config loading'
+assert_contains "$HELP_FILE" '/opt/data/.env and' 'start help documents upstream config loading'
 assert_contains "$HELP_FILE" 'unless-stopped' 'start help documents restart policy'
 
 "$ROOT/scripts/shared/hermes-logs" --help > "$HELP_FILE"

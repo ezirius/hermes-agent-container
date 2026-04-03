@@ -22,7 +22,8 @@ container_exists || fail "container not found: $HERMES_CONTAINER_NAME (run $SCRI
 container_running || fail "container not running: $HERMES_CONTAINER_NAME (run $SCRIPT_DIR/hermes-start first)"
 exec_podman_interactive_command run \
   --rm \
-  -v "$HERMES_HOME_DIR:/data" \
+  --entrypoint /bin/bash \
+  -v "$HERMES_HOME_DIR:/opt/data" \
   -v "$HERMES_WORKSPACE_DIR:/workspace" \
   -w /workspace \
-  "$HERMES_IMAGE_NAME" /bin/bash
+  "$HERMES_IMAGE_NAME"

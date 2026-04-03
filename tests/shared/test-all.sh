@@ -8,6 +8,7 @@ bash -n \
   "$ROOT/scripts/shared/bootstrap" \
   "$ROOT/scripts/shared/hermes-build" \
   "$ROOT/scripts/shared/hermes-upgrade" \
+  "$ROOT/scripts/shared/bootstrap-test" \
   "$ROOT/scripts/shared/hermes-start" \
   "$ROOT/scripts/shared/hermes-open" \
   "$ROOT/scripts/shared/hermes-status" \
@@ -22,8 +23,8 @@ bash -n \
   "$ROOT/tests/shared/test-runtime.sh"
 
 python3 -m py_compile \
-  "$ROOT/config/patches/apply-hermes-matrix-sync-diagnostics.py" \
-  "$ROOT/config/patches/apply-hermes-matrix-store-home.py"
+  "$ROOT/config/patches/apply-hermes-mautrix-migration.py" \
+  "$ROOT/config/patches/templates/hermes-matrix-mautrix.py"
 
 "$ROOT/tests/shared/test-layout.sh"
 "$ROOT/tests/shared/test-common.sh"

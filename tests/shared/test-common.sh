@@ -61,4 +61,44 @@ if bash -lc 'set -euo pipefail; source "$1"; export HERMES_PODMAN_TTY_WRAPPER=ba
 fi
 grep -Fq 'unsupported HERMES_PODMAN_TTY_WRAPPER value: bad' "$ERR_FILE"
 
+EXPECTED_BUILD_FINGERPRINT="$(python3 - "$ROOT" <<'PY'
+import hashlib
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+paths = []
+for tracked_dir in (root / "config/containers", root / "config/patches"):
+    if not tracked_dir.exists():
+        continue
+    paths.extend(
+        sorted(
+            path
+            for path in tracked_dir.rglob("*")
+            if path.is_file()
+            and "__pycache__" not in path.parts
+            and path.suffix != ".pyc"
+            and path.name != ".DS_Store"
+        )
+    )
+
+digest = hashlib.sha256()
+for path in paths:
+    digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(path.read_bytes())
+    digest.update(b"\0")
+
+print(digest.hexdigest())
+PY
+)"
+assert_eq "$EXPECTED_BUILD_FINGERPRINT" "$(local_build_fingerprint)" "local build fingerprint covers all non-generated image recipe files"
+
+FINGERPRINT_BEFORE="$(local_build_fingerprint)"
+mkdir -p "$ROOT/config/patches/__pycache__"
+touch "$ROOT/config/patches/__pycache__/ignored-test-artifact.pyc"
+FINGERPRINT_AFTER="$(local_build_fingerprint)"
+assert_eq "$FINGERPRINT_BEFORE" "$FINGERPRINT_AFTER" "local build fingerprint ignores generated patch artifacts"
+rm -f "$ROOT/config/patches/__pycache__/ignored-test-artifact.pyc"
+
 echo "Common helper checks passed"
