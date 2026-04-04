@@ -33,6 +33,11 @@ replace_once(
     '        if self._encryption and hasattr(client, "olm"):\n'
     '            client.add_event_callback(\n'
     '                self._on_room_message, nio.MegolmEvent\n'
+    '            )\n'
+    '            client.add_to_device_callback(\n'
+    '                self._on_key_verification,\n'
+    '                (nio.KeyVerificationStart, nio.KeyVerificationCancel,\n'
+    '                 nio.KeyVerificationKey, nio.KeyVerificationMac)\n'
     '            )\n',
     '        # Register event callbacks.\n'
     '        client.add_event_callback(self._on_room_message, nio.RoomMessageText)\n'
@@ -45,6 +50,11 @@ replace_once(
     '        if self._encryption and getattr(client, "olm", None):\n'
     '            client.add_event_callback(\n'
     '                self._on_room_message, nio.MegolmEvent\n'
+    '            )\n'
+    '            client.add_to_device_callback(\n'
+    '                self._on_key_verification,\n'
+    '                (nio.KeyVerificationStart, nio.KeyVerificationCancel,\n'
+    '                 nio.KeyVerificationKey, nio.KeyVerificationMac)\n'
     '            )\n'
     '            for event_name in (\n'
     '                "RoomEncryptedImage",\n'
@@ -155,9 +165,18 @@ replace_regex_once(
     '        return None\n\n'
     '    def _get_media_extension(self, media_type: str, default: str) -> str:\n'
     '        """Resolve a safe file extension from MIME type with sensible fallbacks."""\n'
+    '        normalized_exts = {\n'
+    '            "audio/ogg": ".ogg",\n'
+    '            "application/ogg": ".ogg",\n'
+    '            "audio/opus": ".ogg",\n'
+    '        }\n'
+    '        if media_type in normalized_exts:\n'
+    '            return normalized_exts[media_type]\n'
     '        ext = mimetypes.guess_extension(media_type or "") or default\n'
     '        if ext == ".jpe":\n'
     '            return ".jpg"\n'
+    '        if ext == ".oga":\n'
+    '            return ".ogg"\n'
     '        return ext\n\n'
     '    def _get_encrypted_media_content(self, event: Any) -> Dict[str, Any]:\n'
     '        """Return the Matrix event content dict for encrypted media events."""\n'
@@ -386,5 +405,11 @@ replace_regex_once(
     '        await self.handle_message(msg_event)\n',
     "media handler supports encrypted media callbacks, decrypts attachments, and caches local files",
 )
+
+if 'client.add_to_device_callback(' not in text:
+    raise SystemExit(
+        "could not apply matrix encrypted-media patch: verification callback missing after rewrite"
+    )
+
 
 path.write_text(text, encoding="utf-8")

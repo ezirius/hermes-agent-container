@@ -28,6 +28,8 @@ bash -n \
 python3 -m py_compile \
   "$ROOT/config/patches/apply-hermes-host-agents-context.py" \
   "$ROOT/config/patches/apply-hermes-matrix-device-id.py" \
+  "$ROOT/config/patches/apply-hermes-matrix-auto-verification.py" \
+  "$ROOT/config/patches/apply-hermes-matrix-config-overrides.py" \
   "$ROOT/config/patches/apply-hermes-matrix-encrypted-media.py"
 
 "$ROOT/tests/shared/test-layout.sh"

@@ -35,7 +35,7 @@ Use this wrapper when you want:
 
 1. Create the workspace directory and env file:
 
-   `mkdir -p "$HOME/Documents/Ezirius/.applications-data/.hermes-agent/ezirius/hermes-home" && touch "$HOME/Documents/Ezirius/.applications-data/.hermes-agent/ezirius/hermes-home/.env"`
+   `mkdir -p "${HERMES_BASE_ROOT:-$HOME/Documents/Ezirius/.applications-data/.hermes-agent}/ezirius/hermes-home" && touch "${HERMES_BASE_ROOT:-$HOME/Documents/Ezirius/.applications-data/.hermes-agent}/ezirius/hermes-home/.env"`
 
 2. Put Hermes secrets such as provider keys in `hermes-home/.env`.
 
@@ -62,7 +62,7 @@ Host requirements:
 
 - Podman
 - network access for release resolution and image builds
-- a writable host base directory under `~/Documents/Ezirius/.applications-data/.hermes-agent`
+- a writable host base directory at `HERMES_BASE_ROOT` (default: `$HOME/Documents/Ezirius/.applications-data/.hermes-agent`)
 
 The Hermes gateway and CLI do not need to be installed on the host.
 
@@ -156,16 +156,20 @@ The image includes Matrix support so Matrix and encrypted Matrix rooms can work 
 
 Important packaging note:
 
-- upstream `hermes-agent[all]` no longer includes Matrix in `v2026.4.3`
+- the current upstream release line used by this wrapper does not include Matrix in `hermes-agent[all]`
 - the wrapper therefore installs `hermes-agent[matrix]` explicitly during image build
 - `libolm-dev` remains installed in the image because encrypted Matrix support still depends on it
 
-For Matrix state persistence:
+For Matrix state persistence and trust establishment:
 
 - upstream Hermes now resolves Matrix storage through `HERMES_HOME`
 - the wrapper also links `/home/hermes/.hermes` to `/opt/data` as a compatibility fallback for any remaining hardcoded `~/.hermes` paths
 - the wrapper patches the upstream `matrix-nio` adapter to honour `MATRIX_DEVICE_ID` for password login so one intended Matrix device can be reused instead of churning fresh login devices
+- the wrapper also carries auto-verification wiring for `MATRIX_ALLOWED_USERS`, so explicitly trusted Matrix users can trigger the verification flow for the stable Hermes device
+- `MATRIX_ALLOWED_USERS` is an exact comma-separated allowlist of Matrix user IDs; wildcard `*` is intentionally not supported in this wrapper
+- for safety, auto-verification is disabled unless `MATRIX_ALLOWED_USERS` is configured
 - the wrapper also patches the upstream `matrix-nio` adapter to register encrypted media callbacks, decrypt Matrix attachment payloads with `nio.crypto.decrypt_attachment`, cache decrypted local files, and avoid bogus ciphertext URL fallbacks for encrypted voice/image/file/video events
+- this improves device trust establishment; it does not import or sync room keys from Element or any other Matrix client
 - if you import room keys or otherwise change Matrix crypto material while Hermes is already running, restart the workspace container once so the live client reloads state from disk
 
 ### Matrix validation on the real Podman host
@@ -198,10 +202,13 @@ Recommended validation sequence:
 
    ```env
    MATRIX_USER_ID=@yourbot:matrix.org
-   MATRIX_PASSWORD=your-password
+   MATRIX_PASSWORD=***
    MATRIX_DEVICE_ID=HERMES
+   MATRIX_ALLOWED_USERS=@trusted-user:matrix.org
    MATRIX_ENCRYPTION=true
    ```
+
+   Leave `MATRIX_ALLOWED_USERS` unset only if you intentionally want auto-verification disabled.
 
 5. Run encrypted smoke tests against the real homeserver:
 
@@ -212,12 +219,20 @@ Recommended validation sequence:
    - encrypted image in -> media path works
    - encrypted file in -> document path works
    - encrypted video in -> media path works
-   - device appears in Element/Element X and can be verified
+   - a user listed in `MATRIX_ALLOWED_USERS` can initiate verification and Hermes completes the flow
+   - device appears in Element/Element X as one stable Hermes device
    - restart the container and confirm the same device persists
+   - if old encrypted history still fails to decrypt, treat that separately as room-key continuity/import work
 
-6. Follow logs during the test run:
+6. Follow logs during the test run and confirm the verification markers appear:
 
    `./scripts/shared/hermes-logs ezirius -f`
+
+   Expected verification markers from the trusted user path:
+
+   - `Matrix: auto-accepting verification from ...`
+   - `Matrix: received verification key from ..., confirming...`
+   - `Matrix: verification MAC received from ...`
 
 Until that host-side validation is complete, treat Matrix support here as wrapper-aligned and locally validated, but not yet fully production-proven on the target homeserver.
 

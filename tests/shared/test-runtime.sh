@@ -253,6 +253,14 @@ assert_not_contains "$STATE_DIR/podman.log" 'hermes-agent-ezirius' 'bootstrap-te
 assert_not_contains "$STATE_DIR/podman.log" 'mock-hermes-image' 'bootstrap-test does not use the live image name'
 test ! -e "$HERMES_BASE_ROOT/test/workspace/old.txt"
 
+ERR_FILE="$(mktemp)"
+if PATH="$MOCK_BIN:$PATH" HERMES_BASE_ROOT=/ HERMES_IMAGE_NAME=hermes-agent-local-test "$ROOT/scripts/shared/bootstrap-test" doctor >/dev/null 2> "$ERR_FILE"; then
+  printf 'assertion failed: bootstrap-test should reject HERMES_BASE_ROOT=/\n' >&2
+  exit 1
+fi
+assert_contains "$ERR_FILE" 'bootstrap-test refuses to operate with HERMES_BASE_ROOT=/' 'bootstrap-test refuses unsafe root-level destructive cleanup'
+rm -f "$ERR_FILE"
+
 reset_state
 write_file "$STATE_DIR/image_exists" '1'
 write_file "$STATE_DIR/image_id" 'image-a'

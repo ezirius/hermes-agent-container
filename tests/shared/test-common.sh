@@ -145,6 +145,12 @@ FINGERPRINT_AFTER="$(local_build_fingerprint)"
 assert_eq "$FINGERPRINT_BEFORE" "$FINGERPRINT_AFTER" "local build fingerprint ignores generated patch artifacts"
 rm -f "$ROOT/config/patches/__pycache__/ignored-test-artifact.pyc"
 
+if bash -lc 'set -euo pipefail; unset ROOT; source "$1"; local_build_fingerprint' _ "$ROOT/lib/shell/common.sh" >/dev/null 2> "$ERR_FILE"; then
+  printf 'assertion failed: local_build_fingerprint should fail clearly when ROOT is unset\n' >&2
+  exit 1
+fi
+grep -Fq 'ROOT must be set before calling local_build_fingerprint' "$ERR_FILE"
+
 CONFLICT_TMP="$(mktemp -d)"
 mkdir -p "$CONFLICT_TMP/source" "$CONFLICT_TMP/target"
 touch "$CONFLICT_TMP/source/existing.txt" "$CONFLICT_TMP/target/existing.txt"

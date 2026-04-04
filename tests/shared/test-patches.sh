@@ -19,7 +19,7 @@ assert_not_contains() {
 }
 
 UPSTREAM_ROOT="$TMPDIR/upstream"
-mkdir -p "$UPSTREAM_ROOT/agent" "$UPSTREAM_ROOT/gateway/platforms"
+mkdir -p "$UPSTREAM_ROOT/agent" "$UPSTREAM_ROOT/gateway/platforms" "$UPSTREAM_ROOT/tools"
 
 cat > "$UPSTREAM_ROOT/agent/prompt_builder.py" <<'EOF'
 from pathlib import Path
@@ -65,9 +65,8 @@ from __future__ import annotations
 import asyncio
 import mimetypes
 import os
-import time
 from pathlib import Path
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional
 
 
 class MessageType:
@@ -83,9 +82,6 @@ class MessageEvent:
         self.kwargs = kwargs
 
 
-_STARTUP_GRACE_SECONDS = 5
-
-
 class MatrixAdapter:
     def __init__(self, config):
         self._access_token = "token"
@@ -99,8 +95,7 @@ class MatrixAdapter:
 
         self._client: Any = None  # nio.AsyncClient
         self._sync_task: Optional[asyncio.Task] = None
-        self._closing = False
-        self._startup_ts: float = 0.0
+        self._startup_ts = 0.0
         self._dm_rooms = {}
         from collections import deque
         self._processed_events: deque = deque(maxlen=1000)
@@ -122,7 +117,30 @@ class MatrixAdapter:
 
     async def connect(self) -> bool:
         import nio
-        client = self._client
+
+        store_path = "/tmp/matrix-store"
+
+        if self._encryption:
+            try:
+                client = nio.AsyncClient(
+                    self._homeserver,
+                    self._user_id or "",
+                    store_path=store_path,
+                )
+                logger.info("Matrix: E2EE enabled (store: %s)", store_path)
+            except Exception as exc:
+                logger.warning(
+                    "Matrix: failed to create E2EE client (%s), "
+                    "falling back to plain client. Install: "
+                    "pip install 'matrix-nio[e2e]'",
+                    exc,
+                )
+                client = nio.AsyncClient(self._homeserver, self._user_id or "")
+        else:
+            client = nio.AsyncClient(self._homeserver, self._user_id or "")
+
+        self._client = client
+
         if self._access_token:
             resp = await client.whoami()
             if isinstance(resp, nio.WhoamiResponse):
@@ -131,8 +149,6 @@ class MatrixAdapter:
                 if resolved_user_id:
                     self._user_id = resolved_user_id
 
-                # restore_login() is the matrix-nio path that binds the access
-                # token to a specific device and loads the crypto store.
                 if resolved_device_id and hasattr(client, "restore_login"):
                     client.restore_login(
                         self._user_id or resolved_user_id,
@@ -177,6 +193,7 @@ class MatrixAdapter:
             client.add_event_callback(
                 self._on_room_message, nio.MegolmEvent
             )
+
         return True
 
     async def _retry_pending_decryptions(self) -> None:
@@ -185,15 +202,8 @@ class MatrixAdapter:
         for room, event, ts in self._pending_megolm:
             decrypted = event
             if isinstance(decrypted, nio.MegolmEvent):
-                # decrypt_event returned the same undecryptable event.
                 still_pending.append((room, event, ts))
                 continue
-
-            logger.info(
-                "Matrix: decrypted buffered event %s (%s)",
-                getattr(event, "event_id", "?"),
-                type(decrypted).__name__,
-            )
 
             # Route to the appropriate handler based on decrypted type.
             try:
@@ -222,31 +232,18 @@ class MatrixAdapter:
         """Handle incoming media messages (images, audio, video, files)."""
         import nio
 
-        # Ignore own messages.
         if event.sender == self._user_id:
             return
 
-        # Deduplicate by event ID.
         if self._is_duplicate_event(getattr(event, "event_id", None)):
-            return
-
-        # Startup grace.
-        event_ts = getattr(event, "server_timestamp", 0) / 1000.0
-        if event_ts and event_ts < self._startup_ts - _STARTUP_GRACE_SECONDS:
             return
 
         body = getattr(event, "body", "") or ""
         url = getattr(event, "url", "")
-
-        # Convert mxc:// to HTTP URL for downstream processing.
         http_url = ""
         if url and url.startswith("mxc://"):
             http_url = self._mxc_to_http(url)
 
-        # Determine message type from event class.
-        # Use the MIME type from the event's content info when available,
-        # falling back to category-level MIME types for downstream matching
-        # (gateway/run.py checks startswith("image/"), startswith("audio/"), etc.)
         content_info = getattr(event, "content", {}) if isinstance(getattr(event, "content", None), dict) else {}
         event_mimetype = (content_info.get("info") or {}).get("mimetype", "")
         media_type = "application/octet-stream"
@@ -257,7 +254,6 @@ class MatrixAdapter:
             msg_type = MessageType.PHOTO
             media_type = event_mimetype or "image/png"
         elif isinstance(event, nio.RoomMessageAudio):
-            # Check for MSC3245 voice flag: org.matrix.msc3245.voice: {}
             source_content = getattr(event, "source", {}).get("content", {})
             if source_content.get("org.matrix.msc3245.voice") is not None:
                 is_voice_message = True
@@ -271,8 +267,6 @@ class MatrixAdapter:
         elif event_mimetype:
             media_type = event_mimetype
 
-        # For images, download and cache locally so vision tools can access them.
-        # Matrix MXC URLs require authentication, so direct URL access fails.
         cached_path = None
         if msg_type == MessageType.PHOTO and url:
             try:
@@ -289,31 +283,21 @@ class MatrixAdapter:
             except Exception as e:
                 logger.warning("[Matrix] Failed to cache image: %s", e)
 
-        is_dm = self._dm_rooms.get(room.room_id, False)
-        if not is_dm and room.member_count == 2:
-            is_dm = True
-        chat_type = "dm" if is_dm else "group"
-
-        # Thread/reply detection.
         source_content = getattr(event, "source", {}).get("content", {})
         relates_to = source_content.get("m.relates_to", {})
         thread_id = None
         if relates_to.get("rel_type") == "m.thread":
             thread_id = relates_to.get("event_id")
 
-        # For voice messages, cache audio locally for transcription tools.
-        # Use the authenticated nio client to download (Matrix requires auth for media).
         media_urls = [http_url] if http_url else None
         media_types = [media_type] if http_url else None
 
         if is_voice_message and url and url.startswith("mxc://"):
             try:
-                import nio
                 from gateway.platforms.base import cache_audio_from_bytes
 
                 resp = await self._client.download(mxc=url)
                 if isinstance(resp, nio.MemoryDownloadResponse):
-                    # Extract extension from mimetype or default to .ogg
                     ext = ".ogg"
                     if media_type and "/" in media_type:
                         subtype = media_type.split("/")[1]
@@ -328,13 +312,12 @@ class MatrixAdapter:
 
         source = self.build_source(
             chat_id=room.room_id,
-            chat_type=chat_type,
+            chat_type="group",
             user_id=event.sender,
             user_name=self._get_display_name(room, event.sender),
             thread_id=thread_id,
         )
 
-        # Use cached local path for images (voice messages already handled above).
         if cached_path:
             media_urls = [cached_path]
         media_types = [media_type] if media_urls else None
@@ -362,6 +345,45 @@ class MatrixAdapter:
         return f"{self._homeserver}/_matrix/client/v1/media/download/{parts}"
 EOF
 
+cat > "$UPSTREAM_ROOT/gateway/config.py" <<'EOF'
+import os
+
+
+class Platform:
+    MATRIX = "matrix"
+
+
+class DummyPlatformConfig:
+    def __init__(self):
+        self.extra = {}
+
+
+class DummyConfig:
+    def __init__(self):
+        self.platforms = {Platform.MATRIX: DummyPlatformConfig()}
+
+
+def _apply_env_overrides(config):
+    if Platform.MATRIX in config.platforms:
+        matrix_user = os.getenv("MATRIX_USER_ID", "")
+        if matrix_user:
+            config.platforms[Platform.MATRIX].extra["user_id"] = matrix_user
+        matrix_password = os.getenv("MATRIX_PASSWORD", "")
+        if matrix_password:
+            config.platforms[Platform.MATRIX].extra["password"] = matrix_password
+        matrix_e2ee = os.getenv("MATRIX_ENCRYPTION", "").lower() in ("true", "1", "yes")
+        config.platforms[Platform.MATRIX].extra["encryption"] = matrix_e2ee
+EOF
+
+cat > "$UPSTREAM_ROOT/tools/transcription_tools.py" <<'EOF'
+#!/usr/bin/env python3
+"""
+Supported input formats: mp3, mp4, mpeg, mpga, m4a, wav, webm, ogg, aac
+"""
+
+SUPPORTED_FORMATS = {".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".wav", ".webm", ".ogg", ".aac"}
+EOF
+
 python3 - "$ROOT" "$UPSTREAM_ROOT" <<'PY'
 from pathlib import Path
 import sys
@@ -373,28 +395,59 @@ host_patch = (root / 'config/patches/apply-hermes-host-agents-context.py').read_
 host_patch = host_patch.replace('Path("/home/hermes/hermes-agent/agent/prompt_builder.py")', f'Path({str(upstream_root / "agent/prompt_builder.py")!r})')
 exec(compile(host_patch, 'apply-hermes-host-agents-context.py', 'exec'), {})
 
-matrix_patch = (root / 'config/patches/apply-hermes-matrix-device-id.py').read_text(encoding='utf-8')
-matrix_patch = matrix_patch.replace('Path("/home/hermes/hermes-agent/gateway/platforms/matrix.py")', f'Path({str(upstream_root / "gateway/platforms/matrix.py")!r})')
-exec(compile(matrix_patch, 'apply-hermes-matrix-device-id.py', 'exec'), {})
+matrix_device_patch = (root / 'config/patches/apply-hermes-matrix-device-id.py').read_text(encoding='utf-8')
+matrix_device_patch = matrix_device_patch.replace('Path("/home/hermes/hermes-agent/gateway/platforms/matrix.py")', f'Path({str(upstream_root / "gateway/platforms/matrix.py")!r})')
+exec(compile(matrix_device_patch, 'apply-hermes-matrix-device-id.py', 'exec'), {})
+
+matrix_verification_patch = (root / 'config/patches/apply-hermes-matrix-auto-verification.py').read_text(encoding='utf-8')
+matrix_verification_patch = matrix_verification_patch.replace('Path("/home/hermes/hermes-agent/gateway/platforms/matrix.py")', f'Path({str(upstream_root / "gateway/platforms/matrix.py")!r})')
+exec(compile(matrix_verification_patch, 'apply-hermes-matrix-auto-verification.py', 'exec'), {})
+
+matrix_config_patch = (root / 'config/patches/apply-hermes-matrix-config-overrides.py').read_text(encoding='utf-8')
+matrix_config_patch = matrix_config_patch.replace('Path("/home/hermes/hermes-agent/gateway/config.py")', f'Path({str(upstream_root / "gateway/config.py")!r})')
+exec(compile(matrix_config_patch, 'apply-hermes-matrix-config-overrides.py', 'exec'), {})
 
 encrypted_media_patch = (root / 'config/patches/apply-hermes-matrix-encrypted-media.py').read_text(encoding='utf-8')
 encrypted_media_patch = encrypted_media_patch.replace('Path("/home/hermes/hermes-agent/gateway/platforms/matrix.py")', f'Path({str(upstream_root / "gateway/platforms/matrix.py")!r})')
 exec(compile(encrypted_media_patch, 'apply-hermes-matrix-encrypted-media.py', 'exec'), {})
+
+transcription_patch = (root / 'config/patches/apply-hermes-transcription-oga.py').read_text(encoding='utf-8')
+transcription_patch = transcription_patch.replace('Path("/home/hermes/hermes-agent/tools/transcription_tools.py")', f'Path({str(upstream_root / "tools/transcription_tools.py")!r})')
+exec(compile(transcription_patch, 'apply-hermes-transcription-oga.py', 'exec'), {})
 PY
 
-python3 -m py_compile "$UPSTREAM_ROOT/agent/prompt_builder.py" "$UPSTREAM_ROOT/gateway/platforms/matrix.py"
+python3 -m py_compile "$UPSTREAM_ROOT/agent/prompt_builder.py" "$UPSTREAM_ROOT/gateway/platforms/matrix.py" "$UPSTREAM_ROOT/gateway/config.py" "$UPSTREAM_ROOT/tools/transcription_tools.py"
 
 assert_contains "$UPSTREAM_ROOT/agent/prompt_builder.py" 'prefer HERMES_HOME, then cwd top-level only' 'host AGENTS patch updates prompt builder precedence'
 assert_contains "$UPSTREAM_ROOT/agent/prompt_builder.py" 'hermes_home_agents = get_hermes_home() / "AGENTS.md"' 'host AGENTS patch prefers HERMES_HOME AGENTS file'
 assert_contains "$UPSTREAM_ROOT/agent/prompt_builder.py" 'if candidate.exists() and candidate != hermes_home_agents:' 'host AGENTS patch preserves cwd fallback without duplicating HERMES_HOME'
 assert_not_contains "$UPSTREAM_ROOT/agent/prompt_builder.py" 'mautrix' 'host AGENTS patch should stay independent of Matrix strategy'
-assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'MATRIX_DEVICE_ID        Optional stable device ID for password login' 'matrix patch documents MATRIX_DEVICE_ID'
-assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'self._device_id: str = (' 'matrix patch adds stable device field'
-assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'Matrix: MATRIX_DEVICE_ID=%s ignored for access-token auth; homeserver restored device %s' 'matrix patch warns when access-token auth chooses a different device'
-assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'auth_dict["device_id"] = self._device_id' 'matrix patch forwards MATRIX_DEVICE_ID in password auth'
-assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'resp = await client.login_raw(auth_dict)' 'matrix patch uses login_raw for stable device reuse'
-assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'requested for password login, but homeserver returned device %s' 'matrix patch warns when password login returns a different device'
-assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'response omitted device_id; continuing with requested device %s' 'matrix patch warns when the login response omits device_id'
+
+assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'MATRIX_DEVICE_ID        Optional stable device ID for password login' 'matrix device patch documents MATRIX_DEVICE_ID'
+assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'self._device_id: str = (' 'matrix device patch adds stable device field'
+assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'Matrix: MATRIX_DEVICE_ID=%s ignored for access-token auth; homeserver restored device %s' 'matrix device patch warns when access-token auth chooses a different device'
+assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'auth_dict["device_id"] = self._device_id' 'matrix device patch forwards MATRIX_DEVICE_ID in password auth'
+assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'resp = await client.login_raw(auth_dict)' 'matrix device patch uses login_raw for stable device reuse'
+assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'requested for password login, but homeserver returned device %s' 'matrix device patch warns when password login returns a different device'
+assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'response omitted device_id; continuing with requested device %s' 'matrix device patch warns when the login response omits device_id'
+
+assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'self._allowed_users: list[str] = [' 'matrix verification patch adds allowed users field'
+assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'device_id=self._device_id or None' 'matrix verification patch wires device_id into client creation'
+assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'client.add_to_device_callback(' 'matrix verification patch registers to-device callbacks'
+assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'KeyVerificationStart' 'matrix verification patch includes verification start events'
+assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'KeyVerificationCancel' 'matrix verification patch includes verification cancel events'
+assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'KeyVerificationKey' 'matrix verification patch includes verification key events'
+assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'KeyVerificationMac' 'matrix verification patch includes verification MAC events'
+assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'async def _on_key_verification' 'matrix verification patch adds handler'
+assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'accept_key_verification' 'matrix verification patch auto-accepts verification'
+assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'confirm_short_auth_string' 'matrix verification patch confirms SAS'
+assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'MATRIX_ALLOWED_USERS is not configured' 'wrapper hardening disables auto-verification when allowlist is empty'
+assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'ignoring verification from unauthorized user %s' 'matrix verification patch rejects users outside the allowlist'
+assert_not_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" '"*" not in self._allowed_users' 'matrix verification patch does not silently allow wildcard trust bypass'
+
+assert_contains "$UPSTREAM_ROOT/gateway/config.py" 'extra["device_id"] = os.getenv("MATRIX_DEVICE_ID", "")' 'matrix config patch applies direct device_id env override'
+assert_contains "$UPSTREAM_ROOT/gateway/config.py" 'extra["allowed_users"] = os.getenv("MATRIX_ALLOWED_USERS", "")' 'matrix config patch applies direct allowed_users env override'
+
 assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'if self._encryption and getattr(client, "olm", None):' 'encrypted media patch uses truthy crypto-loaded callback gate'
 assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" '"RoomEncryptedAudio"' 'encrypted media patch registers encrypted audio callback names'
 assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'self._allow_reprocess_event(getattr(decrypted, "event_id", None))' 'encrypted media patch allows retried media events to bypass duplicate suppression'
@@ -403,18 +456,38 @@ assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'def _get_encrypted
 assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'cache_document_from_bytes' 'encrypted media patch caches encrypted file/video payloads locally'
 assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'media_urls = None' 'encrypted media patch drops bogus fallback URLs on decrypt failure'
 assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'logger.info("Matrix: cached encrypted media %s to %s", event.event_id, cached_path)' 'encrypted media patch logs successful encrypted-media cache writes'
+assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" '"audio/ogg": ".ogg"' 'encrypted media patch normalises audio/ogg to .ogg'
+assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'if ext == ".oga":' 'encrypted media patch rewrites .oga fallback suffixes to .ogg'
 assert_not_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'if self._encryption and hasattr(client, "olm"):' 'encrypted media patch removes weaker encrypted callback gate'
+
+assert_contains "$UPSTREAM_ROOT/tools/transcription_tools.py" 'ogg, oga, aac' 'transcription patch documents .oga as an accepted input format'
+assert_contains "$UPSTREAM_ROOT/tools/transcription_tools.py" '".ogg", ".oga", ".aac"' 'transcription patch accepts .oga in SUPPORTED_FORMATS'
 
 if [ "${HERMES_UPSTREAM_PATCH_SMOKE:-0}" = "1" ]; then
   REAL_UPSTREAM_ROOT="${HERMES_UPSTREAM_REPO:-/home/hermes/hermes-agent}"
+  if [ ! -f "$REAL_UPSTREAM_ROOT/agent/prompt_builder.py" ]; then
+    printf 'assertion failed: HERMES_UPSTREAM_PATCH_SMOKE=1 but upstream prompt_builder.py not found at %s\n' "$REAL_UPSTREAM_ROOT" >&2
+    exit 1
+  fi
   if [ ! -f "$REAL_UPSTREAM_ROOT/gateway/platforms/matrix.py" ]; then
     printf 'assertion failed: HERMES_UPSTREAM_PATCH_SMOKE=1 but upstream repo not found at %s\n' "$REAL_UPSTREAM_ROOT" >&2
     exit 1
   fi
+  if [ ! -f "$REAL_UPSTREAM_ROOT/gateway/config.py" ]; then
+    printf 'assertion failed: HERMES_UPSTREAM_PATCH_SMOKE=1 but upstream config.py not found at %s\n' "$REAL_UPSTREAM_ROOT" >&2
+    exit 1
+  fi
+  if [ ! -f "$REAL_UPSTREAM_ROOT/tools/transcription_tools.py" ]; then
+    printf 'assertion failed: HERMES_UPSTREAM_PATCH_SMOKE=1 but upstream transcription_tools.py not found at %s\n' "$REAL_UPSTREAM_ROOT" >&2
+    exit 1
+  fi
 
   REAL_TMP="$TMPDIR/real-upstream"
-  mkdir -p "$REAL_TMP/gateway/platforms"
+  mkdir -p "$REAL_TMP/agent" "$REAL_TMP/gateway/platforms" "$REAL_TMP/tools"
+  cp "$REAL_UPSTREAM_ROOT/agent/prompt_builder.py" "$REAL_TMP/agent/prompt_builder.py"
   cp "$REAL_UPSTREAM_ROOT/gateway/platforms/matrix.py" "$REAL_TMP/gateway/platforms/matrix.py"
+  cp "$REAL_UPSTREAM_ROOT/gateway/config.py" "$REAL_TMP/gateway/config.py"
+  cp "$REAL_UPSTREAM_ROOT/tools/transcription_tools.py" "$REAL_TMP/tools/transcription_tools.py"
 
   python3 - "$ROOT" "$REAL_TMP" <<'PY'
 from pathlib import Path
@@ -423,15 +496,41 @@ import sys
 root = Path(sys.argv[1])
 real_tmp = Path(sys.argv[2])
 
-matrix_patch = (root / 'config/patches/apply-hermes-matrix-encrypted-media.py').read_text(encoding='utf-8')
-matrix_patch = matrix_patch.replace('Path("/home/hermes/hermes-agent/gateway/platforms/matrix.py")', f'Path({str(real_tmp / "gateway/platforms/matrix.py")!r})')
-exec(compile(matrix_patch, 'apply-hermes-matrix-encrypted-media.py', 'exec'), {})
+host_patch = (root / 'config/patches/apply-hermes-host-agents-context.py').read_text(encoding='utf-8')
+host_patch = host_patch.replace('Path("/home/hermes/hermes-agent/agent/prompt_builder.py")', f'Path({str(real_tmp / "agent/prompt_builder.py")!r})')
+exec(compile(host_patch, 'apply-hermes-host-agents-context.py', 'exec'), {})
+
+matrix_device_patch = (root / 'config/patches/apply-hermes-matrix-device-id.py').read_text(encoding='utf-8')
+matrix_device_patch = matrix_device_patch.replace('Path("/home/hermes/hermes-agent/gateway/platforms/matrix.py")', f'Path({str(real_tmp / "gateway/platforms/matrix.py")!r})')
+exec(compile(matrix_device_patch, 'apply-hermes-matrix-device-id.py', 'exec'), {})
+
+matrix_verification_patch = (root / 'config/patches/apply-hermes-matrix-auto-verification.py').read_text(encoding='utf-8')
+matrix_verification_patch = matrix_verification_patch.replace('Path("/home/hermes/hermes-agent/gateway/platforms/matrix.py")', f'Path({str(real_tmp / "gateway/platforms/matrix.py")!r})')
+exec(compile(matrix_verification_patch, 'apply-hermes-matrix-auto-verification.py', 'exec'), {})
+
+matrix_config_patch = (root / 'config/patches/apply-hermes-matrix-config-overrides.py').read_text(encoding='utf-8')
+matrix_config_patch = matrix_config_patch.replace('Path("/home/hermes/hermes-agent/gateway/config.py")', f'Path({str(real_tmp / "gateway/config.py")!r})')
+exec(compile(matrix_config_patch, 'apply-hermes-matrix-config-overrides.py', 'exec'), {})
+
+encrypted_media_patch = (root / 'config/patches/apply-hermes-matrix-encrypted-media.py').read_text(encoding='utf-8')
+encrypted_media_patch = encrypted_media_patch.replace('Path("/home/hermes/hermes-agent/gateway/platforms/matrix.py")', f'Path({str(real_tmp / "gateway/platforms/matrix.py")!r})')
+exec(compile(encrypted_media_patch, 'apply-hermes-matrix-encrypted-media.py', 'exec'), {})
+
+transcription_patch = (root / 'config/patches/apply-hermes-transcription-oga.py').read_text(encoding='utf-8')
+transcription_patch = transcription_patch.replace('Path("/home/hermes/hermes-agent/tools/transcription_tools.py")', f'Path({str(real_tmp / "tools/transcription_tools.py")!r})')
+exec(compile(transcription_patch, 'apply-hermes-transcription-oga.py', 'exec'), {})
 PY
 
-  python3 -m py_compile "$REAL_TMP/gateway/platforms/matrix.py"
+  python3 -m py_compile "$REAL_TMP/agent/prompt_builder.py" "$REAL_TMP/gateway/platforms/matrix.py" "$REAL_TMP/gateway/config.py" "$REAL_TMP/tools/transcription_tools.py"
+  assert_contains "$REAL_TMP/agent/prompt_builder.py" 'hermes_home_agents = get_hermes_home() / "AGENTS.md"' 'real upstream smoke keeps HERMES_HOME AGENTS precedence'
+  assert_contains "$REAL_TMP/gateway/platforms/matrix.py" 'client.add_to_device_callback(' 'real upstream smoke keeps verification callback registration'
   assert_contains "$REAL_TMP/gateway/platforms/matrix.py" 'RoomEncryptedAudio' 'real upstream smoke keeps encrypted audio callback registration'
   assert_contains "$REAL_TMP/gateway/platforms/matrix.py" 'from nio.crypto import decrypt_attachment' 'real upstream smoke keeps nio attachment decrypt helper'
   assert_contains "$REAL_TMP/gateway/platforms/matrix.py" 'cache_document_from_bytes' 'real upstream smoke keeps local document cache path for encrypted file/video'
+  assert_contains "$REAL_TMP/gateway/platforms/matrix.py" '"audio/ogg": ".ogg"' 'real upstream smoke keeps .ogg normalisation for audio/ogg'
+  assert_contains "$REAL_TMP/tools/transcription_tools.py" '".ogg", ".oga", ".aac"' 'real upstream smoke keeps .oga transcription fallback'
+  assert_contains "$REAL_TMP/gateway/config.py" 'extra["device_id"] = os.getenv("MATRIX_DEVICE_ID", "")' 'real upstream smoke keeps direct device-id env override'
+  assert_contains "$REAL_TMP/gateway/config.py" 'extra["allowed_users"] = os.getenv("MATRIX_ALLOWED_USERS", "")' 'real upstream smoke keeps direct allowlist env override'
   printf 'Real upstream patch smoke passed (%s)\n' "$REAL_UPSTREAM_ROOT"
 fi
 

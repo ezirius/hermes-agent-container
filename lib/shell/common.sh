@@ -102,6 +102,7 @@ image_label() {
 }
 
 local_build_fingerprint() {
+  [[ -n "${ROOT:-}" ]] || fail "ROOT must be set before calling local_build_fingerprint"
   require_python3
 
   python3 - "$ROOT" <<'PY'
