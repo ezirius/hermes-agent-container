@@ -45,7 +45,7 @@ Use this wrapper when you want:
 
    `./scripts/shared/bootstrap ezirius`
 
-`bootstrap` builds the shared local Hermes image from the latest upstream release by default, upgrades it if the requested upstream source changed, starts the Hermes Gateway container for the selected workspace, and then opens Hermes interactively.
+`bootstrap` builds the shared local Hermes image from the latest upstream release by default, upgrades it if the requested upstream source changed or the local wrapper image recipe changed, starts the Hermes Gateway container for the selected workspace, and then opens Hermes interactively.
 
 Common forwarded `bootstrap` examples:
 
@@ -165,6 +165,7 @@ For Matrix state persistence:
 - upstream Hermes now resolves Matrix storage through `HERMES_HOME`
 - the wrapper also links `/home/hermes/.hermes` to `/opt/data` as a compatibility fallback for any remaining hardcoded `~/.hermes` paths
 - the wrapper patches the upstream `matrix-nio` adapter to honour `MATRIX_DEVICE_ID` for password login so one intended Matrix device can be reused instead of churning fresh login devices
+- the wrapper also patches the upstream `matrix-nio` adapter to register encrypted media callbacks, decrypt Matrix attachment payloads with `nio.crypto.decrypt_attachment`, cache decrypted local files, and avoid bogus ciphertext URL fallbacks for encrypted voice/image/file/video events
 - if you import room keys or otherwise change Matrix crypto material while Hermes is already running, restart the workspace container once so the live client reloads state from disk
 
 ### Matrix validation on the real Podman host

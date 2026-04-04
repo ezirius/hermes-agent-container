@@ -84,6 +84,21 @@ if bash -lc 'set -euo pipefail; source "$1"; export HERMES_PODMAN_TTY_WRAPPER=sc
 fi
 grep -Fq "HERMES_PODMAN_TTY_WRAPPER=script requires 'script' to be installed" "$ERR_FILE"
 
+WRAP_TMP="$(mktemp -d)"
+trap 'rm -f "$ERR_FILE"; rm -rf "$WRAP_TMP"' EXIT
+cat > "$WRAP_TMP/podman" <<'EOF'
+#!/usr/bin/env bash
+printf 'podman %s\n' "$*" > "$WRAP_TMP/podman-args"
+EOF
+cat > "$WRAP_TMP/script" <<'EOF'
+#!/usr/bin/env bash
+printf 'script %s\n' "$*" > "$WRAP_TMP/script-args"
+exit 0
+EOF
+chmod +x "$WRAP_TMP/podman" "$WRAP_TMP/script"
+PATH="$WRAP_TMP:$PATH" WRAP_TMP="$WRAP_TMP" bash -c 'set -euo pipefail; source "$1"; export HERMES_PODMAN_TTY_WRAPPER=script; export HERMES_FORCE_EXEC_TTY=1; export OSTYPE=linux-gnu; exec_podman_interactive_command exec demo container' _ "$ROOT/lib/shell/common.sh" >/dev/null 2>&1 || true
+grep -Fq 'script -q -e -c podman exec -it demo container /dev/null' "$WRAP_TMP/script-args"
+
 if bash -lc 'set -euo pipefail; source "$1"; export HERMES_BASE_ROOT="~other/tmp"; resolve_workspace ezirius' _ "$ROOT/lib/shell/common.sh" >/dev/null 2> "$ERR_FILE"; then
   printf 'assertion failed: unsupported ~user path forms should fail\n' >&2
   exit 1
@@ -129,5 +144,15 @@ touch "$ROOT/config/patches/__pycache__/ignored-test-artifact.pyc"
 FINGERPRINT_AFTER="$(local_build_fingerprint)"
 assert_eq "$FINGERPRINT_BEFORE" "$FINGERPRINT_AFTER" "local build fingerprint ignores generated patch artifacts"
 rm -f "$ROOT/config/patches/__pycache__/ignored-test-artifact.pyc"
+
+CONFLICT_TMP="$(mktemp -d)"
+mkdir -p "$CONFLICT_TMP/source" "$CONFLICT_TMP/target"
+touch "$CONFLICT_TMP/source/existing.txt" "$CONFLICT_TMP/target/existing.txt"
+if bash -lc 'set -euo pipefail; source "$1"; move_path_contents "$2" "$3"' _ "$ROOT/lib/shell/common.sh" "$CONFLICT_TMP/source" "$CONFLICT_TMP/target" >/dev/null 2> "$ERR_FILE"; then
+  printf 'assertion failed: migration conflicts should fail explicitly\n' >&2
+  exit 1
+fi
+grep -Fq 'migration target already exists:' "$ERR_FILE"
+rm -rf "$CONFLICT_TMP"
 
 echo "Common helper checks passed"

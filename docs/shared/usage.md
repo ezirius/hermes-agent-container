@@ -50,6 +50,7 @@ Workspace names resolve under `HERMES_BASE_ROOT`.
 - upstream Hermes resolves Matrix encrypted-state storage through `HERMES_HOME`
 - `/home/hermes/.hermes` is linked to `/opt/data` as a compatibility safeguard for any remaining upstream hardcoded `~/.hermes` paths
 - the wrapper patches the upstream `matrix-nio` adapter to honour `MATRIX_DEVICE_ID` for password login so one intended Matrix device can be reused
+- the wrapper also patches the upstream `matrix-nio` adapter to register encrypted media callbacks, decrypt Matrix attachment payloads with `nio.crypto.decrypt_attachment`, cache decrypted local files, and avoid bogus ciphertext URL fallbacks for encrypted voice/image/file/video events
 - if you import room keys or otherwise change Matrix crypto material while Hermes is already running, restart the workspace container once so the live client reloads state from disk
 
 ## Workspaces versus profiles
@@ -83,6 +84,10 @@ The local wrapper build fingerprint covers all non-generated image recipe files 
 ## Matrix validation
 
 The wrapper now keeps the upstream Matrix adapter path intact and validates wrapper mechanics separately from live homeserver behaviour. Local shell tests validate the wrapper mechanics, but they do not prove live Matrix behaviour.
+
+For wrapper-maintainer verification, `tests/shared/test-patches.sh` now supports an opt-in real-upstream smoke pass against an actual upstream checkout:
+- `HERMES_UPSTREAM_PATCH_SMOKE=1 bash tests/shared/test-patches.sh`
+- optional override: `HERMES_UPSTREAM_REPO=/path/to/upstream/hermes-agent`
 
 Use this host-side verification sequence on the real Podman machine:
 

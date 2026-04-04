@@ -65,7 +65,20 @@ exec_podman_interactive_command() {
 
   if use_interactive_tty; then
     if should_wrap_podman_tty_with_script; then
-      exec script -q /dev/null podman "$subcommand" -it "$@"
+      local command=(podman "$subcommand" -it "$@")
+      if [[ ${OSTYPE-} == darwin* ]]; then
+        exec script -q /dev/null "${command[@]}"
+      fi
+
+      local quoted=()
+      local arg
+      local command_string
+      for arg in "${command[@]}"; do
+        printf -v arg '%q' "$arg"
+        quoted+=("$arg")
+      done
+      command_string="${quoted[*]}"
+      exec script -q -e -c "$command_string" /dev/null
     fi
     exec podman "$subcommand" -it "$@"
   fi
@@ -209,13 +222,26 @@ move_path_contents() {
 
   if [[ -d "$source" ]]; then
     mkdir -p "$target"
+    local entries=()
+    local entry
+    local destination
     shopt -s dotglob nullglob
-    if [[ -d "$source" ]]; then
-      mv "$source"/* "$target"/ 2>/dev/null || true
-      rmdir "$source" 2>/dev/null || true
-    fi
+    entries=("$source"/*)
     shopt -u dotglob nullglob
-  elif [[ ! -e "$target" ]]; then
+
+    if [[ ${#entries[@]} -eq 0 ]]; then
+      rmdir "$source" 2>/dev/null || true
+      return 0
+    fi
+
+    for entry in "${entries[@]}"; do
+      destination="$target/$(basename "$entry")"
+      [[ ! -e "$destination" ]] || fail "migration target already exists: $destination"
+      mv "$entry" "$target/"
+    done
+    rmdir "$source" || fail "failed to remove migrated legacy directory: $source"
+  else
+    [[ ! -e "$target" ]] || fail "migration target already exists: $target"
     mkdir -p "$(dirname "$target")"
     mv "$source" "$target"
   fi
@@ -285,29 +311,35 @@ image_id() {
 
 github_repo_slug() {
   local repo_url="$1"
+  require_python3
 
-  case "$repo_url" in
-    https://github.com/*)
-      repo_url="${repo_url#https://github.com/}"
-      ;;
-    http://github.com/*)
-      repo_url="${repo_url#http://github.com/}"
-      ;;
-    ssh://git@github.com/*)
-      repo_url="${repo_url#ssh://git@github.com/}"
-      ;;
-    git@github.com:*)
-      repo_url="${repo_url#git@github.com:}"
-      ;;
-    *)
-      fail "HERMES_REF=latest-release requires a GitHub repo URL; set HERMES_REF explicitly for non-GitHub sources"
-      ;;
-  esac
+  python3 - "$repo_url" <<'PY'
+import re
+import sys
+from urllib.parse import urlparse
 
-  repo_url="${repo_url%.git}"
-  repo_url="${repo_url%/}"
-  [[ "$repo_url" =~ ^[^/]+/[^/]+$ ]] || fail "could not derive owner/repo from HERMES_REPO_URL: $1"
-  printf '%s' "$repo_url"
+repo_url = sys.argv[1].strip()
+path = None
+
+scp_like = re.match(r'^[^@]+@[^:]+:(.+)$', repo_url)
+if scp_like:
+    path = scp_like.group(1)
+else:
+    parsed = urlparse(repo_url)
+    if parsed.scheme and parsed.path:
+        path = parsed.path.lstrip('/')
+
+if not path:
+    raise SystemExit('could not derive owner/repo from HERMES_REPO_URL: ' + repo_url)
+
+path = path.rstrip('/')
+if path.endswith('.git'):
+    path = path[:-4]
+parts = [part for part in path.split('/') if part]
+if len(parts) != 2:
+    raise SystemExit('could not derive owner/repo from HERMES_REPO_URL: ' + repo_url)
+print('/'.join(parts))
+PY
 }
 
 resolve_hermes_ref() {
