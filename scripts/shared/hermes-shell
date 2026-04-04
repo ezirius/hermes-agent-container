@@ -8,8 +8,8 @@ source "$ROOT/lib/shell/common.sh"
 if [[ ${1-} == "--help" ]]; then
   show_help "Usage: $(basename "$0") <workspace-name>
 
-Open an interactive shell in a transient container that shares the workspace
-mounts of the running Hermes Gateway container for one workspace."
+Open an interactive shell by execing into the running Hermes Gateway container
+for one workspace."
 fi
 
 if [[ $# -ne 1 ]]; then
@@ -24,10 +24,7 @@ if [[ "$(container_image_id)" != "$(image_id)" ]]; then
   echo "==> Workspace container image is stale; reconciling with the current shared image"
   "$SCRIPT_DIR/hermes-start" "$WORKSPACE_NAME" >/dev/null
 fi
-exec_podman_interactive_command run \
-  --rm \
-  --entrypoint /bin/bash \
-  -v "$HERMES_HOME_DIR:/opt/data" \
-  -v "$HERMES_WORKSPACE_DIR:/workspace" \
-  -w /workspace \
-  "$HERMES_IMAGE_NAME"
+exec_podman_interactive_command exec \
+  --workdir /workspace \
+  "$HERMES_CONTAINER_NAME" \
+  /bin/bash

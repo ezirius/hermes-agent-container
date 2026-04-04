@@ -9,15 +9,13 @@ LABEL hermes.ref=$HERMES_REF
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
+    build-essential \
     ca-certificates \
-    cmake \
     ffmpeg \
-    g++ \
     gcc \
     git \
     libffi-dev \
     libolm-dev \
-    make \
     nodejs \
     npm \
     python3 \
@@ -39,15 +37,15 @@ RUN test -n "$HERMES_REF" \
   || (echo >&2 "HERMES_REF must be set to a real upstream tag or branch before building" && exit 1)
 
 RUN git clone --depth 1 --branch "$HERMES_REF" "$HERMES_REPO_URL" /home/hermes/hermes-agent \
-  && python3 /tmp/hermes-patches/apply-hermes-mautrix-migration.py \
   && python3 /tmp/hermes-patches/apply-hermes-host-agents-context.py \
   && python3 -m pip install -e "/home/hermes/hermes-agent[all]" --break-system-packages \
   && python3 -m pip install -e "/home/hermes/hermes-agent[matrix]" --break-system-packages \
   && cd /home/hermes/hermes-agent \
-  && npm install \
-  && npx playwright install --with-deps chromium \
+  && npm install --prefer-offline --no-audit \
+  && npx playwright install --with-deps chromium --only-shell \
   && cd /home/hermes/hermes-agent/scripts/whatsapp-bridge \
-  && npm install \
+  && npm install --prefer-offline --no-audit \
+  && npm cache clean --force \
   && rm -rf /home/hermes/.hermes \
   && mkdir -p /opt/data \
   && ln -s /opt/data /home/hermes/.hermes \
@@ -55,6 +53,7 @@ RUN git clone --depth 1 --branch "$HERMES_REF" "$HERMES_REPO_URL" /home/hermes/h
 
 ENV HERMES_HOME=/opt/data
 ENV HOME=/home/hermes
+VOLUME ["/opt/data"]
 
 USER hermes
 WORKDIR /workspace

@@ -26,9 +26,7 @@ bash -n \
   "$ROOT/tests/shared/test-patches.sh"
 
 python3 -m py_compile \
-  "$ROOT/config/patches/apply-hermes-mautrix-migration.py" \
-  "$ROOT/config/patches/apply-hermes-host-agents-context.py" \
-  "$ROOT/config/patches/templates/hermes-matrix-mautrix.py"
+  "$ROOT/config/patches/apply-hermes-host-agents-context.py"
 
 "$ROOT/tests/shared/test-layout.sh"
 "$ROOT/tests/shared/test-common.sh"

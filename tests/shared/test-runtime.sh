@@ -227,10 +227,8 @@ assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/hermes-home:/
 assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/workspace:/workspace" 'bootstrap mounts persistent workspace directory'
 assert_not_contains "$STATE_DIR/podman.log" '--env-file ' 'bootstrap does not inject workspace env via podman'
 assert_contains "$STATE_DIR/podman.log" 'mock-hermes-image gateway run' 'bootstrap keeps wrapper image selection outside workspace env and runs gateway through the entrypoint model'
-assert_contains "$STATE_DIR/podman.log" 'run -i --rm' 'bootstrap opens Hermes with a transient interactive container'
-assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/hermes-home:/opt/data" 'bootstrap interactive Hermes container mounts Hermes home'
-assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/workspace:/workspace" 'bootstrap interactive Hermes container mounts workspace'
-assert_contains "$STATE_DIR/podman.log" 'mock-hermes-image --help' 'bootstrap opens Hermes CLI from the shared image through the entrypoint model'
+assert_contains "$STATE_DIR/podman.log" 'exec -i --workdir /workspace hermes-agent-ezirius hermes --help' 'bootstrap opens Hermes by execing into the running workspace container'
+assert_not_contains "$STATE_DIR/podman.log" 'run -i --rm' 'bootstrap should not start a second transient container against the same Hermes home'
 
 reset_state
 write_file "$STATE_DIR/image_exists" '1'
@@ -248,7 +246,7 @@ assert_contains "$STATE_DIR/podman.log" 'container exists hermes-agent-test' 'bo
 assert_contains "$STATE_DIR/podman.log" 'build --pull=always --label hermes.repo_url=https://github.com/NousResearch/hermes-agent.git --label hermes.ref=v1.2.3' 'bootstrap-test rebuilds the test image from scratch'
 assert_contains "$STATE_DIR/podman.log" 'run -d --name hermes-agent-test' 'bootstrap-test starts the dedicated test container'
 assert_contains "$STATE_DIR/podman.log" 'hermes-agent-local-test gateway run' 'bootstrap-test uses the dedicated test image for the gateway'
-assert_contains "$STATE_DIR/podman.log" 'hermes-agent-local-test doctor' 'bootstrap-test opens Hermes from the dedicated test image'
+assert_contains "$STATE_DIR/podman.log" 'exec -i --workdir /workspace hermes-agent-test hermes doctor' 'bootstrap-test opens Hermes by execing inside the dedicated test container'
 assert_not_contains "$STATE_DIR/podman.log" 'hermes-agent-ezirius' 'bootstrap-test does not touch the live ezirius container'
 assert_not_contains "$STATE_DIR/podman.log" 'mock-hermes-image' 'bootstrap-test does not use the live image name'
 test ! -e "$HERMES_BASE_ROOT/test/workspace/old.txt"
@@ -279,10 +277,8 @@ write_file "$STATE_DIR/container_exists" '1'
 write_file "$STATE_DIR/container_running" 'true'
 write_file "$STATE_DIR/container_image_id" 'image-a'
 "$ROOT/scripts/shared/hermes-open" ezirius doctor > "$STATE_DIR/open.out"
-assert_contains "$STATE_DIR/podman.log" 'run -i --rm' 'open uses a transient non-tty container when no tty is available'
-assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/hermes-home:/opt/data" 'open mounts Hermes home at /opt/data'
-assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/workspace:/workspace" 'open mounts the workspace at /workspace'
-assert_contains "$STATE_DIR/podman.log" 'mock-hermes-image doctor' 'open forwards Hermes CLI arguments through the shared image'
+assert_contains "$STATE_DIR/podman.log" 'exec -i --workdir /workspace hermes-agent-ezirius hermes doctor' 'open execs Hermes inside the running workspace container when no tty is available'
+assert_not_contains "$STATE_DIR/podman.log" 'run -i --rm' 'open should not launch a second transient container against the same Hermes home'
 
 reset_state
 write_file "$STATE_DIR/image_exists" '1'
@@ -293,13 +289,13 @@ write_file "$STATE_DIR/container_image_id" 'image-a'
 "$ROOT/scripts/shared/hermes-open" ezirius doctor > "$STATE_DIR/open-stale.out"
 assert_contains "$STATE_DIR/open-stale.out" 'Workspace container image is stale; reconciling with the current shared image' 'open detects stale running gateway image'
 assert_contains "$STATE_DIR/podman.log" 'rm -f hermes-agent-ezirius' 'open reconciles stale gateway image through hermes-start'
-assert_contains "$STATE_DIR/podman.log" 'run -d --name hermes-agent-ezirius' 'open restarts the gateway container before launching the transient CLI'
+assert_contains "$STATE_DIR/podman.log" 'run -d --name hermes-agent-ezirius' 'open restarts the gateway container before execing the CLI inside it'
 
 reset_state
 write_file "$STATE_DIR/container_exists" '1'
 write_file "$STATE_DIR/container_running" 'true'
 HERMES_FORCE_EXEC_TTY=1 OSTYPE=darwin24 "$ROOT/scripts/shared/hermes-open" ezirius chat > "$STATE_DIR/open-darwin.out"
-assert_contains "$STATE_DIR/podman.log" 'script -q /dev/null podman run -it --rm' 'open uses script tty wrapper for transient macOS interactive container'
+assert_contains "$STATE_DIR/podman.log" 'script -q /dev/null podman exec -it --workdir /workspace hermes-agent-ezirius hermes chat' 'open uses script tty wrapper for interactive podman exec on macOS'
 
 reset_state
 write_file "$STATE_DIR/image_exists" '1'
@@ -308,9 +304,8 @@ write_file "$STATE_DIR/container_exists" '1'
 write_file "$STATE_DIR/container_running" 'true'
 write_file "$STATE_DIR/container_image_id" 'image-a'
 "$ROOT/scripts/shared/hermes-shell" ezirius > "$STATE_DIR/shell.out"
-assert_contains "$STATE_DIR/podman.log" 'run -i --rm' 'shell uses a transient non-tty container when no tty is available'
-assert_contains "$STATE_DIR/podman.log" '--entrypoint /bin/bash' 'shell bypasses the entrypoint for direct bash access'
-assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/hermes-home:/opt/data" 'shell mounts Hermes home at /opt/data'
+assert_contains "$STATE_DIR/podman.log" 'exec -i --workdir /workspace hermes-agent-ezirius /bin/bash' 'shell execs /bin/bash inside the running workspace container when no tty is available'
+assert_not_contains "$STATE_DIR/podman.log" 'run -i --rm' 'shell should not launch a second transient container against the same Hermes home'
 
 reset_state
 write_file "$STATE_DIR/image_exists" '1'
@@ -321,13 +316,13 @@ write_file "$STATE_DIR/container_image_id" 'image-a'
 "$ROOT/scripts/shared/hermes-shell" ezirius > "$STATE_DIR/shell-stale.out"
 assert_contains "$STATE_DIR/shell-stale.out" 'Workspace container image is stale; reconciling with the current shared image' 'shell detects stale running gateway image'
 assert_contains "$STATE_DIR/podman.log" 'rm -f hermes-agent-ezirius' 'shell reconciles stale gateway image through hermes-start'
-assert_contains "$STATE_DIR/podman.log" 'run -d --name hermes-agent-ezirius' 'shell restarts the gateway container before launching the transient shell'
+assert_contains "$STATE_DIR/podman.log" 'run -d --name hermes-agent-ezirius' 'shell restarts the gateway container before execing the shell inside it'
 
 reset_state
 write_file "$STATE_DIR/container_exists" '1'
 write_file "$STATE_DIR/container_running" 'true'
 HERMES_FORCE_EXEC_TTY=1 OSTYPE=darwin24 "$ROOT/scripts/shared/hermes-shell" ezirius > "$STATE_DIR/shell-darwin.out"
-assert_contains "$STATE_DIR/podman.log" 'script -q /dev/null podman run -it --rm' 'shell uses script tty wrapper for transient macOS interactive container'
+assert_contains "$STATE_DIR/podman.log" 'script -q /dev/null podman exec -it --workdir /workspace hermes-agent-ezirius /bin/bash' 'shell uses script tty wrapper for interactive podman exec on macOS'
 
 reset_state
 write_file "$STATE_DIR/container_exists" '1'

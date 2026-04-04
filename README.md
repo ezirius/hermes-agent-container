@@ -118,7 +118,7 @@ Default recommendation:
 - `hermes-build` ensures the shared image exists
 - `hermes-upgrade` rebuilds the shared image when the requested upstream release changed or when the local wrapper image recipe changed
 - `hermes-start` starts or reuses the local Hermes Gateway container only
-- `hermes-open` runs the Hermes CLI in a transient interactive container that shares the workspace mounts of the running gateway container
+- `hermes-open` runs the Hermes CLI by execing into the running gateway container
 - `bootstrap` performs the full `build -> upgrade -> start -> open` flow
 - `bootstrap-test` performs a destructive full fresh test-lane build and open against the dedicated `test` workspace and `hermes-agent-local-test` image
 - by default, `hermes-build` and `hermes-upgrade` resolve the latest upstream Hermes release tag and fail clearly if no upstream release is available
@@ -134,13 +134,13 @@ Container lifecycle details:
 - because Hermes reads `/opt/data/.env` and `/opt/data/config.yaml` on process start, a plain stop/start is enough for config changes in those files
 - for image-recipe changes, the normal path is `hermes-upgrade` then `hermes-start <workspace>`; you do not need `hermes-remove` unless you explicitly want manual container cleanup first
 
-The local wrapper build fingerprint covers all non-generated image recipe files under `config/containers/` and `config/patches/`. That means local image-behaviour changes such as the entrypoint, mautrix migration patch, or compatibility-link setup trigger a rebuild automatically on the next `hermes-upgrade` or `bootstrap`, even when the upstream release tag has not changed.
+The local wrapper build fingerprint covers all non-generated image recipe files under `config/containers/` and `config/patches/`. That means local image-behaviour changes such as the entrypoint, host AGENTS precedence patch, or compatibility-link setup trigger a rebuild automatically on the next `hermes-upgrade` or `bootstrap`, even when the upstream release tag has not changed.
 
 ## MCP and gateway capabilities
 
 Upstream now includes `hermes mcp serve`, official Docker support, profiles, and broader messaging-platform support.
 
-Within this wrapper, those capabilities are available through the same transient CLI flow. For example:
+Within this wrapper, those capabilities are available by execing Hermes commands inside the running workspace container. For example:
 
 - `./scripts/shared/hermes-open ezirius mcp serve`
 - `./scripts/shared/hermes-open ezirius gateway`
@@ -152,18 +152,23 @@ The image now follows an upstream-style entrypoint model: the container bootstra
 
 ## Matrix
 
-The image includes Matrix support so Matrix and encrypted Matrix rooms can work inside the container. The wrapper now applies a local mautrix migration patch during image build, replacing the upstream matrix-nio adapter path inside the image with a wrapper-managed mautrix-based implementation.
+The image includes Matrix support so Matrix and encrypted Matrix rooms can work inside the container, but the wrapper now stays close to upstream `matrix-nio` behaviour rather than replacing the adapter wholesale.
+
+Important packaging note:
+
+- upstream `hermes-agent[all]` no longer includes Matrix in `v2026.4.3`
+- the wrapper therefore installs `hermes-agent[matrix]` explicitly during image build
+- `libolm-dev` remains installed in the image because encrypted Matrix support still depends on it
 
 For Matrix state persistence:
 
-- upstream Hermes resolves Matrix storage through `HERMES_HOME`
+- upstream Hermes now resolves Matrix storage through `HERMES_HOME`
 - the wrapper also links `/home/hermes/.hermes` to `/opt/data` as a compatibility fallback for any remaining hardcoded `~/.hermes` paths
-- the wrapper-managed mautrix store persists inbound Megolm sessions in `mautrix_crypto.json` so imported room keys can survive restart on the same device
-- if you import room keys while Hermes is already running, restart the workspace container once so the live crypto machine reloads them from disk
+- if you import room keys or otherwise change Matrix crypto material while Hermes is already running, restart the workspace container once so the live client reloads state from disk
 
 ### Matrix validation on the real Podman host
 
-This repository can validate the wrapper patching logic locally, but full Matrix verification still requires a real image build and a live homeserver test from the actual Podman host.
+This repository can validate the wrapper mechanics locally, but full Matrix verification still requires a real image build and a live homeserver test from the actual Podman host.
 
 Recommended validation sequence:
 
@@ -175,14 +180,14 @@ Recommended validation sequence:
 
    `./scripts/shared/hermes-start ezirius`
 
-3. Open a shell inside the image-backed workspace and inspect the patched upstream tree:
+3. Open a shell inside the image-backed workspace and inspect the upstream-led install:
 
    `./scripts/shared/hermes-shell ezirius`
 
-   Then verify:
+   Then verify at minimum:
 
-   - `/home/hermes/hermes-agent/gateway/platforms/matrix.py` contains mautrix imports
-   - `/home/hermes/hermes-agent/pyproject.toml` no longer depends on `matrix-nio[e2e]`
+   - `python3 -c "import nio"` succeeds
+   - `/home/hermes/hermes-agent/gateway/platforms/matrix.py` remains the upstream adapter file rather than a wrapper-managed replacement
    - `python3 -m py_compile /home/hermes/hermes-agent/gateway/platforms/matrix.py` succeeds
 
 4. Configure Matrix credentials in `hermes-home/.env` and restart the container.
@@ -203,7 +208,7 @@ Recommended validation sequence:
 
    `./scripts/shared/hermes-logs ezirius -f`
 
-Until that host-side validation is complete, treat the mautrix migration here as implementation-ready but not yet production-proven.
+Until that host-side validation is complete, treat Matrix support here as wrapper-aligned and locally validated, but not yet fully production-proven on the target homeserver.
 
 ## Security notes
 
@@ -241,22 +246,6 @@ Useful `hermes-logs` examples:
 - `./scripts/shared/hermes-logs ezirius --since 10m`
 
 All wrapper scripts support `--help` and document their argument contracts there.
-
-## GitHub setup on Maldoria
-
-This repo is configured to use the repo-specific SSH alias:
-
-- `github-maldoria-hermes-agent-container`
-
-If `git push` says it cannot resolve that hostname, the repo remote is already correct but your host SSH config has not been materialised yet. On Maldoria, run the managed setup from inside this repo:
-
-`/workspace/Development/OpenCode/installations-configurations/scripts/macos/git-configure`
-
-That workflow writes the matching `Host github-maldoria-hermes-agent-container` block into `~/.ssh/config`, exports the public key file `~/.ssh/maldoria-github-ezirius-hermes-agent-container.pub`, and points the repo remote at the alias.
-
-After that, test SSH auth with:
-
-`ssh -T git@github-maldoria-hermes-agent-container`
 
 ## Verification
 

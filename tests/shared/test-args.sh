@@ -54,7 +54,7 @@ assert_contains "$HELP_FILE" 'or when the local wrapper image recipe changed.' '
 
 "$ROOT/scripts/shared/bootstrap" --help > "$HELP_FILE"
 assert_contains "$HELP_FILE" 'local wrapper image recipe changed' 'bootstrap help documents local rebuild triggers'
-assert_contains "$HELP_FILE" 'transient interactive container' 'bootstrap help documents transient interactive open flow'
+assert_contains "$HELP_FILE" 'execing into the running workspace container' 'bootstrap help documents exec-based open flow'
 
 "$ROOT/scripts/shared/hermes-open" --help > "$HELP_FILE"
 assert_contains "$HELP_FILE" 'Common Hermes args:' 'open help documents key forwarded arguments'
@@ -72,7 +72,7 @@ assert_contains "$HELP_FILE" 'Common podman log args:' 'logs help documents key 
 assert_contains "$HELP_FILE" 'Show the Hermes Gateway container status' 'status help is available'
 
 "$ROOT/scripts/shared/hermes-shell" --help > "$HELP_FILE"
-assert_contains "$HELP_FILE" 'Open an interactive shell in a transient container' 'shell help is available'
+assert_contains "$HELP_FILE" 'Open an interactive shell by execing into the running Hermes Gateway container' 'shell help is available'
 
 "$ROOT/scripts/shared/hermes-stop" --help > "$HELP_FILE"
 assert_contains "$HELP_FILE" 'Stop the Hermes Gateway container' 'stop help is available'

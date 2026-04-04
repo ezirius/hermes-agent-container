@@ -17,7 +17,7 @@ Run a full destructive rebuild of the dedicated test lane:
 - delete the test workspace data under HERMES_BASE_ROOT/test
 - rebuild from scratch
 - start the fresh test workspace container
-- open Hermes interactively in that test workspace
+- open Hermes by execing into that dedicated test container
 
 This command only uses:
 - workspace: test

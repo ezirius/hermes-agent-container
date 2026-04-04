@@ -5,7 +5,7 @@ HERMES_PROJECT_PREFIX="${HERMES_PROJECT_PREFIX:-hermes-agent}"
 HERMES_REPO_URL="${HERMES_REPO_URL:-https://github.com/NousResearch/hermes-agent.git}"
 HERMES_REF="${HERMES_REF:-latest-release}"
 HERMES_GITHUB_API_BASE="${HERMES_GITHUB_API_BASE:-https://api.github.com}"
-HERMES_BASE_ROOT="${HERMES_BASE_ROOT:-~/Documents/Ezirius/.applications-data/.hermes-agent}"
+HERMES_BASE_ROOT="${HERMES_BASE_ROOT:-$HOME/Documents/Ezirius/.applications-data/.hermes-agent}"
 
 fail() {
   echo "Error: $*" >&2

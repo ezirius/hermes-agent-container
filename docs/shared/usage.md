@@ -11,9 +11,9 @@
 
 `bootstrap` runs `hermes-build`, then `hermes-upgrade`, then `hermes-start`, then `hermes-open`.
 
-`bootstrap-test` is the destructive fresh test path: it removes the previous dedicated test container, test image, and test workspace data under `HERMES_BASE_ROOT/test`, then builds from scratch, starts the fresh `test` workspace, and opens Hermes interactively from the `hermes-agent-local-test` image.
+`bootstrap-test` is the destructive fresh test path: it removes the previous dedicated test container, test image, and test workspace data under `HERMES_BASE_ROOT/test`, then builds from scratch, starts the fresh `test` workspace, and opens Hermes by execing inside that dedicated container built from the `hermes-agent-local-test` image.
 
-`hermes-start` starts the Hermes Gateway inside the persistent workspace container. `hermes-open` then opens the Hermes CLI in a transient interactive container that shares the same `/opt/data` and `/workspace` mounts.
+`hermes-start` starts the Hermes Gateway inside the persistent workspace container. `hermes-open` then execs the Hermes CLI inside that same running container so the wrapper does not run two Hermes containers against the same `/opt/data` at once.
 
 If the workspace container already exists on the current image, `hermes-start` reuses it. If it is stopped, the wrapper uses `podman start`; if the image changed, the wrapper recreates the container on the new image.
 
@@ -45,11 +45,11 @@ Workspace names resolve under `HERMES_BASE_ROOT`.
 - for image-recipe changes, the normal path is `hermes-upgrade` then `hermes-start <workspace>`; you do not need `hermes-remove` unless you explicitly want manual container cleanup first
 - the runtime state directories are created automatically under `hermes-home`
 - new workspaces follow the latest upstream release layout, including `cache/images`, `cache/audio`, and `platforms/whatsapp/session`; legacy wrapper paths are migrated forward on start when possible
-- the image includes Matrix support via a wrapper-managed mautrix migration patch over the upstream Matrix adapter
+- the image includes Matrix support using the upstream `matrix-nio` adapter path rather than a wrapper-managed replacement
+- upstream `hermes-agent[all]` no longer includes Matrix in `v2026.4.3`, so the wrapper installs `hermes-agent[matrix]` explicitly during image build
 - upstream Hermes resolves Matrix encrypted-state storage through `HERMES_HOME`
 - `/home/hermes/.hermes` is linked to `/opt/data` as a compatibility safeguard for any remaining upstream hardcoded `~/.hermes` paths
-- the wrapper-managed mautrix store persists inbound Megolm sessions in `mautrix_crypto.json` so imported room keys survive restart on the same device
-- if you import room keys while Hermes is already running, restart the workspace container once so the live crypto machine reloads them from disk
+- if you import room keys or otherwise change Matrix crypto material while Hermes is already running, restart the workspace container once so the live client reloads state from disk
 
 ## Workspaces versus profiles
 
@@ -77,11 +77,11 @@ Default recommendation:
   - GitHub API base used to resolve `latest-release`
   - default: `https://api.github.com`
 
-The local wrapper build fingerprint covers all non-generated image recipe files under `config/containers/` and `config/patches/`. That means local image-behaviour changes such as the entrypoint, mautrix migration patch, or compatibility-link setup trigger a rebuild automatically on the next `hermes-upgrade` or `bootstrap`, even if the upstream release tag stays the same.
+The local wrapper build fingerprint covers all non-generated image recipe files under `config/containers/` and `config/patches/`. That means local image-behaviour changes such as the entrypoint, host AGENTS precedence patch, or compatibility-link setup trigger a rebuild automatically on the next `hermes-upgrade` or `bootstrap`, even if the upstream release tag stays the same.
 
-## Matrix validation after the mautrix migration
+## Matrix validation
 
-The wrapper now patches the upstream Matrix adapter path to a wrapper-managed mautrix implementation during image build. Local shell tests validate the wrapper mechanics, but they do not prove live Matrix behaviour.
+The wrapper now keeps the upstream Matrix adapter path intact and validates wrapper mechanics separately from live homeserver behaviour. Local shell tests validate the wrapper mechanics, but they do not prove live Matrix behaviour.
 
 Use this host-side verification sequence on the real Podman machine:
 
@@ -93,14 +93,14 @@ Use this host-side verification sequence on the real Podman machine:
 
    `./scripts/shared/hermes-start ezirius`
 
-3. Inspect the patched upstream checkout inside the image-backed environment:
+3. Inspect the upstream-led install inside the image-backed environment:
 
    `./scripts/shared/hermes-shell ezirius`
 
    Verify at minimum:
 
-   - `/home/hermes/hermes-agent/gateway/platforms/matrix.py` contains mautrix-based code
-   - `/home/hermes/hermes-agent/pyproject.toml` no longer references `matrix-nio[e2e]`
+   - `python3 -c "import nio"` succeeds
+   - `/home/hermes/hermes-agent/gateway/platforms/matrix.py` remains the upstream adapter file rather than a wrapper-managed replacement
    - `python3 -m py_compile /home/hermes/hermes-agent/gateway/platforms/matrix.py` succeeds
 
 4. Configure the Matrix credentials in `hermes-home/.env`, then stop/start the workspace container.
@@ -121,7 +121,7 @@ Use this host-side verification sequence on the real Podman machine:
 
    `./scripts/shared/hermes-logs ezirius -f`
 
-Until those host-side checks pass, treat the mautrix migration as wrapper-validated but not yet production-validated.
+Until those host-side checks pass, treat Matrix support here as wrapper-aligned and locally validated, but not yet fully production-validated.
 
 ## Runtime model
 
@@ -129,7 +129,7 @@ Until those host-side checks pass, treat the mautrix migration as wrapper-valida
 - only `<workspace-root>/hermes-home` and `<workspace-root>/workspace` are mounted
 - the container restart policy is `unless-stopped`
 - rebuilding is only for image-recipe or upstream-source changes; runtime config changes live in the mounted files under `hermes-home`
-- on macOS hosts, interactive CLI and shell entry uses transient `podman run -it` containers and can wrap TTY allocation with `script`
+- on macOS hosts, interactive CLI and shell entry uses `podman exec -it` into the running workspace container and can wrap TTY allocation with `script`
 - Hermes can safely use its normal `local` backend inside this container, so terminal work runs inside the Hermes container itself
 - if you want Hermes to use Docker as an internal execution backend too, that is a separate configuration choice
 

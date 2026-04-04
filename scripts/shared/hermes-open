@@ -8,8 +8,8 @@ source "$ROOT/lib/shell/common.sh"
 if [[ ${1-} == "--help" ]]; then
   show_help "Usage: $(basename "$0") <workspace-name> [hermes args...]
 
-Run the Hermes CLI in a transient interactive container that shares the
-workspace mounts of the running Hermes Gateway container.
+Run the Hermes CLI by execing into the running Hermes Gateway container for one
+workspace.
 
 Arguments:
 - <workspace-name>           required workspace name under HERMES_BASE_ROOT
@@ -42,12 +42,8 @@ if [[ "$(container_image_id)" != "$(image_id)" ]]; then
   "$SCRIPT_DIR/hermes-start" "$WORKSPACE_NAME" >/dev/null
 fi
 
-RUN_ARGS=(--rm \
-  -v "$HERMES_HOME_DIR:/opt/data" \
-  -v "$HERMES_WORKSPACE_DIR:/workspace" \
-  -w /workspace \
-  "$HERMES_IMAGE_NAME")
+RUN_ARGS=(--workdir /workspace "$HERMES_CONTAINER_NAME" hermes)
 if [[ $# -gt 0 ]]; then
   RUN_ARGS+=("$@")
 fi
-exec_podman_interactive_command run "${RUN_ARGS[@]}"
+exec_podman_interactive_command exec "${RUN_ARGS[@]}"
