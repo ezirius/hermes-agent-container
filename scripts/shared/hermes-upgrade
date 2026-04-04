@@ -56,7 +56,7 @@ echo "==> Target upstream repo: $HERMES_REPO_URL"
 echo "==> Target upstream ref:  $HERMES_REF"
 echo "==> Target local build fingerprint: $LOCAL_BUILD_FINGERPRINT"
 echo "==> Building replacement image first: $TEMP_IMAGE_NAME"
-HERMES_IMAGE_NAME="$TEMP_IMAGE_NAME" "$SCRIPT_DIR/hermes-build" >/dev/null
+HERMES_IMAGE_NAME="$TEMP_IMAGE_NAME" "$SCRIPT_DIR/hermes-build"
 podman image rm -f "$HERMES_IMAGE_NAME" >/dev/null
 podman tag "$TEMP_IMAGE_NAME" "$HERMES_IMAGE_NAME"
 cleanup_temp_image

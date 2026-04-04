@@ -38,6 +38,7 @@ RUN test -n "$HERMES_REF" \
 
 RUN git clone --depth 1 --branch "$HERMES_REF" "$HERMES_REPO_URL" /home/hermes/hermes-agent \
   && python3 /tmp/hermes-patches/apply-hermes-host-agents-context.py \
+  && python3 /tmp/hermes-patches/apply-hermes-matrix-device-id.py \
   && python3 -m pip install -e "/home/hermes/hermes-agent[all]" --break-system-packages \
   && python3 -m pip install -e "/home/hermes/hermes-agent[matrix]" --break-system-packages \
   && cd /home/hermes/hermes-agent \

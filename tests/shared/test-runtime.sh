@@ -47,7 +47,7 @@ case "$subcommand" in
       exists)
         log_call "image exists $*"
         target="${1:-}"
-        if [[ -n "$target" && -f "$STATE_DIR/${target}_exists" ]]; then
+        if [[ "$target" == *-upgrade-tmp ]]; then
           [[ "$(read_value ${target}_exists)" == "1" ]]
         else
           [[ "$(read_value image_exists)" == "1" ]]
@@ -62,8 +62,8 @@ case "$subcommand" in
       rm)
         log_call "image rm $*"
         target="${*: -1}"
-        if [[ "$target" == "mock-hermes-image-upgrade-tmp" ]]; then
-          rm -f "$STATE_DIR/mock-hermes-image-upgrade-tmp_exists"
+        if [[ "$target" == *-upgrade-tmp ]]; then
+          rm -f "$STATE_DIR/${target}_exists"
         else
           rm -f "$STATE_DIR/image_exists" "$STATE_DIR/image_label_hermes_repo_url" "$STATE_DIR/image_label_hermes_ref" "$STATE_DIR/image_label_hermes_wrapper_fingerprint" "$STATE_DIR/image_id"
         fi ;;
@@ -87,19 +87,19 @@ case "$subcommand" in
         --label)
           case "$2" in
             hermes.repo_url=*)
-              if [[ "$target_image" == "mock-hermes-image-upgrade-tmp" ]]; then
+              if [[ "$target_image" == *-upgrade-tmp ]]; then
                 write_value temp_image_label_hermes_repo_url "${2#hermes.repo_url=}"
               else
                 write_value image_label_hermes_repo_url "${2#hermes.repo_url=}"
               fi ;;
             hermes.ref=*)
-              if [[ "$target_image" == "mock-hermes-image-upgrade-tmp" ]]; then
+              if [[ "$target_image" == *-upgrade-tmp ]]; then
                 write_value temp_image_label_hermes_ref "${2#hermes.ref=}"
               else
                 write_value image_label_hermes_ref "${2#hermes.ref=}"
               fi ;;
             hermes.wrapper_fingerprint=*)
-              if [[ "$target_image" == "mock-hermes-image-upgrade-tmp" ]]; then
+              if [[ "$target_image" == *-upgrade-tmp ]]; then
                 write_value temp_image_label_hermes_wrapper_fingerprint "${2#hermes.wrapper_fingerprint=}"
               else
                 write_value image_label_hermes_wrapper_fingerprint "${2#hermes.wrapper_fingerprint=}"
@@ -109,8 +109,8 @@ case "$subcommand" in
         *) shift ;;
       esac
     done
-    if [[ "$target_image" == "mock-hermes-image-upgrade-tmp" ]]; then
-      write_value mock-hermes-image-upgrade-tmp_exists 1
+    if [[ "$target_image" == *-upgrade-tmp ]]; then
+      write_value "${target_image}_exists" 1
       write_value temp_image_id image-b
     else
       write_value image_exists 1
@@ -194,6 +194,8 @@ write_file "$STATE_DIR/image_label_hermes_ref" 'v1.2.2'
 "$ROOT/scripts/shared/hermes-upgrade" > "$STATE_DIR/upgrade-run.out"
 assert_contains "$STATE_DIR/upgrade-run.out" 'Upgrading Hermes image: mock-hermes-image' 'upgrade rebuilds when ref differs'
 assert_contains "$STATE_DIR/upgrade-run.out" 'Building replacement image first: mock-hermes-image-upgrade-tmp' 'upgrade stages a replacement image before swapping'
+assert_contains "$STATE_DIR/upgrade-run.out" 'Building Hermes image' 'upgrade keeps staged build progress visible'
+assert_contains "$STATE_DIR/upgrade-run.out" 'Hermes image build complete' 'upgrade reports staged build completion before the swap'
 assert_contains "$STATE_DIR/podman.log" 'image exists mock-hermes-image-upgrade-tmp' 'upgrade checks whether the staged image already exists'
 assert_contains "$STATE_DIR/podman.log" 'image rm -f mock-hermes-image' 'upgrade removes the old image only after replacement build'
 assert_contains "$STATE_DIR/podman.log" 'tag mock-hermes-image-upgrade-tmp mock-hermes-image' 'upgrade retags the staged image into place'

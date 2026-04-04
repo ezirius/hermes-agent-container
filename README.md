@@ -164,6 +164,7 @@ For Matrix state persistence:
 
 - upstream Hermes now resolves Matrix storage through `HERMES_HOME`
 - the wrapper also links `/home/hermes/.hermes` to `/opt/data` as a compatibility fallback for any remaining hardcoded `~/.hermes` paths
+- the wrapper patches the upstream `matrix-nio` adapter to honour `MATRIX_DEVICE_ID` for password login so one intended Matrix device can be reused instead of churning fresh login devices
 - if you import room keys or otherwise change Matrix crypto material while Hermes is already running, restart the workspace container once so the live client reloads state from disk
 
 ### Matrix validation on the real Podman host
@@ -191,6 +192,15 @@ Recommended validation sequence:
    - `python3 -m py_compile /home/hermes/hermes-agent/gateway/platforms/matrix.py` succeeds
 
 4. Configure Matrix credentials in `hermes-home/.env` and restart the container.
+
+   For password-based Matrix auth, set a fixed device ID explicitly, for example:
+
+   ```env
+   MATRIX_USER_ID=@yourbot:matrix.org
+   MATRIX_PASSWORD=your-password
+   MATRIX_DEVICE_ID=HERMES
+   MATRIX_ENCRYPTION=true
+   ```
 
 5. Run encrypted smoke tests against the real homeserver:
 
