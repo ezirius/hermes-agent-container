@@ -12,6 +12,13 @@ def replace_once(old: str, new: str, description: str) -> None:
     text = text.replace(old, new, 1)
 
 
+def insert_before_once(anchor: str, insertion: str, description: str) -> None:
+    global text
+    if anchor not in text:
+        raise SystemExit(f"could not apply matrix auto-verification patch: {description}")
+    text = text.replace(anchor, insertion + anchor, 1)
+
+
 replace_once(
     '        self._device_id: str = (\n'
     '            config.extra.get("device_id", "")\n'
@@ -85,6 +92,24 @@ replace_once(
     '                 nio.KeyVerificationKey, nio.KeyVerificationMac)\n'
     '            )\n',
     "verification callback registration",
+)
+
+insert_before_once(
+    '        # Register event callbacks.\n',
+    '        if self._encryption and getattr(client, "olm", None) and self._allowed_users:\n'
+    '            client.users_for_key_query.update(self._allowed_users)\n'
+    '            try:\n'
+    '                await client.keys_query()\n'
+    '                logger.info(\n'
+    '                    "Matrix: preloaded device keys for verification users: %s",\n'
+    '                    ", ".join(self._allowed_users),\n'
+    '                )\n'
+    '            except Exception as exc:\n'
+    '                logger.warning(\n'
+    '                    "Matrix: failed to preload verification device keys: %s",\n'
+    '                    exc,\n'
+    '                )\n\n',
+    "verification-user key preload before callback registration",
 )
 
 replace_once(

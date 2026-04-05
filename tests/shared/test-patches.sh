@@ -63,6 +63,7 @@ Environment variables:
 from __future__ import annotations
 
 import asyncio
+import io
 import mimetypes
 import os
 from pathlib import Path
@@ -179,6 +180,18 @@ class MatrixAdapter:
             )
             if isinstance(resp, nio.LoginResponse):
                 logger.info("Matrix: logged in as %s", self._user_id)
+
+        if self._encryption and getattr(client, "olm", None):
+            try:
+                if client.should_upload_keys:
+                    await client.keys_upload()
+                logger.info("Matrix: E2EE crypto initialized")
+            except Exception as exc:
+                logger.warning("Matrix: crypto init issue: %s", exc)
+        elif self._encryption:
+            logger.warning(
+                "Matrix: E2EE requested but crypto store is not loaded; encrypted rooms may fail"
+            )
 
         # Register event callbacks.
         client.add_event_callback(self._on_room_message, nio.RoomMessageText)
@@ -337,6 +350,14 @@ class MatrixAdapter:
     async def _on_invite(self, room: Any, event: Any) -> None:
         return None
 
+    async def _upload_and_send(self, data: bytes, content_type: str, filename: str):
+        resp, maybe_encryption_info = await self._client.upload(
+            io.BytesIO(data),
+            content_type=content_type,
+            filename=filename,
+        )
+        return resp, maybe_encryption_info
+
     def _mxc_to_http(self, mxc_url: str) -> str:
         """Convert mxc://server/media_id to an HTTP download URL."""
         if not mxc_url.startswith("mxc://"):
@@ -407,6 +428,10 @@ matrix_config_patch = (root / 'config/patches/apply-hermes-matrix-config-overrid
 matrix_config_patch = matrix_config_patch.replace('Path("/home/hermes/hermes-agent/gateway/config.py")', f'Path({str(upstream_root / "gateway/config.py")!r})')
 exec(compile(matrix_config_patch, 'apply-hermes-matrix-config-overrides.py', 'exec'), {})
 
+matrix_upload_patch = (root / 'config/patches/apply-hermes-matrix-upload-filesize.py').read_text(encoding='utf-8')
+matrix_upload_patch = matrix_upload_patch.replace('Path("/home/hermes/hermes-agent/gateway/platforms/matrix.py")', f'Path({str(upstream_root / "gateway/platforms/matrix.py")!r})')
+exec(compile(matrix_upload_patch, 'apply-hermes-matrix-upload-filesize.py', 'exec'), {})
+
 encrypted_media_patch = (root / 'config/patches/apply-hermes-matrix-encrypted-media.py').read_text(encoding='utf-8')
 encrypted_media_patch = encrypted_media_patch.replace('Path("/home/hermes/hermes-agent/gateway/platforms/matrix.py")', f'Path({str(upstream_root / "gateway/platforms/matrix.py")!r})')
 exec(compile(encrypted_media_patch, 'apply-hermes-matrix-encrypted-media.py', 'exec'), {})
@@ -433,6 +458,9 @@ assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'response omitted d
 
 assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'self._allowed_users: list[str] = [' 'matrix verification patch adds allowed users field'
 assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'device_id=self._device_id or None' 'matrix verification patch wires device_id into client creation'
+assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'client.users_for_key_query.update(self._allowed_users)' 'matrix verification patch preloads keys for allowed verification users'
+assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'await client.keys_query()' 'matrix verification patch eagerly queries device keys before verification starts'
+assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'Matrix: preloaded device keys for verification users: %s' 'matrix verification patch logs successful verification-user key preload'
 assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'client.add_to_device_callback(' 'matrix verification patch registers to-device callbacks'
 assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'KeyVerificationStart' 'matrix verification patch includes verification start events'
 assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'KeyVerificationCancel' 'matrix verification patch includes verification cancel events'
@@ -447,6 +475,8 @@ assert_not_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" '"*" not in sel
 
 assert_contains "$UPSTREAM_ROOT/gateway/config.py" 'extra["device_id"] = os.getenv("MATRIX_DEVICE_ID", "")' 'matrix config patch applies direct device_id env override'
 assert_contains "$UPSTREAM_ROOT/gateway/config.py" 'extra["allowed_users"] = os.getenv("MATRIX_ALLOWED_USERS", "")' 'matrix config patch applies direct allowed_users env override'
+
+assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'filesize=len(data)' 'matrix upload patch passes filesize for Matrix uploads'
 
 assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" 'if self._encryption and getattr(client, "olm", None):' 'encrypted media patch uses truthy crypto-loaded callback gate'
 assert_contains "$UPSTREAM_ROOT/gateway/platforms/matrix.py" '"RoomEncryptedAudio"' 'encrypted media patch registers encrypted audio callback names'
@@ -512,6 +542,10 @@ matrix_config_patch = (root / 'config/patches/apply-hermes-matrix-config-overrid
 matrix_config_patch = matrix_config_patch.replace('Path("/home/hermes/hermes-agent/gateway/config.py")', f'Path({str(real_tmp / "gateway/config.py")!r})')
 exec(compile(matrix_config_patch, 'apply-hermes-matrix-config-overrides.py', 'exec'), {})
 
+matrix_upload_patch = (root / 'config/patches/apply-hermes-matrix-upload-filesize.py').read_text(encoding='utf-8')
+matrix_upload_patch = matrix_upload_patch.replace('Path("/home/hermes/hermes-agent/gateway/platforms/matrix.py")', f'Path({str(real_tmp / "gateway/platforms/matrix.py")!r})')
+exec(compile(matrix_upload_patch, 'apply-hermes-matrix-upload-filesize.py', 'exec'), {})
+
 encrypted_media_patch = (root / 'config/patches/apply-hermes-matrix-encrypted-media.py').read_text(encoding='utf-8')
 encrypted_media_patch = encrypted_media_patch.replace('Path("/home/hermes/hermes-agent/gateway/platforms/matrix.py")', f'Path({str(real_tmp / "gateway/platforms/matrix.py")!r})')
 exec(compile(encrypted_media_patch, 'apply-hermes-matrix-encrypted-media.py', 'exec'), {})
@@ -523,6 +557,9 @@ PY
 
   python3 -m py_compile "$REAL_TMP/agent/prompt_builder.py" "$REAL_TMP/gateway/platforms/matrix.py" "$REAL_TMP/gateway/config.py" "$REAL_TMP/tools/transcription_tools.py"
   assert_contains "$REAL_TMP/agent/prompt_builder.py" 'hermes_home_agents = get_hermes_home() / "AGENTS.md"' 'real upstream smoke keeps HERMES_HOME AGENTS precedence'
+  assert_contains "$REAL_TMP/gateway/platforms/matrix.py" 'client.users_for_key_query.update(self._allowed_users)' 'real upstream smoke keeps verification-user key preload'
+  assert_contains "$REAL_TMP/gateway/platforms/matrix.py" 'await client.keys_query()' 'real upstream smoke keeps eager verification-user key query'
+  assert_contains "$REAL_TMP/gateway/platforms/matrix.py" 'filesize=len(data)' 'real upstream smoke keeps Matrix upload filesize fix'
   assert_contains "$REAL_TMP/gateway/platforms/matrix.py" 'client.add_to_device_callback(' 'real upstream smoke keeps verification callback registration'
   assert_contains "$REAL_TMP/gateway/platforms/matrix.py" 'RoomEncryptedAudio' 'real upstream smoke keeps encrypted audio callback registration'
   assert_contains "$REAL_TMP/gateway/platforms/matrix.py" 'from nio.crypto import decrypt_attachment' 'real upstream smoke keeps nio attachment decrypt helper'
