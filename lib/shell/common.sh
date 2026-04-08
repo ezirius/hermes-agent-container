@@ -237,7 +237,6 @@ has_meaningful_untracked_files() {
 git_has_meaningful_worktree_changes() {
   local git_prefix=("$@")
   local diff_args
-  local raw_output
   local numstat_output
   local summary_output
   local line
@@ -250,13 +249,6 @@ git_has_meaningful_worktree_changes() {
   "${git_prefix[@]}" update-index -q --refresh >/dev/null 2>&1 || true
 
   for diff_args in "" "--cached"; do
-    if [[ -n "$diff_args" ]]; then
-      raw_output="$("${git_prefix[@]}" diff "$diff_args" --raw --no-abbrev 2>/dev/null || true)"
-    else
-      raw_output="$("${git_prefix[@]}" diff --raw --no-abbrev 2>/dev/null || true)"
-    fi
-    [[ -n "$raw_output" ]] || continue
-
     if [[ -n "$diff_args" ]]; then
       numstat_output="$("${git_prefix[@]}" diff "$diff_args" --numstat 2>/dev/null || true)"
     else
@@ -274,7 +266,6 @@ git_has_meaningful_worktree_changes() {
     else
       summary_output="$("${git_prefix[@]}" diff --summary 2>/dev/null || true)"
     fi
-    [[ -n "$summary_output" ]] || continue
 
     while IFS= read -r line; do
       [[ -n "$line" ]] || continue
