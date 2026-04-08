@@ -25,13 +25,14 @@ require_workspace_name "$WORKSPACE"
 
 require_podman
 TARGET_ROW="$(pick_workspace_target "$WORKSPACE" container)"
-IFS=$'\t' read -r HERMES_CONTAINER_NAME _ _ _ _ _ <<< "$TARGET_ROW"
+IFS=$'\t' read -r _ HERMES_CONTAINER_NAME _ _ _ _ _ <<< "$TARGET_ROW"
 
 container_exists || fail "container not found: $HERMES_CONTAINER_NAME"
+container_running || fail "container not running: $HERMES_CONTAINER_NAME (run hermes-start first)"
 
 if [[ $# -gt 0 ]]; then
-  RUN_ARGS=(--workdir /workspace "$HERMES_CONTAINER_NAME" "$@")
+  RUN_ARGS=(--workdir /workspace/hermes-workspace "$HERMES_CONTAINER_NAME" "$@")
 else
-  RUN_ARGS=(--workdir /workspace "$HERMES_CONTAINER_NAME" /bin/bash)
+  RUN_ARGS=(--workdir /workspace/hermes-workspace "$HERMES_CONTAINER_NAME" /bin/bash)
 fi
 exec_podman_interactive_command exec "${RUN_ARGS[@]}"

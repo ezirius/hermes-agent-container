@@ -30,7 +30,7 @@ assert_eq "$ROOT/.tmp/workspaces/ezirius" "$WORKSPACE_ROOT" "workspace root reso
 assert_eq "$ROOT/.tmp/workspaces/ezirius/hermes-home" "$HERMES_HOME_DIR" "Hermes home resolves under workspace root"
 assert_eq "$ROOT/.tmp/workspaces/ezirius/hermes-home/.env" "$HERMES_ENV_FILE" "Hermes env file resolves under Hermes home"
 assert_eq "$ROOT/.tmp/workspaces/ezirius/hermes-home/config.yaml" "$HERMES_CONFIG_FILE" "Hermes config file resolves under Hermes home"
-assert_eq "$ROOT/.tmp/workspaces/ezirius/workspace" "$HERMES_WORKSPACE_DIR" "workspace dir resolves under workspace root"
+assert_eq "$ROOT/.tmp/workspaces/ezirius/hermes-workspace" "$HERMES_WORKSPACE_DIR" "workspace dir resolves under workspace root"
 
 ensure_workspace_dirs
 test -d "$HERMES_HOME_DIR/sessions"
@@ -41,8 +41,8 @@ test -d "$HERMES_WORKSPACE_DIR"
 
 touch "$WORKSPACE_ROOT/auth.json"
 touch "$WORKSPACE_ROOT/.env"
-mkdir -p "$WORKSPACE_ROOT/logs" "$WORKSPACE_ROOT/image_cache" "$WORKSPACE_ROOT/audio_cache" "$WORKSPACE_ROOT/whatsapp/session"
-touch "$WORKSPACE_ROOT/logs/runtime.log" "$WORKSPACE_ROOT/image_cache/legacy-image" "$WORKSPACE_ROOT/audio_cache/legacy-audio" "$WORKSPACE_ROOT/whatsapp/session/legacy-wa"
+mkdir -p "$WORKSPACE_ROOT/logs" "$WORKSPACE_ROOT/image_cache" "$WORKSPACE_ROOT/audio_cache" "$WORKSPACE_ROOT/whatsapp/session" "$WORKSPACE_ROOT/workspace"
+touch "$WORKSPACE_ROOT/logs/runtime.log" "$WORKSPACE_ROOT/image_cache/legacy-image" "$WORKSPACE_ROOT/audio_cache/legacy-audio" "$WORKSPACE_ROOT/whatsapp/session/legacy-wa" "$WORKSPACE_ROOT/workspace/legacy-workspace-file"
 mkdir -p "$HERMES_HOME_DIR/image_cache" "$HERMES_HOME_DIR/audio_cache" "$HERMES_HOME_DIR/whatsapp/session"
 touch "$HERMES_HOME_DIR/image_cache/home-image" "$HERMES_HOME_DIR/audio_cache/home-audio" "$HERMES_HOME_DIR/whatsapp/session/home-wa"
 migrate_legacy_workspace_layout
@@ -59,9 +59,11 @@ test ! -e "$WORKSPACE_ROOT/auth.json"
 test ! -e "$WORKSPACE_ROOT/image_cache"
 test ! -e "$WORKSPACE_ROOT/audio_cache"
 test ! -e "$WORKSPACE_ROOT/whatsapp"
+test ! -e "$WORKSPACE_ROOT/workspace"
 test ! -e "$HERMES_HOME_DIR/image_cache"
 test ! -e "$HERMES_HOME_DIR/audio_cache"
 test ! -e "$HERMES_HOME_DIR/whatsapp"
+test -f "$HERMES_WORKSPACE_DIR/legacy-workspace-file"
 
 ERR_FILE="$(mktemp)"
 trap 'rm -f "$ERR_FILE"' EXIT
@@ -128,6 +130,20 @@ assert_eq '20260408-153210-ab12cd3' "$HERMES_COMMITSTAMP" 'resolve_build_target 
 assert_eq 'hermes-agent-ezirius-test-main-feature-worktree' "$HERMES_CONTAINER_NAME" 'resolve_build_target builds deterministic container name'
 assert_eq 'hermes-agent-local:test-main-feature-worktree-20260408-153210-ab12cd3' "$HERMES_IMAGE" 'resolve_build_target builds immutable image ref'
 assert_eq 'test-main-feature-worktree-20260408-153210-ab12cd3' "$(build_tags_for_lane test main feature-worktree 20260408-153210-ab12cd3)" 'build_tags_for_lane emits immutable image tag'
+
+export HERMES_WRAPPER_CONTEXT_OVERRIDE='feature-worktree'
+latest_matching_image_target() { printf 'mock-hermes-image:test-main-feature-worktree-20260409-080000-beef123\ttest\tmain\tfeature-worktree\t20260409-080000-beef123\timage only\n'; }
+resolve_start_target "ezirius" "test" "main"
+assert_eq 'feature-worktree' "$HERMES_WRAPPER_CONTEXT" 'resolve_start_target uses current wrapper context for explicit start resolution'
+assert_eq '20260409-080000-beef123' "$HERMES_COMMITSTAMP" 'resolve_start_target picks newest matching image commit stamp when explicit start omits one'
+HERMES_RELEASE_OPTION_CACHE=$'1.2.3\tv1.2.3'
+latest_matching_image_target() { printf 'mock-hermes-image:test-1.2.3-feature-worktree-20260410-080000-cafe123\ttest\t1.2.3\tfeature-worktree\t20260410-080000-cafe123\timage only\n'; }
+resolve_start_target "ezirius" "test" "latest"
+assert_eq '1.2.3' "$HERMES_UPSTREAM_REF" 'resolve_start_target resolves latest to the display upstream label before matching images'
+assert_eq '20260410-080000-cafe123' "$HERMES_COMMITSTAMP" 'resolve_start_target matches latest against resolved immutable image labels'
+unset HERMES_WRAPPER_CONTEXT_OVERRIDE
+unset HERMES_RELEASE_OPTION_CACHE
+unset -f latest_matching_image_target
 
 if ! bash -lc 'set -euo pipefail; source "$1"; is_ignorable_host_untracked_path .DS_Store' _ "$ROOT/lib/shell/common.sh"; then
   printf 'assertion failed: .DS_Store should be treated as ignorable host junk\n' >&2
@@ -252,5 +268,46 @@ if bash -lc 'set -euo pipefail; source "$1"; require_clean_git "$2"' _ "$ROOT/li
   exit 1
 fi
 grep -Fq 'uncommitted changes detected in' "$ERR_FILE"
+
+rm -f "$GIT_TMP/notes.txt"
+WORKTREE_ROOT="$GIT_TMP-wrapper"
+mkdir -p "$WORKTREE_ROOT"
+git -C "$GIT_TMP" branch feature-worktree >/dev/null 2>&1
+git -C "$GIT_TMP" worktree add "$WORKTREE_ROOT/worktrees/feature-worktree" feature-worktree >/dev/null 2>&1
+
+assert_eq 'main' "$(current_wrapper_context "$GIT_TMP")" 'current_wrapper_context reports main for the primary checkout'
+assert_eq 'feature-worktree' "$(current_wrapper_context "$WORKTREE_ROOT/worktrees/feature-worktree")" 'current_wrapper_context reports linked worktree basename'
+assert_eq "$GIT_TMP" "$(fallback_repo_root "$WORKTREE_ROOT/worktrees/feature-worktree")" 'fallback_repo_root resolves the canonical checkout from worktree directory conventions'
+assert_eq 'refs/heads/feature-worktree' "$(fallback_ref_for_workdir "$WORKTREE_ROOT/worktrees/feature-worktree")" 'fallback_ref_for_workdir resolves the linked branch ref'
+assert_eq false "$(git_is_primary_worktree "$WORKTREE_ROOT/worktrees/feature-worktree" && printf true || printf false)" 'git_is_primary_worktree rejects linked worktrees'
+EXPECTED_STAMP="$(git -C "$GIT_TMP" show -s --format=%cd --date=format:%Y%m%d-%H%M%S feature-worktree)-$(git -C "$GIT_TMP" rev-parse --short=7 feature-worktree)"
+assert_eq "$EXPECTED_STAMP" "$(git_commit_stamp "$WORKTREE_ROOT/worktrees/feature-worktree")" 'git_commit_stamp resolves linked worktree commit identity'
+
+REMOTE_TMP="$(mktemp -d)"
+git init --bare "$REMOTE_TMP/origin.git" >/dev/null 2>&1
+git -C "$GIT_TMP" branch -M main >/dev/null 2>&1
+git -C "$GIT_TMP" remote add origin "$REMOTE_TMP/origin.git" >/dev/null 2>&1
+git -C "$GIT_TMP" push -u origin main >/dev/null 2>&1
+if ! bash -lc 'set -euo pipefail; source "$1"; require_main_pushed "$2"' _ "$ROOT/lib/shell/common.sh" "$GIT_TMP" >/dev/null 2> "$ERR_FILE"; then
+  printf 'assertion failed: synced upstream-tracking repo should pass require_main_pushed\n' >&2
+  exit 1
+fi
+
+project_image_refs_output="$(bash -c '
+  source "$1/lib/shell/common.sh"
+  podman() {
+    if [[ "$1" == "images" ]]; then
+      printf "%s\n" "localhost/hermes-agent-local:test-main-main-20260409-153210-ab12cd3"
+      printf "%s\n" "hermes-agent-local:test-main-main-20260409-153210-ab12cd3"
+      printf "%s\n" "localhost/hermes-agent-local:production-1.2.3-main-20260409-153210-ab12cd3@sha256:deadbeef"
+      return 0
+    fi
+    return 1
+  }
+  project_image_refs
+' _ "$ROOT")"
+assert_eq $'hermes-agent-local:test-main-main-20260409-153210-ab12cd3\nhermes-agent-local:production-1.2.3-main-20260409-153210-ab12cd3' "$project_image_refs_output" "project image refs normalize and dedupe localhost and digest variants"
+
+assert_eq 'main' "$(bash -lc 'source "$1"; image_metadata "localhost/hermes-agent-local:test-main-main-20260409-153210-ab12cd3@sha256:deadbeef" | cut -f4' _ "$ROOT/lib/shell/common.sh")" "image metadata parses normalized immutable tags"
 
 echo "Common helper checks passed"

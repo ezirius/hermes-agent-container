@@ -56,14 +56,33 @@ The default workspace-facing commands take a workspace name and use interactive 
 
 `hermes-bootstrap` and `hermes-start` can select image-only targets for a workspace.
 
+`hermes-bootstrap` picks a target once, starts or reuses that exact target, and then opens Hermes against the same resolved target without prompting again.
+
 `hermes-open`, `hermes-shell`, `hermes-logs`, `hermes-status`, and `hermes-stop` select only existing containers for a workspace.
 
 The current shared scripts also support explicit targeting where a picker is not desired:
 
-- `./scripts/shared/hermes-start <workspace> <lane> <upstream>`
+- `./scripts/shared/hermes-start <workspace> <lane> <upstream> [hermes args...]`
 - `./scripts/shared/hermes-open <workspace> <lane> <upstream> [hermes args...]`
 
-In explicit mode, the wrapper derives the deterministic container name and immutable image reference from the supplied `workspace`, `lane`, and `upstream` values together with the current wrapper context and commit identity.
+In explicit mode, `hermes-start` resolves the newest matching image for the current wrapper context, and `hermes-open` resolves the deterministic container name for the current wrapper context. The `workspace lane upstream` arguments do not override the wrapper context; that still comes from where the command is run.
+
+`hermes-start` and `hermes-bootstrap` use a mixed picker that may show:
+
+- existing project containers with real runtime state: `running` or `stopped`
+- image-only targets as `image only`
+
+Those `image only` rows are reusable project images. They are not pre-bound to the selected workspace yet; choosing one means the wrapper will create or recreate that workspace container from the selected image.
+
+If a newer immutable image exists for the same logical lane/upstream/wrapper track as an existing workspace container, the mixed picker still shows that newer image-only target instead of hiding it behind the older container.
+
+If extra Hermes args are supplied to `hermes-start`, it starts the selected target if needed and then forwards those args through `hermes-open`.
+
+`hermes-open` and `hermes-shell` require the selected container to already be running.
+
+`hermes-status` prints a concise wrapper-oriented summary including container name, workspace, lane, upstream, wrapper, commit, status, and backing image.
+
+`hermes-stop` stops a running selected container, and reports clearly when the selected container is already stopped.
 
 Picker ordering:
 
@@ -99,22 +118,29 @@ The remove picker shows:
 2. `All`
 3. individual targets newest to oldest
 
+Remove display columns:
+
+- container removal: `workspace`, `lane`, `upstream`, `wrapper`, `commit`, `status`
+- image removal: `used by`, `lane`, `upstream`, `wrapper`, `commit`, `status`
+
+`used by` is inferred from current project containers and may contain a comma-separated workspace list or `unassigned`.
+
 `All, but newest` means:
 
 - for containers: leave the newest container per workspace
-- for images: leave the newest image per workspace where a workspace association exists through existing containers; if no image can be associated to a workspace through current containers, keep the newest image overall
+- for images: leave the newest image per inferred workspace where a workspace association exists through existing containers; if no image can be associated to any workspace through current containers, keep the newest image overall
 
 ## Workspace state
 
 Each workspace uses:
 
 - `<workspace-root>/hermes-home` for persistent Hermes state
-- `<workspace-root>/workspace` for project files
+- `<workspace-root>/hermes-workspace` for project files
 
 Hermes runs with:
 
 - `/opt/data` mapped to `hermes-home`
-- `/workspace` mapped to the project workspace
+- `/workspace/hermes-workspace` mapped to the project workspace
 
 The wrapper continues to seed missing baseline files such as:
 
@@ -122,6 +148,8 @@ The wrapper continues to seed missing baseline files such as:
 - `config.yaml`
 - `SOUL.md`
 - `AGENTS.md`
+
+Unlike Hindsight, Hermes still reads runtime config from file-based state under `/opt/data`, especially `/opt/data/.env` and `/opt/data/config.yaml`.
 
 ## Matrix patch direction
 

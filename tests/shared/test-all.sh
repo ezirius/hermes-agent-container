@@ -29,6 +29,8 @@ python3 -m py_compile \
   "$ROOT/config/patches/apply-hermes-matrix-config-overrides.py" \
   "$ROOT/config/patches/apply-hermes-transcription-oga.py"
 
+rm -rf "$ROOT/config/patches/__pycache__"
+
 bash "$ROOT/tests/shared/test-layout.sh"
 bash "$ROOT/tests/shared/test-common.sh"
 bash "$ROOT/tests/shared/test-args.sh"

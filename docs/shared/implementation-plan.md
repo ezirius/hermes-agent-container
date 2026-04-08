@@ -195,7 +195,7 @@ Per workspace, use separate host-backed paths for persistent app state and user 
 Expected shape:
 
 - `<base-root>/<workspace>/hermes-home` -> mounted into the container for Hermes state/config
-- `<base-root>/<workspace>/workspace` -> mounted to `/workspace`
+- `<base-root>/<workspace>/hermes-workspace` -> mounted to `/workspace/hermes-workspace`
 
 The in-container state path remains `/opt/data`.
 
@@ -249,6 +249,8 @@ Shared code should include:
 - image tag generation
 - container name generation
 - project-scoped image/container discovery
+- normalized local image reference handling for `localhost/...` and digest-suffixed refs
+- immutable-tag-first image metadata parsing with label fallback
 - sorting helpers
 - picker rendering and selection helpers
 - status formatting helpers
@@ -306,25 +308,26 @@ Usage:
 Behavior:
 
 - show a workspace target picker that may include existing project containers and image-only targets
-- fail with a helpful message if no built project images exist for that workspace
+- fail with a helpful message if no matching project targets exist
 - start if needed
 - forward any extra args to Hermes inside the selected running container
+- only prompt once, then reuse the selected target for both the start/reuse step and the later `hermes-open` step
 
 ### hermes-start
 
 Usage:
 
 - `hermes-start <workspace> [hermes args...]`
-- `hermes-start <workspace> <lane> <upstream>`
+- `hermes-start <workspace> <lane> <upstream> [hermes args...]`
 
 Behavior:
 
 - same target picker behavior as `hermes-bootstrap`
-- the picker may include existing project containers and image-only targets
-- fail with a helpful message if no built project images exist for that workspace
+- the picker may include existing project containers and image-only targets in one mixed list
+- fail with a helpful message if no matching project targets exist
 - start if needed
-- forward any extra args to Hermes inside the selected running container
-- in explicit mode, bypass the picker and resolve the target directly from `workspace`, `lane`, and `upstream`
+- if extra args are given, forward them to Hermes inside the selected running container after start
+- in explicit mode, bypass the picker and resolve the target directly from `workspace`, `lane`, and `upstream`, using the current wrapper context
 
 ### hermes-open
 
@@ -337,9 +340,10 @@ Behavior:
 
 - show a workspace container picker
 - fail with a helpful message if no matching project containers exist for that workspace
+- require the selected container to already be running
 - `exec` Hermes inside the running container
 - forward all extra args to Hermes
-- in explicit mode, bypass the picker and resolve the deterministic container name directly from `workspace`, `lane`, and `upstream`
+- in explicit mode, bypass the picker and resolve the deterministic container name directly from `workspace`, `lane`, and `upstream`, using the current wrapper context
 
 Examples:
 
@@ -360,6 +364,7 @@ Behavior:
 
 - show a workspace container picker
 - fail with a helpful message if no matching project containers exist for that workspace
+- require the selected container to already be running
 - if no extra args are given, open an interactive shell in the container
 - if extra args are given, execute that command in the container instead of opening a shell
 
@@ -385,7 +390,7 @@ Behavior:
 
 - show a workspace container picker
 - fail with a helpful message if no matching project containers exist for that workspace
-- inspect/report the selected container state
+- inspect/report the selected container state with concise wrapper-oriented output
 
 ### hermes-stop
 
@@ -398,6 +403,7 @@ Behavior:
 - show a workspace container picker
 - fail with a helpful message if no matching project containers exist for that workspace
 - stop the selected running container
+- if the selected container is already stopped, report that state clearly without treating it as an error
 
 ### hermes-remove
 
@@ -422,7 +428,7 @@ Semantics:
 - `container` mode operates only on project containers
 - `image` mode operates only on project images
 - `All, but newest` in container mode leaves the newest container per workspace
-- `All, but newest` in image mode leaves the newest image overall per workspace
+- `All, but newest` in image mode leaves the newest image for each inferred workspace association when that association can be proven from existing project containers; if no image can be associated to any workspace, keep the newest image overall
 
 ## Picker UX
 
@@ -432,7 +438,7 @@ When a workspace command only receives `<workspace>`, it should show a project-s
 
 There are two picker types:
 
-- target picker: used by `hermes-bootstrap` and `hermes-start`; may show existing project containers and image-only targets for the selected workspace
+- target picker: used by `hermes-bootstrap` and `hermes-start`; shows a mixed project-scoped list of existing project containers and image-only targets that can be used for the selected workspace
 - container picker: used by `hermes-open`, `hermes-shell`, `hermes-logs`, `hermes-status`, and `hermes-stop`; shows only existing project containers for the selected workspace
 
 Selection ordering:
@@ -446,7 +452,13 @@ Only project-specific images/containers should be shown. This project scoping ap
 
 For `hermes-bootstrap` and `hermes-start`, image-only targets are valid because the command may create or recreate the workspace container from the selected image.
 
+The mixed picker should not hide a newer image-only target merely because a same-track workspace container already exists. If the image differs, both rows should remain visible so the user can intentionally recreate the workspace container onto the newer immutable image.
+
+`hermes-bootstrap` should not show a second picker after the initial target choice; it should carry the resolved lane/upstream/wrapper/commit identity straight through to `hermes-start` and `hermes-open`.
+
 For `hermes-open`, `hermes-shell`, `hermes-logs`, `hermes-status`, and `hermes-stop`, only existing containers are valid targets.
+
+For the mixed target picker, existing container rows should show their real runtime state, while image-backed rows with no matching container should show `image only`.
 
 ### Container Display
 
@@ -468,6 +480,17 @@ Status labels:
 - `running`
 - `stopped`
 
+`hermes-status` should report the selected container in a concise wrapper-oriented summary including:
+
+- container name
+- workspace
+- lane
+- upstream
+- wrapper
+- commit stamp
+- status
+- backing image reference
+
 ### Image Display
 
 Display columns should align with container display for consistency:
@@ -477,6 +500,13 @@ Display columns should align with container display for consistency:
 - wrapper
 - commit stamp
 - image usage/status
+
+For the dedicated remove menus, the leading column should differ by mode:
+
+- container remove: `workspace`
+- image remove: `used by`
+
+`used by` is inferred from existing project containers and may contain multiple comma-separated workspaces or `unassigned`.
 
 Example:
 

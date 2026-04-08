@@ -26,7 +26,7 @@ require_workspace_name "$WORKSPACE"
 
 require_podman
 TARGET_ROW="$(pick_workspace_target "$WORKSPACE" container)"
-IFS=$'\t' read -r HERMES_CONTAINER_NAME _ _ _ _ <<< "$TARGET_ROW"
+IFS=$'\t' read -r _ HERMES_CONTAINER_NAME _ _ _ _ _ <<< "$TARGET_ROW"
 
 container_exists || fail "container not found: $HERMES_CONTAINER_NAME"
 podman logs "$HERMES_CONTAINER_NAME" "$@"

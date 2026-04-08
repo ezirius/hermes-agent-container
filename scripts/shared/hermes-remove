@@ -25,15 +25,6 @@ MODE="$1"
 require_podman
 SELECTION="$(pick_remove_target "$MODE")"
 
-contains_line() {
-  local haystack="$1"
-  local needle="$2"
-  case "\n$haystack\n" in
-    *"\n$needle\n"*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
 if [[ "$SELECTION" == "All" || "$SELECTION" == "All, but newest" ]]; then
   ROWS=()
   while IFS= read -r row; do
@@ -56,8 +47,8 @@ if [[ "$SELECTION" == "All" || "$SELECTION" == "All, but newest" ]]; then
         WORKSPACE="$(container_workspace "$VALUE")"
         [[ -n "$WORKSPACE" ]] || continue
         if ! contains_line "$KEPT_WORKSPACES" "$WORKSPACE"; then
-          KEPT_WORKSPACES="${KEPT_WORKSPACES}${WORKSPACE}\n"
-          KEEP_VALUES="${KEEP_VALUES}${VALUE}\n"
+          KEPT_WORKSPACES+="$WORKSPACE"$'\n'
+          KEEP_VALUES+="$VALUE"$'\n'
         fi
       done
     else
@@ -71,15 +62,15 @@ if [[ "$SELECTION" == "All" || "$SELECTION" == "All, but newest" ]]; then
             WORKSPACE="$(container_workspace "$NAME")"
             [[ -n "$WORKSPACE" ]] || continue
             if ! contains_line "$KEPT_WORKSPACES" "$WORKSPACE"; then
-              KEPT_WORKSPACES="${KEPT_WORKSPACES}${WORKSPACE}\n"
-              KEEP_VALUES="${KEEP_VALUES}${VALUE}\n"
+              KEPT_WORKSPACES+="$WORKSPACE"$'\n'
+              KEEP_VALUES+="$VALUE"$'\n'
             fi
           fi
         done < <(project_container_names)
       done
       if [[ -z "$KEEP_VALUES" && ${#ROWS[@]} -gt 0 ]]; then
         IFS=$'\t' read -r VALUE _ <<< "${ROWS[0]}"
-        KEEP_VALUES="${VALUE}\n"
+        KEEP_VALUES="$VALUE"$'\n'
       fi
     fi
   fi

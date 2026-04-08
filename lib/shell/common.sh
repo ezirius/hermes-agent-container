@@ -29,11 +29,21 @@ HERMES_REF="${HERMES_REF:-latest}"
 HERMES_GITHUB_API_BASE="${HERMES_GITHUB_API_BASE:-https://api.github.com}"
 HERMES_UBUNTU_LTS_VERSION="${HERMES_UBUNTU_LTS_VERSION:-24.04}"
 HERMES_NODE_LTS_VERSION="${HERMES_NODE_LTS_VERSION:-24}"
-HERMES_BASE_ROOT="${HERMES_BASE_ROOT:-$HOME/Documents/Ezirius/.applications-data/.hermes-agent}"
+HERMES_BASE_ROOT="${HERMES_BASE_ROOT:-$HOME/Documents/Ezirius/.applications-data/.containers-artificial-intelligence}"
 
 fail() {
   echo "Error: $*" >&2
   exit 1
+}
+
+contains_line() {
+  local haystack="$1"
+  local needle="$2"
+  local nl=$'\n'
+  case "${nl}${haystack}${nl}" in
+    *"${nl}${needle}${nl}"*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 usage_error() {
@@ -119,12 +129,33 @@ image_label() {
   local key="$1"
   local image_ref="${2:-$HERMES_IMAGE_NAME}"
   local value
+  local normalized
+  normalized="$(normalize_image_ref "$image_ref")"
 
   value="$(podman image inspect -f "{{ index .Labels \"$key\" }}" "$image_ref" 2>/dev/null || true)"
+  if [[ -z "$value" || "$value" == "<no value>" ]]; then
+    value="$(podman image inspect -f "{{ index .Labels \"$key\" }}" "$normalized" 2>/dev/null || true)"
+  fi
+  if [[ -z "$value" || "$value" == "<no value>" ]]; then
+    value="$(podman image inspect -f "{{ index .Labels \"$key\" }}" "localhost/$normalized" 2>/dev/null || true)"
+  fi
   if [[ "$value" == "<no value>" ]]; then
     value=""
   fi
   printf '%s' "$value"
+}
+
+normalize_image_ref() {
+  local ref="$1"
+  ref="${ref%%@*}"
+  case "$ref" in
+    localhost/*)
+      printf '%s' "${ref#localhost/}"
+      ;;
+    *)
+      printf '%s' "$ref"
+      ;;
+  esac
 }
 
 local_build_fingerprint() {
@@ -321,6 +352,20 @@ fallback_repo_root() {
     fi
   fi
 
+  if [[ "$parent_base" == "worktrees" ]]; then
+    candidate="$(dirname "$parent_dir")"
+    if git -C "$candidate" rev-parse --show-toplevel >/dev/null 2>&1; then
+      normalize_absolute_path "$candidate"
+      return 0
+    fi
+
+    candidate="${candidate%-wrapper}"
+    if git -C "$candidate" rev-parse --show-toplevel >/dev/null 2>&1; then
+      normalize_absolute_path "$candidate"
+      return 0
+    fi
+  fi
+
   return 1
 }
 
@@ -402,7 +447,7 @@ resolve_workspace() {
   HERMES_HOME_DIR="$WORKSPACE_ROOT/hermes-home"
   HERMES_ENV_FILE="$HERMES_HOME_DIR/.env"
   HERMES_CONFIG_FILE="$HERMES_HOME_DIR/config.yaml"
-  HERMES_WORKSPACE_DIR="$WORKSPACE_ROOT/workspace"
+  HERMES_WORKSPACE_DIR="$WORKSPACE_ROOT/hermes-workspace"
 }
 
 resolve_build_target() {
@@ -439,7 +484,7 @@ resolve_build_target() {
   HERMES_HOME_DIR="$WORKSPACE_ROOT/hermes-home"
   HERMES_ENV_FILE="$HERMES_HOME_DIR/.env"
   HERMES_CONFIG_FILE="$HERMES_HOME_DIR/config.yaml"
-  HERMES_WORKSPACE_DIR="$WORKSPACE_ROOT/workspace"
+  HERMES_WORKSPACE_DIR="$WORKSPACE_ROOT/hermes-workspace"
 
   HERMES_UPSTREAM_REF="$version_tag"
   HERMES_WRAPPER_CONTEXT="$wrapper_context"
@@ -463,7 +508,7 @@ ensure_workspace_dirs() {
     "$HERMES_HOME_DIR/cache/images" \
     "$HERMES_HOME_DIR/cache/audio" \
     "$HERMES_HOME_DIR/platforms/whatsapp/session" \
-    "$WORKSPACE_ROOT/workspace"
+    "$WORKSPACE_ROOT/hermes-workspace"
 }
 
 move_path_contents() {
@@ -542,6 +587,10 @@ migrate_legacy_workspace_layout() {
 
   if [[ -f "$WORKSPACE_ROOT/.env" && ! -e "$HERMES_ENV_FILE" ]]; then
     mv "$WORKSPACE_ROOT/.env" "$HERMES_ENV_FILE"
+  fi
+
+  if [[ -d "$WORKSPACE_ROOT/workspace" ]]; then
+    move_path_contents "$WORKSPACE_ROOT/workspace" "$HERMES_WORKSPACE_DIR"
   fi
 }
 
@@ -698,8 +747,7 @@ require_main_pushed() {
   [[ -n "$upstream" ]] || fail "production builds require main to track an upstream branch"
   git -C "$workdir" fetch --quiet "${upstream%%/*}" >/dev/null 2>&1 || fail "failed to fetch upstream state for production build validation"
   counts="$(git -C "$workdir" rev-list --left-right --count "$upstream...HEAD")"
-  behind="${counts%% *}"
-  ahead="${counts##* }"
+  IFS=$' \t' read -r behind ahead <<< "$counts"
   [[ "$ahead" == "0" ]] || fail "production builds require main to have no unpushed commits"
   [[ "$behind" == "0" ]] || fail "production builds require main to be in sync with its upstream branch"
 }
@@ -853,7 +901,19 @@ prompt_select_option() {
 }
 
 project_image_refs() {
-  podman images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -E "^(localhost/)?${HERMES_IMAGE_NAME}:" || true
+  local seen_refs=""
+  local normalized
+  podman images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | while IFS= read -r ref; do
+    [[ "$ref" == "$HERMES_IMAGE_NAME:"* || "$ref" == "localhost/$HERMES_IMAGE_NAME:"* ]] || continue
+    normalized="$(normalize_image_ref "$ref")"
+    contains_line "$seen_refs" "$normalized" && continue
+    if [[ -z "$seen_refs" ]]; then
+      seen_refs="$normalized"
+    else
+      seen_refs+=$'\n'"$normalized"
+    fi
+    printf '%s\n' "$normalized"
+  done
 }
 
 project_container_names() {
@@ -863,24 +923,20 @@ project_container_names() {
 image_metadata() {
   local image_ref="$1"
   local lane upstream wrapper commitstamp
-  local tag remainder
+  local normalized tag
 
-  lane="$(image_label hermes.lane "$image_ref")"
-  upstream="$(image_label hermes.ref "$image_ref")"
-  wrapper="$(image_label hermes.wrapper_context "$image_ref")"
-  commitstamp="$(image_label hermes.commitstamp "$image_ref")"
-
-  if [[ -z "$lane" || -z "$upstream" || -z "$wrapper" || -z "$commitstamp" ]]; then
-    tag="${image_ref##*:}"
-    lane="${tag%%-*}"
-    remainder="${tag#*-}"
-    upstream="${remainder%%-*}"
-    remainder="${remainder#*-}"
-    commitstamp="$(printf '%s' "$remainder" | awk -F- '{ if (NF >= 4) print $(NF-2) "-" $(NF-1) "-" $NF; }')"
-    wrapper="$remainder"
-    if [[ -n "$commitstamp" ]]; then
-      wrapper="${wrapper%-${commitstamp}}"
-    fi
+  normalized="$(normalize_image_ref "$image_ref")"
+  tag="${normalized#*:}"
+  if [[ "$tag" =~ ^(production|test)-(.+)-([^-]+)-([0-9]{8}-[0-9]{6}-[A-Za-z0-9]+)$ ]]; then
+    lane="${BASH_REMATCH[1]}"
+    upstream="${BASH_REMATCH[2]}"
+    wrapper="${BASH_REMATCH[3]}"
+    commitstamp="${BASH_REMATCH[4]}"
+  else
+    lane="$(image_label hermes.lane "$image_ref")"
+    upstream="$(image_label hermes.ref "$image_ref")"
+    wrapper="$(image_label hermes.wrapper_context "$image_ref")"
+    commitstamp="$(image_label hermes.commitstamp "$image_ref")"
   fi
 
   if [[ "$lane" != "production" && "$lane" != "test" ]]; then
@@ -984,7 +1040,7 @@ image_ref_for_id() {
   local ref
   while IFS= read -r ref; do
     [[ -n "$ref" ]] || continue
-    if [[ "$(image_id "$ref" 2>/dev/null || true)" == "$target_id" ]]; then
+    if [[ "$(image_id "$ref" 2>/dev/null || true)" == "$target_id" || "$(image_id "localhost/$ref" 2>/dev/null || true)" == "$target_id" ]]; then
       printf '%s' "$ref"
       return 0
     fi
@@ -1016,17 +1072,7 @@ image_usage_status() {
 
 sort_targets() {
   require_python3
-  python3 -c 'import sys; rows=[line.rstrip("\n").split("\t") for line in sys.stdin if line.strip()]; rows=sorted(rows, key=lambda row: (0 if row[1] == "production" else 1, "".join(chr(255 - ord(c)) for c in (row[4] if len(row) > 4 else "")))); [print("\t".join(row)) for row in rows]'
-}
-
-format_target_option() {
-  local lane="$1"
-  local upstream="$2"
-  local wrapper="$3"
-  local commitstamp="$4"
-  local status="$5"
-
-  printf '%-10s %-12s %-34s %-24s %s' "$lane" "$(display_upstream_ref "$upstream")" "$wrapper" "$commitstamp" "$status"
+  python3 -c 'import sys; rows=[line.rstrip("\n").split("\t") for line in sys.stdin if line.strip()]; lane_index=lambda row: 2 if len(row) >= 7 else 1; commit_index=lambda row: 5 if len(row) >= 7 else 4; rows=sorted(rows, key=lambda row: (0 if row[lane_index(row)] == "production" else 1, "".join(chr(255 - ord(c)) for c in (row[commit_index(row)] if len(row) > commit_index(row) else "")))); [print("\t".join(row)) for row in rows]'
 }
 
 workspace_image_targets() {
@@ -1054,6 +1100,30 @@ workspace_image_targets() {
       status="image only"
     fi
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$image_ref" "$lane" "$upstream" "$wrapper" "$commitstamp" "$status"
+  done < <(project_image_refs)
+}
+
+workspace_target_rows() {
+  local workspace="$1"
+  local seen_image_refs=""
+  local row metadata image_ref lane upstream wrapper commitstamp
+
+  while IFS= read -r row; do
+    [[ -n "$row" ]] || continue
+    IFS=$'\t' read -r value lane upstream wrapper commitstamp status <<< "$row"
+    image_ref="$(container_image_id "$value" 2>/dev/null || true)"
+    image_ref="$(image_ref_for_id "$image_ref" 2>/dev/null || true)"
+    [[ -n "$image_ref" ]] && seen_image_refs+="$(normalize_image_ref "$image_ref")"$'\n'
+    printf 'container\t%s\t%s\t%s\t%s\t%s\t%s\n' "$value" "$lane" "$upstream" "$wrapper" "$commitstamp" "$status"
+  done < <(workspace_container_targets "$workspace")
+
+  while IFS= read -r image_ref; do
+    [[ -n "$image_ref" ]] || continue
+    metadata="$(image_metadata "$image_ref" 2>/dev/null || true)"
+    [[ -n "$metadata" ]] || continue
+    IFS=$'\t' read -r _ lane upstream wrapper commitstamp <<< "$metadata"
+    contains_line "$seen_image_refs" "$(normalize_image_ref "$image_ref")" && continue
+    printf 'image\t%s\t%s\t%s\t%s\t%s\timage only\n' "$image_ref" "$lane" "$upstream" "$wrapper" "$commitstamp"
   done < <(project_image_refs)
 }
 
@@ -1091,31 +1161,35 @@ pick_workspace_target() {
   local workspace="$1"
   local mode="$2"
   local rows=()
-  local row display value
+  local row display kind value
 
   if [[ "$mode" == "target" ]]; then
     while IFS= read -r row; do
       [[ -n "$row" ]] || continue
       rows+=("$row")
-    done < <(workspace_image_targets "$workspace" | sort_targets)
+    done < <(workspace_target_rows "$workspace" | sort_targets)
   else
     while IFS= read -r row; do
       [[ -n "$row" ]] || continue
-      rows+=("$row")
+      rows+=($'container\t'"$row")
     done < <(workspace_container_targets "$workspace" | sort_targets)
   fi
 
   [[ ${#rows[@]} -gt 0 ]] || fail "no matching project ${mode}s exist for workspace: $workspace"
 
   local options=()
+  local display_rows=()
+  local prompt
   for row in "${rows[@]}"; do
-    IFS=$'\t' read -r value lane upstream wrapper commitstamp status <<< "$row"
-    options+=("$(format_target_option "$lane" "$upstream" "$wrapper" "$commitstamp" "$status")")
+    IFS=$'\t' read -r kind value lane upstream wrapper commitstamp status <<< "$row"
+    display_rows+=("$lane"$'\t'"$upstream"$'\t'"$wrapper"$'\t'"$commitstamp"$'\t'"$status")
   done
-
-  display="$(prompt_select_option "Select ${mode} for workspace '$workspace'" "${options[@]}")"
-  for i in "${!options[@]}"; do
-    if [[ "${options[i]}" == "$display" ]]; then
+  while IFS= read -r row; do options+=("$row"); done < <(format_target_table "${display_rows[@]}")
+  prompt="Select ${mode} for workspace '$workspace'"
+  prompt+=$'\n'"${options[0]}"$'\n'"${options[1]}"
+  display="$(prompt_select_option "$prompt" "${options[@]:2}")"
+  for i in "${!rows[@]}"; do
+    if [[ "${options[i+2]}" == "$display" ]]; then
       printf '%s' "${rows[i]}"
       return 0
     fi
@@ -1123,10 +1197,75 @@ pick_workspace_target() {
   fail "failed to resolve selected ${mode}"
 }
 
+latest_matching_image_target() {
+  local lane="$1"
+  local upstream="$2"
+  local wrapper="$3"
+  local row
+
+  while IFS= read -r row; do
+    [[ -n "$row" ]] || continue
+    IFS=$'\t' read -r image_ref row_lane row_upstream row_wrapper commitstamp <<< "$row"
+    if [[ "$row_lane" == "$lane" && "$row_upstream" == "$upstream" && "$row_wrapper" == "$wrapper" ]]; then
+      printf '%s\n' "$row"
+      return 0
+    fi
+  done < <(workspace_image_targets placeholder | sort_targets)
+
+  return 1
+}
+
+resolve_start_target() {
+  local workspace="$1"
+  local lane="$2"
+  local upstream="$3"
+  local wrapper_context="${4:-}"
+  local commitstamp="${5:-}"
+  local resolved_upstream
+  local matching_row
+
+  [[ -n "$wrapper_context" ]] || wrapper_context="$(current_wrapper_context)"
+  resolved_upstream="$(resolve_hermes_ref "$upstream")"
+
+  if [[ -z "$commitstamp" ]]; then
+    matching_row="$(latest_matching_image_target "$lane" "$resolved_upstream" "$wrapper_context" 2>/dev/null || true)"
+    [[ -n "$matching_row" ]] || fail "no matching project image exists for ${lane}/${resolved_upstream}/${wrapper_context}; run hermes-build first"
+    IFS=$'\t' read -r _ _ _ _ commitstamp _ <<< "$matching_row"
+  fi
+
+  resolve_build_target "$workspace" "$lane" "$resolved_upstream" "$wrapper_context" "$commitstamp"
+}
+
+status_summary() {
+  local container_name="$1"
+  local metadata image_ref image_identity workspace
+  metadata="$(container_metadata "$container_name" 2>/dev/null || true)"
+  [[ -n "$metadata" ]] || fail "could not inspect container metadata: $container_name"
+
+  local lane upstream wrapper commitstamp status
+  IFS=$'\t' read -r _ lane upstream wrapper commitstamp status <<< "$metadata"
+  image_identity="$(container_image_id "$container_name" 2>/dev/null || true)"
+  image_ref="$(image_ref_for_id "$image_identity" 2>/dev/null || true)"
+  workspace="$(container_workspace "$container_name" 2>/dev/null || true)"
+
+  printf 'Container:   %s\n' "$container_name"
+  printf 'Workspace:   %s\n' "$workspace"
+  printf 'Lane:        %s\n' "$lane"
+  printf 'Upstream:    %s\n' "$(display_upstream_ref "$upstream")"
+  printf 'Wrapper:     %s\n' "$wrapper"
+  printf 'Commit:      %s\n' "$commitstamp"
+  printf 'Status:      %s\n' "$status"
+  printf 'Image:       %s\n' "${image_ref:-unknown}"
+}
+
 pick_remove_target() {
   local mode="$1"
   local rows=()
   local row value lane upstream wrapper commitstamp status
+  local options=()
+  local display_rows=()
+  local prompt
+  local used_by
 
   if [[ "$mode" == "image" ]]; then
     while IFS= read -r row; do
@@ -1142,14 +1281,39 @@ pick_remove_target() {
 
   [[ ${#rows[@]} -gt 0 ]] || fail "no project ${mode}s exist"
 
-  local options=("All, but newest" "All")
   for row in "${rows[@]}"; do
     IFS=$'\t' read -r value lane upstream wrapper commitstamp status <<< "$row"
-    options+=("$(format_target_option "$lane" "$upstream" "$wrapper" "$commitstamp" "$status")")
+    if [[ "$mode" == "container" ]]; then
+      display_rows+=("$(container_workspace "$value")"$'\t'"$lane"$'\t'"$upstream"$'\t'"$wrapper"$'\t'"$commitstamp"$'\t'"$status")
+    else
+      used_by=""
+      IMAGE_ID="$(image_id "$value" 2>/dev/null || true)"
+      while IFS= read -r NAME; do
+        [[ -n "$NAME" ]] || continue
+        if [[ "$(container_image_id "$NAME" 2>/dev/null || true)" == "$IMAGE_ID" ]]; then
+          WORKSPACE="$(container_workspace "$NAME")"
+          contains_line "$used_by" "$WORKSPACE" || used_by+="$WORKSPACE"$'\n'
+        fi
+      done < <(project_container_names)
+      if [[ -n "$used_by" ]]; then
+        used_by="$(printf '%s' "$used_by" | sed '/^$/d' | paste -sd ',' -)"
+      else
+        used_by="unassigned"
+      fi
+      display_rows+=("$used_by"$'\t'"$lane"$'\t'"$upstream"$'\t'"$wrapper"$'\t'"$commitstamp"$'\t'"$status")
+    fi
   done
 
+  if [[ "$mode" == "container" ]]; then
+    while IFS= read -r row; do options+=("$row"); done < <(format_target_table_with_leading_column workspace "${display_rows[@]}")
+  else
+    while IFS= read -r row; do options+=("$row"); done < <(format_target_table_with_leading_column "used by" "${display_rows[@]}")
+  fi
+
   local selected
-  selected="$(prompt_select_option "Select ${mode} removal target" "${options[@]}")"
+  prompt="Select ${mode} removal target"
+  prompt+=$'\n'"${options[0]}"$'\n'"${options[1]}"
+  selected="$(prompt_select_option "$prompt" "All, but newest" "All" "${options[@]:2}")"
   if [[ "$selected" == "All, but newest" || "$selected" == "All" ]]; then
     printf '%s' "$selected"
     return 0
@@ -1202,4 +1366,55 @@ if not lts_versions:
     raise SystemExit("could not determine latest Node LTS version")
 print(str(max(lts_versions)))
 PY
+}
+format_target_table() {
+  local rows=("$@") row lane_w=10 upstream_w=12 wrapper_w=34 commit_w=24 status_w=10
+  local lane upstream wrapper commitstamp status formatted=()
+  for row in "${rows[@]}"; do
+    [[ -n "$row" ]] || continue
+    IFS=$'\t' read -r lane upstream wrapper commitstamp status <<< "$row"
+    (( ${#lane} > lane_w )) && lane_w=${#lane}
+    (( ${#upstream} > upstream_w )) && upstream_w=${#upstream}
+    (( ${#wrapper} > wrapper_w )) && wrapper_w=${#wrapper}
+    (( ${#commitstamp} > commit_w )) && commit_w=${#commitstamp}
+    (( ${#status} > status_w )) && status_w=${#status}
+  done
+  printf -v row "%-${lane_w}s  %-${upstream_w}s  %-${wrapper_w}s  %-${commit_w}s  %-${status_w}s" lane upstream wrapper commit status
+  formatted+=("$row")
+  printf -v row "%-${lane_w}s  %-${upstream_w}s  %-${wrapper_w}s  %-${commit_w}s  %-${status_w}s" "$(printf '%*s' "$lane_w" '' | tr ' ' '-')" "$(printf '%*s' "$upstream_w" '' | tr ' ' '-')" "$(printf '%*s' "$wrapper_w" '' | tr ' ' '-')" "$(printf '%*s' "$commit_w" '' | tr ' ' '-')" "$(printf '%*s' "$status_w" '' | tr ' ' '-')"
+  formatted+=("$row")
+  for row in "${rows[@]}"; do
+    [[ -n "$row" ]] || continue
+    IFS=$'\t' read -r lane upstream wrapper commitstamp status <<< "$row"
+    printf -v row "%-${lane_w}s  %-${upstream_w}s  %-${wrapper_w}s  %-${commit_w}s  %-${status_w}s" "$lane" "$upstream" "$wrapper" "$commitstamp" "$status"
+    formatted+=("$row")
+  done
+  printf '%s\n' "${formatted[@]}"
+}
+
+format_target_table_with_leading_column() {
+  local header="$1"; shift
+  local rows=("$@") row lead_w=${#header} lane_w=10 upstream_w=12 wrapper_w=34 commit_w=24 status_w=10
+  local lead lane upstream wrapper commitstamp status formatted=()
+  for row in "${rows[@]}"; do
+    [[ -n "$row" ]] || continue
+    IFS=$'\t' read -r lead lane upstream wrapper commitstamp status <<< "$row"
+    (( ${#lead} > lead_w )) && lead_w=${#lead}
+    (( ${#lane} > lane_w )) && lane_w=${#lane}
+    (( ${#upstream} > upstream_w )) && upstream_w=${#upstream}
+    (( ${#wrapper} > wrapper_w )) && wrapper_w=${#wrapper}
+    (( ${#commitstamp} > commit_w )) && commit_w=${#commitstamp}
+    (( ${#status} > status_w )) && status_w=${#status}
+  done
+  printf -v row "%-${lead_w}s  %-${lane_w}s  %-${upstream_w}s  %-${wrapper_w}s  %-${commit_w}s  %-${status_w}s" "$header" lane upstream wrapper commit status
+  formatted+=("$row")
+  printf -v row "%-${lead_w}s  %-${lane_w}s  %-${upstream_w}s  %-${wrapper_w}s  %-${commit_w}s  %-${status_w}s" "$(printf '%*s' "$lead_w" '' | tr ' ' '-')" "$(printf '%*s' "$lane_w" '' | tr ' ' '-')" "$(printf '%*s' "$upstream_w" '' | tr ' ' '-')" "$(printf '%*s' "$wrapper_w" '' | tr ' ' '-')" "$(printf '%*s' "$commit_w" '' | tr ' ' '-')" "$(printf '%*s' "$status_w" '' | tr ' ' '-')"
+  formatted+=("$row")
+  for row in "${rows[@]}"; do
+    [[ -n "$row" ]] || continue
+    IFS=$'\t' read -r lead lane upstream wrapper commitstamp status <<< "$row"
+    printf -v row "%-${lead_w}s  %-${lane_w}s  %-${upstream_w}s  %-${wrapper_w}s  %-${commit_w}s  %-${status_w}s" "$lead" "$lane" "$upstream" "$wrapper" "$commitstamp" "$status"
+    formatted+=("$row")
+  done
+  printf '%s\n' "${formatted[@]}"
 }

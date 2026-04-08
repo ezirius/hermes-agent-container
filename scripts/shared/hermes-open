@@ -7,11 +7,15 @@ source "$ROOT/lib/shell/common.sh"
 
 if [[ ${1-} == "--help" ]]; then
   show_help "Usage: $(basename "$0") <workspace-name> [hermes args...]
+       $(basename "$0") <workspace-name> <lane> <upstream> [hermes args...]
 
 Open Hermes by execing into the running container for one workspace.
 
 Arguments:
-- <workspace-name>           workspace name"
+- <workspace-name>           workspace name
+
+In explicit mode, the deterministic container name is resolved for the current
+wrapper context."
 fi
 
 if [[ $# -lt 1 ]]; then
@@ -30,11 +34,12 @@ if [[ $# -ge 2 && ( "$1" == "production" || "$1" == "test" ) ]]; then
   resolve_build_target "$WORKSPACE" "$LANE" "$REF"
 else
   TARGET_ROW="$(pick_workspace_target "$WORKSPACE" container)"
-  IFS=$'\t' read -r HERMES_CONTAINER_NAME _ _ _ _ _ <<< "$TARGET_ROW"
+  IFS=$'\t' read -r _ HERMES_CONTAINER_NAME _ _ _ _ _ <<< "$TARGET_ROW"
 fi
 
 container_exists || fail "container not found: $HERMES_CONTAINER_NAME (run hermes-build and hermes-start first)"
+container_running || fail "container not running: $HERMES_CONTAINER_NAME (run hermes-start first)"
 
-RUN_ARGS=(--workdir /workspace "$HERMES_CONTAINER_NAME" hermes)
+RUN_ARGS=(--workdir /workspace/hermes-workspace "$HERMES_CONTAINER_NAME" hermes)
 RUN_ARGS+=("$@")
 exec_podman_interactive_command exec "${RUN_ARGS[@]}"

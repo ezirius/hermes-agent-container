@@ -7,6 +7,7 @@ source "$ROOT/lib/shell/common.sh"
 
 if [[ ${1-} == "--help" ]]; then
   show_help "Usage: $(basename "$0") <workspace-name> [hermes args...]
+       $(basename "$0") <workspace-name> <lane> <upstream> [hermes args...]
 
 Start or reuse the Hermes Gateway container for one workspace.
 
@@ -17,8 +18,8 @@ Container naming:
   hermes-agent-<workspace>-<lane>-<upstream>-<wrapper>
 
 The wrapper mounts:
-- <workspace>/hermes-home -> /opt/data
-- <workspace>/workspace   -> /workspace
+- <workspace>/hermes-home      -> /opt/data
+- <workspace>/hermes-workspace -> /workspace/hermes-workspace
 
 The image uses an upstream-style entrypoint. Hermes reads /opt/data/.env and
 /opt/data/config.yaml when the gateway process starts. The container is created
@@ -28,25 +29,31 @@ automatically.
 Image naming:
   hermes-agent-local:<lane>-<upstream>-<wrapper>-<commitstamp>
 
-Build labels (ref, lane, wrapper, fingerprint) are automatically injected from the image."
+Build labels (ref, lane, wrapper, fingerprint) are automatically injected from the image.
+
+In explicit mode, the target image is resolved for the current wrapper context."
 fi
 
-if [[ $# -ne 1 && $# -ne 3 ]]; then
-  usage_error "$(basename "$0") requires 1 argument for picker mode or 3 explicit arguments: <workspace-name> [lane] [upstream]"
+if [[ $# -lt 1 ]]; then
+  usage_error "$(basename "$0") requires at least 1 argument: <workspace-name> [hermes args...]"
 fi
 
 WORKSPACE="$1"
 shift 1
+TARGET_KIND="explicit"
 
 require_workspace_name "$WORKSPACE"
+require_podman
 
-if [[ $# -ge 2 ]]; then
+if [[ $# -ge 2 && ( "$1" == "production" || "$1" == "test" ) ]]; then
   LANE="$1"
   REF="$2"
   shift 2
+  resolve_start_target "$WORKSPACE" "$LANE" "$REF"
 else
   TARGET_ROW="$(pick_workspace_target "$WORKSPACE" target)"
-  IFS=$'\t' read -r _ LANE REF HERMES_WRAPPER_CONTEXT HERMES_COMMITSTAMP _ <<< "$TARGET_ROW"
+  IFS=$'\t' read -r TARGET_KIND _ LANE REF HERMES_WRAPPER_CONTEXT HERMES_COMMITSTAMP _ <<< "$TARGET_ROW"
+  resolve_start_target "$WORKSPACE" "$LANE" "$REF" "$HERMES_WRAPPER_CONTEXT" "$HERMES_COMMITSTAMP"
 fi
 
 if [[ "$LANE" != "production" && "$LANE" != "test" ]]; then
@@ -63,14 +70,28 @@ else
   fail "ref must be 'latest', 'main', or a version string (e.g. 0.7.0, v0.21.0), got: $REF"
 fi
 
-require_podman
-resolve_build_target "$WORKSPACE" "$LANE" "$REF" "${HERMES_WRAPPER_CONTEXT:-}" "${HERMES_COMMITSTAMP:-}"
-
 ensure_workspace_dirs
 migrate_legacy_workspace_layout
 ensure_workspace_dirs
 
 if ! image_exists "$HERMES_IMAGE"; then
+  if [[ "$TARGET_KIND" == "container" ]] && container_exists; then
+    if container_running; then
+      echo "==> Hermes Gateway container already running: $HERMES_CONTAINER_NAME"
+      if [[ $# -gt 0 ]]; then
+        exec env HERMES_WRAPPER_CONTEXT_OVERRIDE="$HERMES_WRAPPER_CONTEXT" HERMES_COMMITSTAMP_OVERRIDE="$HERMES_COMMITSTAMP" "$SCRIPT_DIR/hermes-open" "$WORKSPACE" "$LANE" "$REF" "$@"
+      fi
+      exit 0
+    fi
+
+    echo "==> Starting existing Hermes Gateway container without a matching local image tag: $HERMES_CONTAINER_NAME"
+    podman start "$HERMES_CONTAINER_NAME" >/dev/null
+    echo "==> Hermes Gateway container started: $HERMES_CONTAINER_NAME"
+    if [[ $# -gt 0 ]]; then
+      exec env HERMES_WRAPPER_CONTEXT_OVERRIDE="$HERMES_WRAPPER_CONTEXT" HERMES_COMMITSTAMP_OVERRIDE="$HERMES_COMMITSTAMP" "$SCRIPT_DIR/hermes-open" "$WORKSPACE" "$LANE" "$REF" "$@"
+    fi
+    exit 0
+  fi
   fail "image not found: $HERMES_IMAGE (run hermes-build $LANE $REF first)"
 fi
 
@@ -84,6 +105,9 @@ if container_exists; then
     TARGET_IMG="$(image_id "$HERMES_IMAGE" 2>/dev/null || true)"
     if [[ "$CURRENT_IMG" == "$TARGET_IMG" ]]; then
       echo "==> Hermes Gateway container already running: $HERMES_CONTAINER_NAME"
+      if [[ $# -gt 0 ]]; then
+        exec env HERMES_WRAPPER_CONTEXT_OVERRIDE="$HERMES_WRAPPER_CONTEXT" HERMES_COMMITSTAMP_OVERRIDE="$HERMES_COMMITSTAMP" "$SCRIPT_DIR/hermes-open" "$WORKSPACE" "$LANE" "$REF" "$@"
+      fi
       exit 0
     fi
     echo "==> Recreating running Hermes Gateway container with updated local image: $HERMES_CONTAINER_NAME"
@@ -95,6 +119,9 @@ if container_exists; then
     echo "==> Starting existing stopped Hermes Gateway container: $HERMES_CONTAINER_NAME"
     podman start "$HERMES_CONTAINER_NAME" >/dev/null
     echo "==> Hermes Gateway container started: $HERMES_CONTAINER_NAME"
+    if [[ $# -gt 0 ]]; then
+      exec env HERMES_WRAPPER_CONTEXT_OVERRIDE="$HERMES_WRAPPER_CONTEXT" HERMES_COMMITSTAMP_OVERRIDE="$HERMES_COMMITSTAMP" "$SCRIPT_DIR/hermes-open" "$WORKSPACE" "$LANE" "$REF" "$@"
+    fi
     exit 0
   fi
 fi
@@ -104,8 +131,8 @@ RUN_ARGS=(podman run -d \
   --name "$HERMES_CONTAINER_NAME" \
   --restart unless-stopped \
   -v "$HERMES_HOME_DIR:/opt/data" \
-  -v "$HERMES_WORKSPACE_DIR:/workspace" \
-  -w /workspace \
+  -v "$HERMES_WORKSPACE_DIR:/workspace/hermes-workspace" \
+  -w /workspace/hermes-workspace \
   --label "hermes.workspace=${WORKSPACE_NAME}" \
   --label "hermes.lane=${IMAGE_LANE}" \
   --label "hermes.ref=${IMAGE_REF}" \
@@ -119,5 +146,5 @@ RUN_ARGS+=("$HERMES_IMAGE" gateway run)
 echo "==> Hermes Gateway container started: $HERMES_CONTAINER_NAME"
 
 if [[ $# -gt 0 ]]; then
-  exec "$SCRIPT_DIR/hermes-open" "$WORKSPACE" "$LANE" "$REF" "$@"
+  exec env HERMES_WRAPPER_CONTEXT_OVERRIDE="$HERMES_WRAPPER_CONTEXT" HERMES_COMMITSTAMP_OVERRIDE="$HERMES_COMMITSTAMP" "$SCRIPT_DIR/hermes-open" "$WORKSPACE" "$LANE" "$REF" "$@"
 fi

@@ -48,6 +48,10 @@ fi
 
 require_clean_git "$ROOT"
 
+if [[ "$LANE" == "production" && -z "${HERMES_SKIP_PRODUCTION_GUARDS:-}" ]]; then
+  require_main_pushed "$ROOT"
+fi
+
 if [[ -z "$RAW_REF" ]]; then
   require_podman
   OPTION_LABELS=("main")
@@ -76,12 +80,6 @@ else
 fi
 
 require_podman
-
-if [[ "$LANE" == "production" ]]; then
-  if [[ -z "${HERMES_SKIP_PRODUCTION_GUARDS:-}" ]]; then
-    require_main_pushed "$ROOT"
-  fi
-fi
 
 if [[ -z "${HERMES_SKIP_UBUNTU_LTS_CHECK:-}" ]]; then
   LATEST_UBUNTU_LTS="$(latest_ubuntu_lts_version)"

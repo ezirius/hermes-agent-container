@@ -26,6 +26,7 @@ test -f "$ROOT/scripts/shared/hermes-remove"
 
 test ! -e "$ROOT/scripts/shared/hermes-upgrade"
 test ! -e "$ROOT/scripts/shared/bootstrap-test"
+test ! -d "$ROOT/config/patches/__pycache__"
 test ! -e "$ROOT/config/patches/apply-hermes-matrix-auto-verification.py"
 test ! -e "$ROOT/config/patches/apply-hermes-matrix-upload-filesize.py"
 test ! -e "$ROOT/config/patches/apply-hermes-matrix-encrypted-media.py"
@@ -52,7 +53,7 @@ fi
 
 grep -q '^HERMES_UBUNTU_LTS_VERSION="24.04"$' "$ROOT/config/shared/hermes.conf"
 grep -q '^HERMES_NODE_LTS_VERSION="24"$' "$ROOT/config/shared/hermes.conf"
-grep -q '^HERMES_BASE_ROOT=' "$ROOT/config/shared/hermes.conf"
+grep -q '^HERMES_BASE_ROOT="\$HOME/Documents/Ezirius/.applications-data/.containers-artificial-intelligence"$' "$ROOT/config/shared/hermes.conf"
 grep -q '^latest_ubuntu_lts_version() {$' "$ROOT/lib/shell/common.sh"
 grep -q '^latest_node_lts_version() {$' "$ROOT/lib/shell/common.sh"
 grep -q '^require_canonical_main_checkout() {$' "$ROOT/lib/shell/common.sh"
@@ -68,7 +69,13 @@ if grep -q 'MATRIX_DEVICE_ID' "$ROOT/config/patches/apply-hermes-matrix-config-o
 fi
 
 grep -q 'there is no `hermes-upgrade` command and no `bootstrap-test`' "$ROOT/README.md"
+grep -q 'hermes-workspace' "$ROOT/README.md"
+grep -q 'newer image-only targets remain selectable' "$ROOT/README.md"
+grep -q 'used by' "$ROOT/README.md"
 grep -q 'implementation-plan.md' "$ROOT/README.md"
 grep -q 'picker-based workspace commands' "$ROOT/docs/shared/usage.md"
+grep -q '/workspace/hermes-workspace' "$ROOT/docs/shared/usage.md"
+grep -q 'used by' "$ROOT/docs/shared/usage.md"
+grep -q 'newer immutable image exists' "$ROOT/docs/shared/usage.md"
 
 echo "Layout checks passed"
