@@ -245,6 +245,10 @@ git_has_meaningful_worktree_changes() {
   local deletions
   local untracked_output
 
+  # Refresh the index first so host-side stat noise does not show up as a
+  # false-positive dirty worktree when file content is unchanged.
+  "${git_prefix[@]}" update-index -q --refresh >/dev/null 2>&1 || true
+
   for diff_args in "" "--cached"; do
     if [[ -n "$diff_args" ]]; then
       raw_output="$("${git_prefix[@]}" diff "$diff_args" --raw --no-abbrev 2>/dev/null || true)"
@@ -270,9 +274,7 @@ git_has_meaningful_worktree_changes() {
     else
       summary_output="$("${git_prefix[@]}" diff --summary 2>/dev/null || true)"
     fi
-    if [[ -z "$summary_output" ]]; then
-      return 0
-    fi
+    [[ -n "$summary_output" ]] || continue
 
     while IFS= read -r line; do
       [[ -n "$line" ]] || continue
