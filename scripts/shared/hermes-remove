@@ -6,24 +6,103 @@ ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$ROOT/lib/shell/common.sh"
 
 if [[ ${1-} == "--help" ]]; then
-  show_help "Usage: $(basename "$0") <workspace-name>
+  show_help "Usage: $(basename "$0") <container|image>
 
-Remove the Hermes Gateway container for one workspace.
+Remove Hermes containers or images.
 
-This removes the container only. Persistent workspace data under HERMES_BASE_ROOT
-is left intact."
+Arguments:
+- <container|image>          removal mode"
 fi
 
 if [[ $# -ne 1 ]]; then
-  usage_error "$(basename "$0") requires exactly 1 argument: <workspace-name>"
+  usage_error "$(basename "$0") requires exactly 1 argument: <container|image>"
 fi
 
-require_podman
-resolve_workspace "$1"
+MODE="$1"
 
-if container_exists; then
-  echo "==> Removing Hermes container: $HERMES_CONTAINER_NAME"
-  podman rm -f "$HERMES_CONTAINER_NAME" >/dev/null
+[[ "$MODE" == "container" || "$MODE" == "image" ]] || fail "mode must be 'container' or 'image'"
+
+require_podman
+SELECTION="$(pick_remove_target "$MODE")"
+
+contains_line() {
+  local haystack="$1"
+  local needle="$2"
+  case "\n$haystack\n" in
+    *"\n$needle\n"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+if [[ "$SELECTION" == "All" || "$SELECTION" == "All, but newest" ]]; then
+  ROWS=()
+  while IFS= read -r row; do
+    [[ -n "$row" ]] || continue
+    ROWS+=("$row")
+  done < <(
+    if [[ "$MODE" == "image" ]]; then
+      remove_candidates image | sort_targets
+    else
+      remove_candidates container | sort_targets
+    fi
+  )
+
+  KEEP_VALUES=""
+  KEPT_WORKSPACES=""
+  if [[ "$SELECTION" == "All, but newest" ]]; then
+    if [[ "$MODE" == "container" ]]; then
+      for ROW in "${ROWS[@]}"; do
+        IFS=$'\t' read -r VALUE _ _ _ _ _ <<< "$ROW"
+        WORKSPACE="$(container_workspace "$VALUE")"
+        [[ -n "$WORKSPACE" ]] || continue
+        if ! contains_line "$KEPT_WORKSPACES" "$WORKSPACE"; then
+          KEPT_WORKSPACES="${KEPT_WORKSPACES}${WORKSPACE}\n"
+          KEEP_VALUES="${KEEP_VALUES}${VALUE}\n"
+        fi
+      done
+    else
+      for ROW in "${ROWS[@]}"; do
+        IFS=$'\t' read -r VALUE _ _ _ _ _ <<< "$ROW"
+        IMAGE_ID="$(image_id "$VALUE" 2>/dev/null || true)"
+        [[ -n "$IMAGE_ID" ]] || continue
+        while IFS= read -r NAME; do
+          [[ -n "$NAME" ]] || continue
+          if [[ "$(container_image_id "$NAME" 2>/dev/null || true)" == "$IMAGE_ID" ]]; then
+            WORKSPACE="$(container_workspace "$NAME")"
+            [[ -n "$WORKSPACE" ]] || continue
+            if ! contains_line "$KEPT_WORKSPACES" "$WORKSPACE"; then
+              KEPT_WORKSPACES="${KEPT_WORKSPACES}${WORKSPACE}\n"
+              KEEP_VALUES="${KEEP_VALUES}${VALUE}\n"
+            fi
+          fi
+        done < <(project_container_names)
+      done
+      if [[ -z "$KEEP_VALUES" && ${#ROWS[@]} -gt 0 ]]; then
+        IFS=$'\t' read -r VALUE _ <<< "${ROWS[0]}"
+        KEEP_VALUES="${VALUE}\n"
+      fi
+    fi
+  fi
+
+  for ROW in "${ROWS[@]}"; do
+    IFS=$'\t' read -r VALUE _ <<< "$ROW"
+    if [[ "$SELECTION" == "All, but newest" ]]; then
+      contains_line "$KEEP_VALUES" "$VALUE" && continue
+    fi
+    if [[ "$MODE" == "image" ]]; then
+      podman image rm -f "$VALUE" >/dev/null
+    else
+      podman rm -f "$VALUE" >/dev/null
+    fi
+  done
+  exit 0
+fi
+
+IFS=$'\t' read -r VALUE _ <<< "$SELECTION"
+if [[ "$MODE" == "image" ]]; then
+  echo "==> Removing Hermes image: $VALUE"
+  podman image rm -f "$VALUE" >/dev/null
 else
-  echo "==> No container found: $HERMES_CONTAINER_NAME"
+  echo "==> Removing Hermes container: $VALUE"
+  podman rm -f "$VALUE" >/dev/null
 fi

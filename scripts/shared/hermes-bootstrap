@@ -8,15 +8,14 @@ source "$ROOT/lib/shell/common.sh"
 if [[ ${1-} == "--help" ]]; then
   show_help "Usage: $(basename "$0") <workspace-name> [hermes args...]
 
-Start the full Hermes flow for one workspace:
-- ensure the shared image exists
-- refresh it if the requested upstream release changed or the local wrapper image recipe changed
-- start or reuse the workspace container
-- open Hermes by execing into the running workspace container
+Start Hermes for one workspace by selecting an existing project target.
+
+This command does not auto-build or auto-upgrade images. Build the desired
+immutable image first with hermes-build, then use hermes-bootstrap to start/open the
+matching target.
 
 Arguments:
 - <workspace-name>           required workspace name under HERMES_BASE_ROOT
-- [hermes args...]          optional Hermes CLI arguments forwarded to hermes-open
 
 Common forwarded Hermes args:
 - setup                     run the setup wizard
@@ -32,9 +31,12 @@ if [[ $# -lt 1 ]]; then
 fi
 
 WORKSPACE="$1"
-shift
+shift 1
 
-"$SCRIPT_DIR/hermes-build"
-"$SCRIPT_DIR/hermes-upgrade"
-"$SCRIPT_DIR/hermes-start" "$WORKSPACE"
-exec "$SCRIPT_DIR/hermes-open" "$WORKSPACE" "$@"
+require_workspace_name "$WORKSPACE"
+
+TARGET_ROW="$(pick_workspace_target "$WORKSPACE" target)"
+IFS=$'\t' read -r _ LANE REF WRAPPER COMMITSTAMP _ <<< "$TARGET_ROW"
+
+HERMES_WRAPPER_CONTEXT_OVERRIDE="$WRAPPER" HERMES_COMMITSTAMP_OVERRIDE="$COMMITSTAMP" "$SCRIPT_DIR/hermes-start" "$WORKSPACE" "$LANE" "$REF"
+exec env HERMES_WRAPPER_CONTEXT_OVERRIDE="$WRAPPER" HERMES_COMMITSTAMP_OVERRIDE="$COMMITSTAMP" "$SCRIPT_DIR/hermes-open" "$WORKSPACE" "$LANE" "$REF" "$@"

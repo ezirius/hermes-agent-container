@@ -14,21 +14,43 @@ assert_contains() {
   grep -Fq -- "$needle" "$file" || { printf 'assertion failed: %s\nmissing: %s\n' "$message" "$needle" >&2; exit 1; }
 }
 
-assert_not_contains() {
-  local file="$1" needle="$2" message="$3"
-  if grep -Fq -- "$needle" "$file"; then
-    printf 'assertion failed: %s\nunexpected: %s\n' "$message" "$needle" >&2
-    exit 1
-  fi
+write_value() {
+  printf '%s' "$2" > "$STATE_DIR/$1"
 }
 
-write_file() {
-  printf '%s' "${2-}" > "$1"
+read_value() {
+  [[ -f "$STATE_DIR/$1" ]] && cat "$STATE_DIR/$1"
+}
+
+add_image() {
+  local ref="$1" lane="$2" upstream="$3" wrapper="$4" commitstamp="$5"
+  touch "$STATE_DIR/image_exists_${ref//[:\/]/_}"
+  printf '%s\n' "$ref" >> "$STATE_DIR/images.list"
+  write_value "image_id_${ref//[:\/]/_}" "image-${lane}-${upstream}-${wrapper}"
+  write_value "image_label_hermes_lane_${ref//[:\/]/_}" "$lane"
+  write_value "image_label_hermes_ref_${ref//[:\/]/_}" "$upstream"
+  write_value "image_label_hermes_wrapper_context_${ref//[:\/]/_}" "$wrapper"
+  write_value "image_label_hermes_commitstamp_${ref//[:\/]/_}" "$commitstamp"
+  write_value "image_label_hermes_wrapper_fingerprint_${ref//[:\/]/_}" fp
+}
+
+add_container() {
+  local name="$1" lane="$2" upstream="$3" wrapper="$4" commitstamp="$5" running="$6" image_ref="$7"
+  printf '%s\n' "$name" >> "$STATE_DIR/containers.list"
+  touch "$STATE_DIR/container_exists_$name"
+  write_value "container_running_$name" "$running"
+  write_value "container_image_$name" "$(read_value "image_id_${image_ref//[:\/]/_}")"
+  write_value "container_label_lane_$name" "$lane"
+  write_value "container_label_ref_$name" "$upstream"
+  write_value "container_label_wrapper_$name" "$wrapper"
+  write_value "container_label_commitstamp_$name" "$commitstamp"
 }
 
 reset_state() {
   rm -f "$STATE_DIR"/*
   : > "$STATE_DIR/podman.log"
+  : > "$STATE_DIR/images.list"
+  : > "$STATE_DIR/containers.list"
 }
 
 cat > "$MOCK_BIN/podman" <<'EOF'
@@ -41,107 +63,110 @@ read_value(){ [[ -f "$STATE_DIR/$1" ]] && cat "$STATE_DIR/$1"; }
 write_value(){ printf '%s' "$2" > "$STATE_DIR/$1"; }
 subcommand="${1:?}"; shift || true
 case "$subcommand" in
+  images)
+    log_call "images $*"
+    cat "$STATE_DIR/images.list" ;;
+  ps)
+    log_call "ps $*"
+    cat "$STATE_DIR/containers.list" ;;
   image)
     action="${1:?}"; shift || true
     case "$action" in
       exists)
         log_call "image exists $*"
-        target="${1:-}"
-        if [[ "$target" == *-upgrade-tmp ]]; then
-          [[ "$(read_value ${target}_exists)" == "1" ]]
-        else
-          [[ "$(read_value image_exists)" == "1" ]]
-        fi ;;
-      inspect) log_call "image inspect $*"; format="$2"; case "$format" in
-        '{{ index .Labels "hermes.repo_url" }}') printf '%s\n' "$(read_value image_label_hermes_repo_url)" ;;
-        '{{ index .Labels "hermes.ref" }}') printf '%s\n' "$(read_value image_label_hermes_ref)" ;;
-        '{{ index .Labels "hermes.wrapper_fingerprint" }}') printf '%s\n' "$(read_value image_label_hermes_wrapper_fingerprint)" ;;
-        '{{.Id}}') printf '%s\n' "$(read_value image_id)" ;;
-        *) exit 1 ;;
-      esac ;;
+        [[ -f "$STATE_DIR/image_exists_${1//[:\/]/_}" ]] ;;
+      inspect)
+        log_call "image inspect $*"
+        format="$2"; ref="$3"
+        case "$format" in
+          '{{ index .Labels "hermes.lane" }}') read_value "image_label_hermes_lane_${ref//[:\/]/_}" ;;
+          '{{ index .Labels "hermes.ref" }}') read_value "image_label_hermes_ref_${ref//[:\/]/_}" ;;
+          '{{ index .Labels "hermes.wrapper_context" }}') read_value "image_label_hermes_wrapper_context_${ref//[:\/]/_}" ;;
+          '{{ index .Labels "hermes.commitstamp" }}') read_value "image_label_hermes_commitstamp_${ref//[:\/]/_}" ;;
+          '{{ index .Labels "hermes.wrapper_fingerprint" }}') read_value "image_label_hermes_wrapper_fingerprint_${ref//[:\/]/_}" ;;
+          '{{.Id}}') read_value "image_id_${ref//[:\/]/_}" ;;
+        esac ;;
       rm)
-        log_call "image rm $*"
-        target="${*: -1}"
-        if [[ "$target" == *-upgrade-tmp ]]; then
-          rm -f "$STATE_DIR/${target}_exists"
-        else
-          rm -f "$STATE_DIR/image_exists" "$STATE_DIR/image_label_hermes_repo_url" "$STATE_DIR/image_label_hermes_ref" "$STATE_DIR/image_label_hermes_wrapper_fingerprint" "$STATE_DIR/image_id"
-        fi ;;
-      *) exit 1 ;;
+        log_call "image rm $*" ;;
     esac ;;
-  tag)
-    log_call "tag $*"
-    write_value image_exists 1
-    write_value image_id "$(read_value temp_image_id)"
-    write_value image_label_hermes_repo_url "$(read_value temp_image_label_hermes_repo_url)"
-    write_value image_label_hermes_ref "$(read_value temp_image_label_hermes_ref)"
-    write_value image_label_hermes_wrapper_fingerprint "$(read_value temp_image_label_hermes_wrapper_fingerprint)" ;;
   build)
     log_call "build $*"
-    target_image=""
+    target=""
     while [[ $# -gt 0 ]]; do
       case "$1" in
-        -t)
-          target_image="$2"
-          shift 2 ;;
+        -t) target="$2"; touch "$STATE_DIR/image_exists_${target//[:\/]/_}"; printf '%s\n' "$target" >> "$STATE_DIR/images.list"; write_value "image_id_${target//[:\/]/_}" "built-${target//[:\/]/_}"; shift 2 ;;
         --label)
           case "$2" in
-            hermes.repo_url=*)
-              if [[ "$target_image" == *-upgrade-tmp ]]; then
-                write_value temp_image_label_hermes_repo_url "${2#hermes.repo_url=}"
-              else
-                write_value image_label_hermes_repo_url "${2#hermes.repo_url=}"
-              fi ;;
-            hermes.ref=*)
-              if [[ "$target_image" == *-upgrade-tmp ]]; then
-                write_value temp_image_label_hermes_ref "${2#hermes.ref=}"
-              else
-                write_value image_label_hermes_ref "${2#hermes.ref=}"
-              fi ;;
-            hermes.wrapper_fingerprint=*)
-              if [[ "$target_image" == *-upgrade-tmp ]]; then
-                write_value temp_image_label_hermes_wrapper_fingerprint "${2#hermes.wrapper_fingerprint=}"
-              else
-                write_value image_label_hermes_wrapper_fingerprint "${2#hermes.wrapper_fingerprint=}"
-              fi ;;
+            hermes.lane=*) write_value "image_label_hermes_lane_${target//[:\/]/_}" "${2#hermes.lane=}" ;;
+            hermes.ref=*) write_value "image_label_hermes_ref_${target//[:\/]/_}" "${2#hermes.ref=}" ;;
+            hermes.wrapper_context=*) write_value "image_label_hermes_wrapper_context_${target//[:\/]/_}" "${2#hermes.wrapper_context=}" ;;
+            hermes.commitstamp=*) write_value "image_label_hermes_commitstamp_${target//[:\/]/_}" "${2#hermes.commitstamp=}" ;;
+            hermes.wrapper_fingerprint=*) write_value "image_label_hermes_wrapper_fingerprint_${target//[:\/]/_}" "${2#hermes.wrapper_fingerprint=}" ;;
           esac
           shift 2 ;;
         *) shift ;;
       esac
-    done
-    if [[ "$target_image" == *-upgrade-tmp ]]; then
-      write_value "${target_image}_exists" 1
-      write_value temp_image_id image-b
-    else
-      write_value image_exists 1
-      write_value image_id image-a
-    fi ;;
+    done ;;
   container)
     action="${1:?}"; shift || true
     case "$action" in
-      exists) log_call "container exists $*"; [[ "$(read_value container_exists)" == "1" ]] ;;
-      *) exit 1 ;;
+      exists)
+        log_call "container exists $*"
+        [[ -f "$STATE_DIR/container_exists_$1" ]] ;;
     esac ;;
   inspect)
     log_call "inspect $*"
-    if [[ $# -eq 1 ]]; then
+    if [[ "$1" == "-f" ]]; then
+      format="$2"; name="$3"
+      case "$format" in
+        '{{.State.Running}}') read_value "container_running_$name" ;;
+        '{{.Image}}') read_value "container_image_$name" ;;
+        '{{index .Config.Labels "hermes.lane"}}|{{index .Config.Labels "hermes.ref"}}|{{index .Config.Labels "hermes.wrapper_context"}}|{{index .Config.Labels "hermes.commitstamp"}}|{{.State.Running}}')
+          printf '%s|%s|%s|%s|%s' "$(read_value "container_label_lane_$name")" "$(read_value "container_label_ref_$name")" "$(read_value "container_label_wrapper_$name")" "$(read_value "container_label_commitstamp_$name")" "$(read_value "container_running_$name")" ;;
+      esac
+    else
       printf '{"Name":"%s"}\n' "$1"
-      exit 0
-    fi
-    format="$2"
-    case "$format" in
-      '{{.State.Running}}') printf '%s\n' "$(read_value container_running)" ;;
-      '{{.Image}}') printf '%s\n' "$(read_value container_image_id)" ;;
-      *) exit 1 ;;
-    esac ;;
-  rm) log_call "rm $*"; rm -f "$STATE_DIR/container_exists" "$STATE_DIR/container_running" "$STATE_DIR/container_image_id" ;;
-  start) log_call "start $*"; write_value container_exists 1; write_value container_running true ;;
-  stop) log_call "stop $*"; write_value container_running false ;;
-  run) log_call "run $*"; write_value container_exists 1; write_value container_running true; write_value container_image_id "$(read_value image_id)" ;;
-  exec) log_call "exec $*"; printf 'mock exec\n' ;;
-  ps) log_call "ps $*"; printf 'mock ps\n' ;;
-  logs) log_call "logs $*"; printf 'mock logs\n' ;;
-  *) exit 1 ;;
+    fi ;;
+  run)
+    log_call "run $*"
+    name=""; image_ref=""; lane=""; ref=""; wrapper=""; commitstamp=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --name) name="$2"; shift 2 ;;
+        --label)
+          case "$2" in
+            hermes.lane=*) lane="${2#hermes.lane=}" ;;
+            hermes.ref=*) ref="${2#hermes.ref=}" ;;
+            hermes.wrapper_context=*) wrapper="${2#hermes.wrapper_context=}" ;;
+            hermes.commitstamp=*) commitstamp="${2#hermes.commitstamp=}" ;;
+          esac
+          shift 2 ;;
+        -*) shift ;;
+        *) image_ref="$1"; break ;;
+      esac
+    done
+    touch "$STATE_DIR/container_exists_$name"
+    printf '%s\n' "$name" >> "$STATE_DIR/containers.list"
+    write_value "container_running_$name" true
+    write_value "container_image_$name" "$(read_value "image_id_${image_ref//[:\/]/_}")"
+    write_value "container_label_lane_$name" "$lane"
+    write_value "container_label_ref_$name" "$ref"
+    write_value "container_label_wrapper_$name" "$wrapper"
+    write_value "container_label_commitstamp_$name" "$commitstamp" ;;
+  start)
+    log_call "start $*"
+    write_value "container_running_$1" true ;;
+  stop)
+    log_call "stop $*"
+    write_value "container_running_$1" false ;;
+  rm)
+    log_call "rm $*" ;;
+  exec)
+    log_call "exec $*"
+    printf 'mock exec\n' ;;
+  logs)
+    log_call "logs $*"
+    printf 'mock logs\n' ;;
 esac
 EOF
 chmod +x "$MOCK_BIN/podman"
@@ -150,10 +175,7 @@ cat > "$MOCK_BIN/script" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 STATE_DIR="${STATE_DIR:?}"
-printf '%s\n' "script $*" >> "$STATE_DIR/podman.log"
-[[ "$1" == "-q" ]] || exit 1
-[[ "$2" == "/dev/null" ]] || exit 1
-shift 2
+printf 'script %s\n' "$*" >> "$STATE_DIR/podman.log"
 exec "$@"
 EOF
 chmod +x "$MOCK_BIN/script"
@@ -162,189 +184,65 @@ export PATH="$MOCK_BIN:$PATH"
 export STATE_DIR
 export HERMES_BASE_ROOT="$TMPDIR/workspaces"
 export HERMES_IMAGE_NAME="mock-hermes-image"
-export HERMES_REPO_URL="https://github.com/NousResearch/hermes-agent.git"
-export HERMES_REF="v1.2.3"
-EXPECTED_BUILD_FINGERPRINT="$({ ROOT="$ROOT" bash -lc '. "$ROOT/lib/shell/common.sh"; local_build_fingerprint'; })"
+export HERMES_ALLOW_DIRTY=1
+export HERMES_UBUNTU_LTS_VERSION="24.04"
+export HERMES_NODE_LTS_VERSION="22"
+export HERMES_SKIP_UBUNTU_LTS_CHECK=1
+export HERMES_SKIP_NODE_LTS_CHECK=1
+export HERMES_SKIP_PRODUCTION_GUARDS=1
+export HERMES_WRAPPER_CONTEXT_OVERRIDE="main"
+export HERMES_COMMITSTAMP_OVERRIDE="20260408-153210-ab12cd3"
+export HERMES_RELEASE_OPTION_CACHE=$'1.2.3\tv1.2.3'
 
 reset_state
-write_file "$STATE_DIR/image_exists" "1"
-"$ROOT/scripts/shared/hermes-build" > "$STATE_DIR/build-skip.out"
-assert_contains "$STATE_DIR/build-skip.out" 'Hermes image already exists: mock-hermes-image' 'build reports existing image'
-assert_not_contains "$STATE_DIR/podman.log" 'build ' 'build skip path does not build'
+"$ROOT/scripts/shared/hermes-build" production 1.2.3 > "$STATE_DIR/build.out"
+assert_contains "$STATE_DIR/build.out" 'Building Hermes image' 'build reports build start'
+assert_contains "$STATE_DIR/build.out" 'Git ref:       v1.2.3' 'build reports resolved git ref'
+assert_contains "$STATE_DIR/podman.log" 'mock-hermes-image:production-1.2.3-main-20260408-153210-ab12cd3' 'build uses human upstream version in immutable image tag'
+assert_contains "$STATE_DIR/build.out" 'Node LTS:      22' 'build reports configured node lts pin'
 
 reset_state
-"$ROOT/scripts/shared/hermes-build" > "$STATE_DIR/build-run.out"
-assert_contains "$STATE_DIR/build-run.out" 'Building Hermes image' 'build reports image build'
-assert_contains "$STATE_DIR/build-run.out" 'Local build fingerprint:' 'build reports local build fingerprint'
-assert_contains "$STATE_DIR/podman.log" 'build --pull=always' 'build invokes podman build'
-assert_contains "$STATE_DIR/podman.log" 'hermes.wrapper_fingerprint=' 'build labels image with local fingerprint'
+IMAGE_REF="mock-hermes-image:production-1.2.3-main-20260408-153210-ab12cd3"
+add_image "$IMAGE_REF" production 1.2.3 main 20260408-153210-ab12cd3
 
-reset_state
-write_file "$STATE_DIR/image_exists" "1"
-write_file "$STATE_DIR/image_label_hermes_repo_url" 'https://github.com/NousResearch/hermes-agent.git'
-write_file "$STATE_DIR/image_label_hermes_ref" 'v1.2.3'
-write_file "$STATE_DIR/image_label_hermes_wrapper_fingerprint" "$EXPECTED_BUILD_FINGERPRINT"
-"$ROOT/scripts/shared/hermes-upgrade" > "$STATE_DIR/upgrade-skip.out"
-assert_contains "$STATE_DIR/upgrade-skip.out" 'No upgrade needed' 'upgrade skips when source matches'
+export HERMES_SELECT_INDEX=1
+"$ROOT/scripts/shared/hermes-start" ezirius > "$STATE_DIR/start.out"
+assert_contains "$STATE_DIR/podman.log" 'run -d --name hermes-agent-ezirius-production-1.2.3-main' 'start creates workspace container from selected image'
 
-reset_state
-write_file "$STATE_DIR/image_exists" "1"
-write_file "$STATE_DIR/image_label_hermes_repo_url" 'https://github.com/NousResearch/hermes-agent.git'
-write_file "$STATE_DIR/image_label_hermes_ref" 'v1.2.2'
-"$ROOT/scripts/shared/hermes-upgrade" > "$STATE_DIR/upgrade-run.out"
-assert_contains "$STATE_DIR/upgrade-run.out" 'Upgrading Hermes image: mock-hermes-image' 'upgrade rebuilds when ref differs'
-assert_contains "$STATE_DIR/upgrade-run.out" 'Building replacement image first: mock-hermes-image-upgrade-tmp' 'upgrade stages a replacement image before swapping'
-assert_contains "$STATE_DIR/upgrade-run.out" 'Building Hermes image' 'upgrade keeps staged build progress visible'
-assert_contains "$STATE_DIR/upgrade-run.out" 'Hermes image build complete' 'upgrade reports staged build completion before the swap'
-assert_contains "$STATE_DIR/podman.log" 'image exists mock-hermes-image-upgrade-tmp' 'upgrade checks whether the staged image already exists'
-assert_contains "$STATE_DIR/podman.log" 'image rm -f mock-hermes-image' 'upgrade removes the old image only after replacement build'
-assert_contains "$STATE_DIR/podman.log" 'tag mock-hermes-image-upgrade-tmp mock-hermes-image' 'upgrade retags the staged image into place'
-
-reset_state
-write_file "$STATE_DIR/image_exists" "1"
-write_file "$STATE_DIR/image_label_hermes_repo_url" 'https://github.com/NousResearch/hermes-agent.git'
-write_file "$STATE_DIR/image_label_hermes_ref" 'v1.2.3'
-write_file "$STATE_DIR/image_label_hermes_wrapper_fingerprint" 'stale-fingerprint'
-"$ROOT/scripts/shared/hermes-upgrade" > "$STATE_DIR/upgrade-fingerprint-run.out"
-assert_contains "$STATE_DIR/upgrade-fingerprint-run.out" 'Upgrading Hermes image: mock-hermes-image' 'upgrade rebuilds when local build fingerprint differs'
-assert_contains "$STATE_DIR/upgrade-fingerprint-run.out" 'Target local build fingerprint:' 'upgrade reports target local build fingerprint'
-assert_contains "$STATE_DIR/podman.log" 'tag mock-hermes-image-upgrade-tmp mock-hermes-image' 'fingerprint-driven upgrade also swaps in the staged image'
-
-reset_state
-write_file "$STATE_DIR/image_exists" "1"
-write_file "$STATE_DIR/image_id" 'image-a'
-write_file "$STATE_DIR/image_label_hermes_repo_url" 'https://github.com/NousResearch/hermes-agent.git'
-write_file "$STATE_DIR/image_label_hermes_ref" 'v1.2.3'
-write_file "$STATE_DIR/image_label_hermes_wrapper_fingerprint" "$EXPECTED_BUILD_FINGERPRINT"
-mkdir -p "$HERMES_BASE_ROOT/ezirius"
-mkdir -p "$HERMES_BASE_ROOT/ezirius/hermes-home"
-touch "$HERMES_BASE_ROOT/ezirius/hermes-home/.env"
-printf 'OPENAI_API_KEY=test-key\n' >> "$HERMES_BASE_ROOT/ezirius/hermes-home/.env"
-printf 'HERMES_IMAGE_NAME=workspace-override\n' >> "$HERMES_BASE_ROOT/ezirius/hermes-home/.env"
-"$ROOT/scripts/shared/bootstrap" ezirius --help > "$STATE_DIR/bootstrap.out"
-assert_contains "$STATE_DIR/bootstrap.out" 'No upgrade needed' 'bootstrap checks upgrade before start'
-assert_contains "$STATE_DIR/podman.log" 'run -d --name hermes-agent-ezirius' 'bootstrap starts container'
-assert_contains "$STATE_DIR/podman.log" '--restart unless-stopped' 'bootstrap configures unless-stopped restart policy'
-assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/hermes-home:/opt/data" 'bootstrap mounts Hermes home separately'
-assert_contains "$STATE_DIR/podman.log" "$HERMES_BASE_ROOT/ezirius/workspace:/workspace" 'bootstrap mounts persistent workspace directory'
-assert_not_contains "$STATE_DIR/podman.log" '--env-file ' 'bootstrap does not inject workspace env via podman'
-assert_contains "$STATE_DIR/podman.log" 'mock-hermes-image gateway run' 'bootstrap keeps wrapper image selection outside workspace env and runs gateway through the entrypoint model'
-assert_contains "$STATE_DIR/podman.log" 'exec -i --workdir /workspace hermes-agent-ezirius hermes --help' 'bootstrap opens Hermes by execing into the running workspace container'
-assert_not_contains "$STATE_DIR/podman.log" 'run -i --rm' 'bootstrap should not start a second transient container against the same Hermes home'
-
-reset_state
-write_file "$STATE_DIR/image_exists" '1'
-write_file "$STATE_DIR/image_id" 'image-a'
-write_file "$STATE_DIR/container_exists" '1'
-write_file "$STATE_DIR/container_running" 'true'
-write_file "$STATE_DIR/container_image_id" 'image-a'
-mkdir -p "$HERMES_BASE_ROOT/test/hermes-home" "$HERMES_BASE_ROOT/test/workspace"
-touch "$HERMES_BASE_ROOT/test/hermes-home/.env"
-touch "$HERMES_BASE_ROOT/test/workspace/old.txt"
-"$ROOT/scripts/shared/bootstrap-test" doctor > "$STATE_DIR/bootstrap-test.out"
-assert_contains "$STATE_DIR/podman.log" 'rm -f hermes-agent-test' 'bootstrap-test removes the previous test container'
-assert_contains "$STATE_DIR/podman.log" 'image rm -f hermes-agent-local-test' 'bootstrap-test removes the previous test image'
-assert_contains "$STATE_DIR/podman.log" 'container exists hermes-agent-test' 'bootstrap-test resolves the dedicated test container before cleanup'
-assert_contains "$STATE_DIR/podman.log" 'build --pull=always --label hermes.repo_url=https://github.com/NousResearch/hermes-agent.git --label hermes.ref=v1.2.3' 'bootstrap-test rebuilds the test image from scratch'
-assert_contains "$STATE_DIR/podman.log" 'run -d --name hermes-agent-test' 'bootstrap-test starts the dedicated test container'
-assert_contains "$STATE_DIR/podman.log" 'hermes-agent-local-test gateway run' 'bootstrap-test uses the dedicated test image for the gateway'
-assert_contains "$STATE_DIR/podman.log" 'exec -i --workdir /workspace hermes-agent-test hermes doctor' 'bootstrap-test opens Hermes by execing inside the dedicated test container'
-assert_not_contains "$STATE_DIR/podman.log" 'hermes-agent-ezirius' 'bootstrap-test does not touch the live ezirius container'
-assert_not_contains "$STATE_DIR/podman.log" 'mock-hermes-image' 'bootstrap-test does not use the live image name'
-test ! -e "$HERMES_BASE_ROOT/test/workspace/old.txt"
-
-ERR_FILE="$(mktemp)"
-if PATH="$MOCK_BIN:$PATH" HERMES_BASE_ROOT=/ HERMES_IMAGE_NAME=hermes-agent-local-test "$ROOT/scripts/shared/bootstrap-test" doctor >/dev/null 2> "$ERR_FILE"; then
-  printf 'assertion failed: bootstrap-test should reject HERMES_BASE_ROOT=/\n' >&2
-  exit 1
-fi
-assert_contains "$ERR_FILE" 'bootstrap-test refuses to operate with HERMES_BASE_ROOT=/' 'bootstrap-test refuses unsafe root-level destructive cleanup'
-rm -f "$ERR_FILE"
-
-reset_state
-write_file "$STATE_DIR/image_exists" '1'
-write_file "$STATE_DIR/image_id" 'image-a'
-write_file "$STATE_DIR/container_exists" '1'
-write_file "$STATE_DIR/container_running" 'false'
-write_file "$STATE_DIR/container_image_id" 'image-a'
-"$ROOT/scripts/shared/hermes-start" ezirius > "$STATE_DIR/start-reuse.out"
-assert_contains "$STATE_DIR/start-reuse.out" 'Starting existing stopped Hermes Gateway container:' 'start reports restarting stopped gateway container'
-
-reset_state
-write_file "$STATE_DIR/container_exists" '1'
-"$ROOT/scripts/shared/hermes-status" ezirius > "$STATE_DIR/status.out"
-assert_contains "$STATE_DIR/podman.log" 'inspect hermes-agent-ezirius' 'status inspects the exact target container'
-
-reset_state
-write_file "$STATE_DIR/container_exists" '1'
-"$ROOT/scripts/shared/hermes-logs" ezirius > "$STATE_DIR/logs.out"
-assert_contains "$STATE_DIR/podman.log" 'logs hermes-agent-ezirius' 'logs streams container logs'
-
-reset_state
-write_file "$STATE_DIR/image_exists" '1'
-write_file "$STATE_DIR/image_id" 'image-a'
-write_file "$STATE_DIR/container_exists" '1'
-write_file "$STATE_DIR/container_running" 'true'
-write_file "$STATE_DIR/container_image_id" 'image-a'
+export HERMES_SELECT_INDEX=1
 "$ROOT/scripts/shared/hermes-open" ezirius doctor > "$STATE_DIR/open.out"
-assert_contains "$STATE_DIR/podman.log" 'exec -i --workdir /workspace hermes-agent-ezirius hermes doctor' 'open execs Hermes inside the running workspace container when no tty is available'
-assert_not_contains "$STATE_DIR/podman.log" 'run -i --rm' 'open should not launch a second transient container against the same Hermes home'
+assert_contains "$STATE_DIR/podman.log" 'exec -i --workdir /workspace hermes-agent-ezirius-production-1.2.3-main hermes doctor' 'open execs hermes inside selected container'
 
-reset_state
-write_file "$STATE_DIR/image_exists" '1'
-write_file "$STATE_DIR/image_id" 'image-b'
-write_file "$STATE_DIR/container_exists" '1'
-write_file "$STATE_DIR/container_running" 'true'
-write_file "$STATE_DIR/container_image_id" 'image-a'
-"$ROOT/scripts/shared/hermes-open" ezirius doctor > "$STATE_DIR/open-stale.out"
-assert_contains "$STATE_DIR/open-stale.out" 'Workspace container image is stale; reconciling with the current shared image' 'open detects stale running gateway image'
-assert_contains "$STATE_DIR/podman.log" 'rm -f hermes-agent-ezirius' 'open reconciles stale gateway image through hermes-start'
-assert_contains "$STATE_DIR/podman.log" 'run -d --name hermes-agent-ezirius' 'open restarts the gateway container before execing the CLI inside it'
+export HERMES_SELECT_INDEX=1,1
+"$ROOT/scripts/shared/hermes-bootstrap" ezirius --help > "$STATE_DIR/bootstrap.out"
+assert_contains "$STATE_DIR/podman.log" 'exec -i --workdir /workspace hermes-agent-ezirius-production-1.2.3-main hermes --help' 'hermes-bootstrap selects target then opens hermes'
 
-reset_state
-write_file "$STATE_DIR/container_exists" '1'
-write_file "$STATE_DIR/container_running" 'true'
-HERMES_FORCE_EXEC_TTY=1 OSTYPE=darwin24 "$ROOT/scripts/shared/hermes-open" ezirius chat > "$STATE_DIR/open-darwin.out"
-assert_contains "$STATE_DIR/podman.log" 'script -q /dev/null podman exec -it --workdir /workspace hermes-agent-ezirius hermes chat' 'open uses script tty wrapper for interactive podman exec on macOS'
+export HERMES_SELECT_INDEX=1
+"$ROOT/scripts/shared/hermes-shell" ezirius pwd > "$STATE_DIR/shell.out"
+assert_contains "$STATE_DIR/podman.log" 'exec -i --workdir /workspace hermes-agent-ezirius-production-1.2.3-main pwd' 'shell runs explicit command in container'
 
-reset_state
-write_file "$STATE_DIR/image_exists" '1'
-write_file "$STATE_DIR/image_id" 'image-a'
-write_file "$STATE_DIR/container_exists" '1'
-write_file "$STATE_DIR/container_running" 'true'
-write_file "$STATE_DIR/container_image_id" 'image-a'
-"$ROOT/scripts/shared/hermes-shell" ezirius > "$STATE_DIR/shell.out"
-assert_contains "$STATE_DIR/podman.log" 'exec -i --workdir /workspace hermes-agent-ezirius /bin/bash' 'shell execs /bin/bash inside the running workspace container when no tty is available'
-assert_not_contains "$STATE_DIR/podman.log" 'run -i --rm' 'shell should not launch a second transient container against the same Hermes home'
+export HERMES_SELECT_INDEX=1
+"$ROOT/scripts/shared/hermes-logs" ezirius -f > "$STATE_DIR/logs.out"
+assert_contains "$STATE_DIR/podman.log" 'logs hermes-agent-ezirius-production-1.2.3-main -f' 'logs forwards podman args'
 
-reset_state
-write_file "$STATE_DIR/image_exists" '1'
-write_file "$STATE_DIR/image_id" 'image-b'
-write_file "$STATE_DIR/container_exists" '1'
-write_file "$STATE_DIR/container_running" 'true'
-write_file "$STATE_DIR/container_image_id" 'image-a'
-"$ROOT/scripts/shared/hermes-shell" ezirius > "$STATE_DIR/shell-stale.out"
-assert_contains "$STATE_DIR/shell-stale.out" 'Workspace container image is stale; reconciling with the current shared image' 'shell detects stale running gateway image'
-assert_contains "$STATE_DIR/podman.log" 'rm -f hermes-agent-ezirius' 'shell reconciles stale gateway image through hermes-start'
-assert_contains "$STATE_DIR/podman.log" 'run -d --name hermes-agent-ezirius' 'shell restarts the gateway container before execing the shell inside it'
+export HERMES_SELECT_INDEX=1
+"$ROOT/scripts/shared/hermes-status" ezirius > "$STATE_DIR/status.out"
+assert_contains "$STATE_DIR/podman.log" 'inspect hermes-agent-ezirius-production-1.2.3-main' 'status inspects selected container'
 
-reset_state
-write_file "$STATE_DIR/container_exists" '1'
-write_file "$STATE_DIR/container_running" 'true'
-HERMES_FORCE_EXEC_TTY=1 OSTYPE=darwin24 "$ROOT/scripts/shared/hermes-shell" ezirius > "$STATE_DIR/shell-darwin.out"
-assert_contains "$STATE_DIR/podman.log" 'script -q /dev/null podman exec -it --workdir /workspace hermes-agent-ezirius /bin/bash' 'shell uses script tty wrapper for interactive podman exec on macOS'
-
-reset_state
-write_file "$STATE_DIR/container_exists" '1'
-write_file "$STATE_DIR/container_running" 'true'
+export HERMES_SELECT_INDEX=1
 "$ROOT/scripts/shared/hermes-stop" ezirius > "$STATE_DIR/stop.out"
-assert_contains "$STATE_DIR/stop.out" 'Stopping Hermes Gateway container:' 'stop reports running container stop'
-assert_contains "$STATE_DIR/podman.log" 'stop hermes-agent-ezirius' 'stop calls podman stop'
+assert_contains "$STATE_DIR/podman.log" 'stop hermes-agent-ezirius-production-1.2.3-main' 'stop stops selected container'
 
-reset_state
-write_file "$STATE_DIR/container_exists" '1'
-"$ROOT/scripts/shared/hermes-remove" ezirius > "$STATE_DIR/remove.out"
-assert_contains "$STATE_DIR/remove.out" 'Removing Hermes container:' 'remove reports container removal'
-assert_contains "$STATE_DIR/podman.log" 'rm -f hermes-agent-ezirius' 'remove calls podman rm'
+SECOND_IMAGE_REF="mock-hermes-image:test-main-improve-production-and-testing-20260407-101500-deadbee"
+add_image "$SECOND_IMAGE_REF" test main improve-production-and-testing 20260407-101500-deadbee
+add_container "hermes-agent-nala-test-main-improve-production-and-testing" test main improve-production-and-testing 20260407-101500-deadbee false "$SECOND_IMAGE_REF"
 
-echo "Runtime behaviour checks passed"
+export HERMES_SELECT_INDEX=3
+"$ROOT/scripts/shared/hermes-remove" image > "$STATE_DIR/remove-image.out"
+assert_contains "$STATE_DIR/podman.log" 'image rm -f mock-hermes-image:production-1.2.3-main-20260408-153210-ab12cd3' 'remove image removes selected image'
+
+export HERMES_SELECT_INDEX=3
+"$ROOT/scripts/shared/hermes-remove" container > "$STATE_DIR/remove-container.out"
+assert_contains "$STATE_DIR/podman.log" 'rm -f hermes-agent-ezirius-production-1.2.3-main' 'remove container removes selected container'
+
+echo "Runtime checks passed"

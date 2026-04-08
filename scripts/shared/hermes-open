@@ -8,42 +8,33 @@ source "$ROOT/lib/shell/common.sh"
 if [[ ${1-} == "--help" ]]; then
   show_help "Usage: $(basename "$0") <workspace-name> [hermes args...]
 
-Run the Hermes CLI by execing into the running Hermes Gateway container for one
-workspace.
+Open Hermes by execing into the running container for one workspace.
 
 Arguments:
-- <workspace-name>           required workspace name under HERMES_BASE_ROOT
-- [hermes args...]          optional Hermes CLI args passed directly to hermes
-
-Common Hermes args:
-- setup                     run the setup wizard
-- model                     choose provider and model
-- tools                     configure enabled tools
-- doctor                    diagnose local problems
-- gateway                   run gateway subcommands
-- chat                      start the chat interface
-
-If no Hermes args are provided, the bare Hermes CLI is started."
+- <workspace-name>           workspace name"
 fi
 
 if [[ $# -lt 1 ]]; then
   usage_error "$(basename "$0") requires at least 1 argument: <workspace-name> [hermes args...]"
 fi
 
-require_podman
-resolve_workspace "$1"
-shift
+WORKSPACE="$1"
+shift 1
 
-container_exists || fail "container not found: $HERMES_CONTAINER_NAME (run $SCRIPT_DIR/hermes-start first)"
-container_running || fail "container not running: $HERMES_CONTAINER_NAME (run $SCRIPT_DIR/hermes-start first)"
+require_workspace_name "$WORKSPACE"
 
-if [[ "$(container_image_id)" != "$(image_id)" ]]; then
-  echo "==> Workspace container image is stale; reconciling with the current shared image"
-  "$SCRIPT_DIR/hermes-start" "$WORKSPACE_NAME" >/dev/null
+if [[ $# -ge 2 && ( "$1" == "production" || "$1" == "test" ) ]]; then
+  LANE="$1"
+  REF="$2"
+  shift 2
+  resolve_build_target "$WORKSPACE" "$LANE" "$REF"
+else
+  TARGET_ROW="$(pick_workspace_target "$WORKSPACE" container)"
+  IFS=$'\t' read -r HERMES_CONTAINER_NAME _ _ _ _ _ <<< "$TARGET_ROW"
 fi
+
+container_exists || fail "container not found: $HERMES_CONTAINER_NAME (run hermes-build and hermes-start first)"
 
 RUN_ARGS=(--workdir /workspace "$HERMES_CONTAINER_NAME" hermes)
-if [[ $# -gt 0 ]]; then
-  RUN_ARGS+=("$@")
-fi
+RUN_ARGS+=("$@")
 exec_podman_interactive_command exec "${RUN_ARGS[@]}"

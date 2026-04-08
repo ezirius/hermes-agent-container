@@ -17,9 +17,8 @@ replace_once(
     '        config.platforms[Platform.MATRIX].extra["encryption"] = matrix_e2ee\n',
     '        matrix_e2ee = os.getenv("MATRIX_ENCRYPTION", "").lower() in ("true", "1", "yes")\n'
     '        config.platforms[Platform.MATRIX].extra["encryption"] = matrix_e2ee\n'
-    '        config.platforms[Platform.MATRIX].extra["device_id"] = os.getenv("MATRIX_DEVICE_ID", "")\n'
     '        config.platforms[Platform.MATRIX].extra["allowed_users"] = os.getenv("MATRIX_ALLOWED_USERS", "")\n',
-    "Matrix env overrides for device_id and allowed_users",
+    "Matrix env override for allowed_users",
 )
 
 path.write_text(text, encoding="utf-8")

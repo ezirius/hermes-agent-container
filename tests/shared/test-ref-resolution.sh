@@ -39,44 +39,14 @@ PY
 SERVER_PID=$!
 
 for _ in $(seq 1 50); do
-  if [[ -s "$PORT_FILE" ]]; then
-    break
-  fi
+  [[ -s "$PORT_FILE" ]] && break
   sleep 0.1
 done
-[[ -s "$PORT_FILE" ]] || { printf 'assertion failed: test HTTP server did not publish a port\n' >&2; exit 1; }
 API_BASE="http://127.0.0.1:$(cat "$PORT_FILE")"
 
-for _ in $(seq 1 50); do
-  if python3 - "$API_BASE" >/dev/null 2>&1 <<'PY'
-import sys, urllib.request
-with urllib.request.urlopen(sys.argv[1] + '/repos/NousResearch/hermes-agent/releases/latest', timeout=1) as response:
-    raise SystemExit(0 if response.status == 200 else 1)
-PY
-  then
-    break
-  fi
-  sleep 0.1
-done
-
-assert_eq 'v1.2.3' "$(HERMES_REF=latest-release HERMES_GITHUB_API_BASE=$API_BASE resolve_hermes_ref)" 'latest release is preferred when available'
-assert_eq 'NousResearch/hermes-agent' "$(github_repo_slug 'https://github.com/NousResearch/hermes-agent/')" 'github slug strips a trailing slash'
-assert_eq 'NousResearch/hermes-agent' "$(github_repo_slug 'ssh://git@github.com/NousResearch/hermes-agent.git')" 'github slug accepts ssh GitHub URLs'
-assert_eq 'NousResearch/hermes-agent' "$(github_repo_slug 'https://git.example.com/NousResearch/hermes-agent.git')" 'github repo slug parsing accepts GitHub Enterprise-style HTTPS URLs'
-assert_eq 'NousResearch/hermes-agent' "$(github_repo_slug 'git@git.example.com:NousResearch/hermes-agent.git')" 'github repo slug parsing accepts generic ssh scp-style URLs'
-ERR_FILE="$TMPDIR/repo-slug.err"
-if bash -lc 'set -euo pipefail; source "$1"; github_repo_slug "$2"' _ "$ROOT/lib/shell/common.sh" 'https://github.com/NousResearch/hermes-agent/tree/main' >/dev/null 2> "$ERR_FILE"; then
-  printf 'assertion failed: malformed GitHub URLs should be rejected\n' >&2
-  exit 1
-fi
-grep -Fq 'could not derive owner/repo from HERMES_REPO_URL' "$ERR_FILE"
-rm -f "$TMPDIR/repos/NousResearch/hermes-agent/releases/latest"
-ERR_FILE="$TMPDIR/release.err"
-if HERMES_REF=latest-release HERMES_GITHUB_API_BASE=$API_BASE resolve_hermes_ref >/dev/null 2> "$ERR_FILE"; then
-  printf 'assertion failed: latest-release should fail when the release endpoint is unavailable\n' >&2
-  exit 1
-fi
-grep -Fq 'Latest upstream Hermes release not found' "$ERR_FILE"
+assert_eq 'v1.2.3' "$(HERMES_REF=latest HERMES_GITHUB_API_BASE=$API_BASE resolve_hermes_ref)" 'latest release resolves through latest'
+assert_eq 'main' "$(HERMES_REF=main resolve_hermes_ref)" 'main stays main'
 assert_eq 'v9.9.9-test' "$(HERMES_REF=v9.9.9-test resolve_hermes_ref)" 'explicit ref bypasses remote resolution'
+assert_eq $'v1.2.3\tv1.2.3' "$(HERMES_REF=latest HERMES_GITHUB_API_BASE=$API_BASE resolve_hermes_selection)" 'latest selection returns display and git ref'
 
 echo "Ref resolution checks passed"

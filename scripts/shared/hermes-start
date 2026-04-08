@@ -6,12 +6,15 @@ ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$ROOT/lib/shell/common.sh"
 
 if [[ ${1-} == "--help" ]]; then
-  show_help "Usage: $(basename "$0") <workspace-name>
+  show_help "Usage: $(basename "$0") <workspace-name> [hermes args...]
 
 Start or reuse the Hermes Gateway container for one workspace.
 
 Arguments:
 - <workspace-name>           required workspace name under HERMES_BASE_ROOT
+
+Container naming:
+  hermes-agent-<workspace>-<lane>-<upstream>-<wrapper>
 
 The wrapper mounts:
 - <workspace>/hermes-home -> /opt/data
@@ -20,32 +23,72 @@ The wrapper mounts:
 The image uses an upstream-style entrypoint. Hermes reads /opt/data/.env and
 /opt/data/config.yaml when the gateway process starts. The container is created
 with restart policy unless-stopped so crashes and host reboots recover
-automatically, while a manual stop stays stopped."
+automatically.
+
+Image naming:
+  hermes-agent-local:<lane>-<upstream>-<wrapper>-<commitstamp>
+
+Build labels (ref, lane, wrapper, fingerprint) are automatically injected from the image."
 fi
 
-if [[ $# -ne 1 ]]; then
-  usage_error "$(basename "$0") requires exactly 1 argument: <workspace-name>"
+if [[ $# -lt 1 || $# -gt 3 ]]; then
+  usage_error "$(basename "$0") requires 1 argument for picker mode or 3 explicit arguments: <workspace-name> [lane] [upstream]"
+fi
+
+WORKSPACE="$1"
+shift 1
+
+require_workspace_name "$WORKSPACE"
+
+if [[ $# -ge 2 ]]; then
+  LANE="$1"
+  REF="$2"
+  shift 2
+else
+  TARGET_ROW="$(pick_workspace_target "$WORKSPACE" target)"
+  IFS=$'\t' read -r _ LANE REF HERMES_WRAPPER_CONTEXT HERMES_COMMITSTAMP _ <<< "$TARGET_ROW"
+fi
+
+if [[ "$LANE" != "production" && "$LANE" != "test" ]]; then
+  fail "lane must be 'production' or 'test', got: $LANE"
+fi
+
+if [[ "$REF" == "latest" || "$REF" == "main" ]]; then
+  : # valid
+elif [[ "$REF" =~ ^[v]?[0-9]+[.][0-9]+[.][0-9]+ ]]; then
+  : # semver-style version
+elif [[ "$REF" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+  : # generic tag-like ref
+else
+  fail "ref must be 'latest', 'main', or a version string (e.g. 0.7.0, v0.21.0), got: $REF"
 fi
 
 require_podman
-resolve_workspace "$1"
+resolve_build_target "$WORKSPACE" "$LANE" "$REF" "${HERMES_WRAPPER_CONTEXT:-}" "${HERMES_COMMITSTAMP:-}"
+
 ensure_workspace_dirs
 migrate_legacy_workspace_layout
 ensure_workspace_dirs
 
-if ! image_exists; then
-  fail "image not found: $HERMES_IMAGE_NAME (run $SCRIPT_DIR/hermes-build first)"
+if ! image_exists "$HERMES_IMAGE"; then
+  fail "image not found: $HERMES_IMAGE (run hermes-build $LANE $REF first)"
 fi
+
+IMAGE_LANE="$(podman image inspect -f '{{index .Labels "hermes.lane"}}' "$HERMES_IMAGE" 2>/dev/null || echo "unknown")"
+IMAGE_REF="$(podman image inspect -f '{{index .Labels "hermes.ref"}}' "$HERMES_IMAGE" 2>/dev/null || echo "unknown")"
+IMAGE_FP="$(podman image inspect -f '{{index .Labels "hermes.wrapper_fingerprint"}}' "$HERMES_IMAGE" 2>/dev/null || echo "unknown")"
 
 if container_exists; then
   if container_running; then
-    if [[ "$(container_image_id)" == "$(image_id)" ]]; then
+    CURRENT_IMG="$(container_image_id)"
+    TARGET_IMG="$(image_id "$HERMES_IMAGE" 2>/dev/null || true)"
+    if [[ "$CURRENT_IMG" == "$TARGET_IMG" ]]; then
       echo "==> Hermes Gateway container already running: $HERMES_CONTAINER_NAME"
       exit 0
     fi
     echo "==> Recreating running Hermes Gateway container with updated local image: $HERMES_CONTAINER_NAME"
     podman rm -f "$HERMES_CONTAINER_NAME" >/dev/null
-  elif [[ "$(container_image_id)" != "$(image_id)" ]]; then
+  elif [[ "$(container_image_id)" != "$(image_id "$HERMES_IMAGE" 2>/dev/null || true)" ]]; then
     echo "==> Removing existing Hermes Gateway container with old image: $HERMES_CONTAINER_NAME"
     podman rm -f "$HERMES_CONTAINER_NAME" >/dev/null
   else
@@ -62,7 +105,19 @@ RUN_ARGS=(podman run -d \
   --restart unless-stopped \
   -v "$HERMES_HOME_DIR:/opt/data" \
   -v "$HERMES_WORKSPACE_DIR:/workspace" \
-  -w /workspace)
-RUN_ARGS+=("$HERMES_IMAGE_NAME" gateway run)
+  -w /workspace \
+  --label "hermes.workspace=${WORKSPACE_NAME}" \
+  --label "hermes.lane=${IMAGE_LANE}" \
+  --label "hermes.ref=${IMAGE_REF}" \
+  --label "hermes.wrapper_context=${HERMES_WRAPPER_CONTEXT}" \
+  --label "hermes.commitstamp=${HERMES_COMMITSTAMP}" \
+  -e "HERMES_BUILD_LANE=${IMAGE_LANE}" \
+  -e "HERMES_BUILD_REF=${IMAGE_REF}" \
+  -e "HERMES_BUILD_FINGERPRINT=${IMAGE_FP}")
+RUN_ARGS+=("$HERMES_IMAGE" gateway run)
 "${RUN_ARGS[@]}" >/dev/null
 echo "==> Hermes Gateway container started: $HERMES_CONTAINER_NAME"
+
+if [[ $# -gt 0 ]]; then
+  exec "$SCRIPT_DIR/hermes-open" "$WORKSPACE" "$LANE" "$REF" "$@"
+fi

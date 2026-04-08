@@ -1,278 +1,80 @@
 # Hermes Agent container wrapper
 
-This repo is a multi-workspace wrapper around the latest upstream Hermes Agent release.
+This repo is the multi-workspace Podman-first wrapper for running Hermes Agent in a persistent container.
 
-Upstream already provides the official single-container Docker image and Docker workflow. This repo exists to add:
+Upstream Hermes already provides an official single-container Docker workflow. This repo exists to add:
 
 - named workspace containers
 - separate persistent Hermes state and project workspace mounts
-- release tracking with local rebuild fingerprinting
-- Podman-first lifecycle commands and macOS TTY handling
-
-By default, the image resolves the latest upstream GitHub release and builds from the latest upstream release tag. It does not use upstream main as the default baseline.
-
-## When to use this wrapper
-
-Use upstream Docker directly when you want one standard Hermes container with upstream defaults.
-
-Use this wrapper when you want:
-
-- multiple named workspaces on one host
-- a dedicated `/workspace` mount alongside Hermes state
-- wrapper commands for build, upgrade, start, open, logs, and status
-- Podman-first operation
+- immutable image tags and deterministic container names
+- interactive target selection so users do not have to type long identity arguments
+- shared scripts that work on both macOS and Linux
 
 ## Layout
 
-- `config/containers/` contains the shared image Dockerfile
-- `config/patches/` contains wrapper-specific upstream patching
-- `docs/shared/usage.md` contains workflow notes
-- `lib/shell/common.sh` contains shared shell helpers
-- `scripts/shared/` contains the wrapper commands
-- `tests/shared/` contains the shell test suite
+- `config/shared/` holds shared wrapper configuration
+- `config/macos/` is reserved for macOS-only config if needed
+- `config/containers/` holds shared container build files
+- `config/patches/` holds wrapper-specific upstream patches
+- `docs/shared/` holds shared documentation for macOS and Linux
+- `docs/macos/` is reserved for macOS-only docs if needed
+- `lib/shell/` holds shared shell helpers
+- `scripts/shared/` holds shared wrapper commands
+- `scripts/macos/` is reserved for macOS-only helper commands if needed
+- `tests/shared/` holds the shared shell test suite
+- `tests/macos/` is reserved for macOS-only tests if needed
 
-## Quick start
+`shared` means the files are intended to work on both macOS and Linux. `macos` means macOS-only.
 
-1. Create the workspace directory and env file:
+## Current status
 
-   `mkdir -p "${HERMES_BASE_ROOT:-$HOME/Documents/Ezirius/.applications-data/.hermes-agent}/ezirius/hermes-home" && touch "${HERMES_BASE_ROOT:-$HOME/Documents/Ezirius/.applications-data/.hermes-agent}/ezirius/hermes-home/.env"`
+This worktree now follows the newer immutable-image multi-workspace model for the shared build and runtime scripts.
 
-2. Put Hermes secrets such as provider keys in `hermes-home/.env`.
+The detailed implementation plan lives in:
 
-3. Put non-secret configuration such as model selection, base URLs, provider routing, MCP settings, and other runtime config in `hermes-home/config.yaml`.
+- `docs/shared/implementation-plan.md`
 
-4. Start Hermes:
+The shared usage document reflects the current script contracts:
 
-   `./scripts/shared/bootstrap ezirius`
+- `docs/shared/usage.md`
 
-`bootstrap` builds the shared local Hermes image from the latest upstream release by default, upgrades it if the requested upstream source changed or the local wrapper image recipe changed, starts the Hermes Gateway container for the selected workspace, and then opens Hermes interactively.
+## Command set
 
-Common forwarded `bootstrap` examples:
+- `hermes-bootstrap`
+- `hermes-build`
+- `hermes-start`
+- `hermes-open`
+- `hermes-shell`
+- `hermes-logs`
+- `hermes-status`
+- `hermes-stop`
+- `hermes-remove`
 
-- `./scripts/shared/bootstrap ezirius setup`
-- `./scripts/shared/bootstrap ezirius model`
-- `./scripts/shared/bootstrap ezirius doctor`
+## Key decisions already made
 
-Common `bootstrap-test` examples:
+- production builds only run from the canonical main checkout
+- test builds may run from canonical main or from a worktree
+- upstream selector values are `main`, `latest`, or an explicit upstream version name
+- image tags are immutable and include lane, upstream, wrapper, and wrapper commit identity
+- container names are human-readable and deterministic
+- Ubuntu LTS and Node LTS are pinned in config, and `hermes-build` checks whether newer LTS versions exist
+- `hermes-bootstrap` and `hermes-start` select from existing project targets for a workspace, while `hermes-open`, `hermes-shell`, `hermes-logs`, `hermes-status`, and `hermes-stop` operate on existing project containers for a workspace
+- there is no `hermes-upgrade` command and no `bootstrap-test`
 
-- `./scripts/shared/bootstrap-test`
-- `./scripts/shared/bootstrap-test doctor`
+## Matrix and patches
 
-Host requirements:
+Upstream Hermes `0.8.0` now covers most of the broad Matrix wrapper patch surface.
 
-- Podman
-- network access for release resolution and image builds
-- a writable host base directory at `HERMES_BASE_ROOT` (default: `$HOME/Documents/Ezirius/.applications-data/.hermes-agent`)
+Current patch state:
 
-The Hermes gateway and CLI do not need to be installed on the host.
+- removed `apply-hermes-matrix-upload-filesize.py`
+- removed `apply-hermes-matrix-encrypted-media.py`
+- removed `apply-hermes-matrix-auto-verification.py`
+- kept `apply-hermes-matrix-device-id.py` because the wrapper must support stable password-login Matrix identity via `MATRIX_USER_ID`, `MATRIX_PASSWORD`, and `MATRIX_DEVICE_ID`
+- reduced `apply-hermes-matrix-config-overrides.py` to the narrow `MATRIX_ALLOWED_USERS` remainder
 
-## Workspace layout
+## Current source of truth
 
-Each workspace lives under `HERMES_BASE_ROOT` with this host layout:
+Use the detailed shared implementation plan for the full rationale and remaining follow-up work:
 
-```text
-<workspace-root>/
-├── hermes-home/
-│   ├── .env
-│   ├── config.yaml
-│   ├── cron/
-│   ├── sessions/
-│   ├── logs/
-│   ├── memories/
-│   ├── skills/
-│   ├── pairing/
-│   ├── hooks/
-│   ├── cache/
-│   │   ├── images/
-│   │   └── audio/
-│   └── platforms/
-│       └── whatsapp/
-│           └── session/
-└── workspace/
-    └── ...your own workspace files...
-```
-
-The scripts create the workspace root and runtime directories automatically. New workspaces follow the latest upstream release layout under `hermes-home`, including consolidated cache paths like `cache/images`, `cache/audio`, and `platforms/whatsapp/session`. Hermes runs with `/opt/data` mapped to `<workspace-root>/hermes-home` and `/workspace` mapped to `<workspace-root>/workspace`.
-
-On first run, the wrapper seeds `.env`, `config.yaml`, `SOUL.md`, and `AGENTS.md` into `hermes-home` when they are missing. The wrapper also patches upstream context discovery so the operative default `AGENTS.md` is the host-backed `/opt/data/AGENTS.md`, not only the internal upstream checkout copy. Other project-local context files under `/workspace` still load normally, but a project-local `AGENTS.md` does not override the host-backed one unless you remove or replace `/opt/data/AGENTS.md`.
-
-In practice that means:
-
-- editing `hermes-home/.env` or `hermes-home/config.yaml` does not require an image rebuild
-- stopping and starting the workspace container is enough for Hermes to read updated config
-- rebuilding is only needed when the wrapper image recipe changes or when you want a newer upstream release
-
-## Wrapper workspaces versus upstream profiles
-
-These are not the same thing.
-
-- wrapper workspace: this repo’s host-level unit of isolation; one named container, one `hermes-home`, one mounted project workspace
-- upstream profile: Hermes’s internal isolation layer inside one Hermes home
-
-Default recommendation:
-- use one wrapper workspace with the upstream default profile
-- use upstream profiles inside a wrapper workspace only when you explicitly want a second isolation layer
-
-## Workflow
-
-- `hermes-build` ensures the shared image exists
-- `hermes-upgrade` rebuilds the shared image when the requested upstream release changed or when the local wrapper image recipe changed
-- `hermes-start` starts or reuses the local Hermes Gateway container only
-- `hermes-open` runs the Hermes CLI by execing into the running gateway container
-- `bootstrap` performs the full `build -> upgrade -> start -> open` flow
-- `bootstrap-test` performs a destructive full fresh test-lane build and open against the dedicated `test` workspace and `hermes-agent-local-test` image
-- by default, `hermes-build` and `hermes-upgrade` resolve the latest upstream Hermes release tag and fail clearly if no upstream release is available
-- repeated `bootstrap` runs keep the wrapper aligned with the latest upstream release and the current wrapper image recipe
-- if you set `HERMES_REF` to an explicit tag or branch, `hermes-upgrade` compares that literal ref only
-- the gateway container is created with Podman restart policy `unless-stopped`
-- on macOS hosts, interactive `hermes-open` and `hermes-shell` calls can wrap Podman TTY allocation with `script`
-
-Container lifecycle details:
-
-- if the workspace container already exists and is stopped on the same image, `hermes-start` uses `podman start`
-- if the image changed, `hermes-start` removes the old container and recreates it on the new image
-- because Hermes reads `/opt/data/.env` and `/opt/data/config.yaml` on process start, a plain stop/start is enough for config changes in those files
-- for image-recipe changes, the normal path is `hermes-upgrade` then `hermes-start <workspace>`; you do not need `hermes-remove` unless you explicitly want manual container cleanup first
-
-The local wrapper build fingerprint covers all non-generated image recipe files under `config/containers/` and `config/patches/`. That means local image-behaviour changes such as the entrypoint, host AGENTS precedence patch, or compatibility-link setup trigger a rebuild automatically on the next `hermes-upgrade` or `bootstrap`, even when the upstream release tag has not changed.
-
-## MCP and gateway capabilities
-
-Upstream now includes `hermes mcp serve`, official Docker support, profiles, and broader messaging-platform support.
-
-Within this wrapper, those capabilities are available by execing Hermes commands inside the running workspace container. For example:
-
-- `./scripts/shared/hermes-open ezirius mcp serve`
-- `./scripts/shared/hermes-open ezirius gateway`
-- `./scripts/shared/hermes-open ezirius chat`
-
-This wrapper does not add separate MCP orchestration; it simply exposes the latest-release Hermes CLI inside the workspace container model.
-
-The image now follows an upstream-style entrypoint model: the container bootstraps state under `/opt/data` and then runs Hermes with the forwarded command.
-
-## Matrix
-
-The image includes Matrix support so Matrix and encrypted Matrix rooms can work inside the container, but the wrapper now stays close to upstream `matrix-nio` behaviour rather than replacing the adapter wholesale.
-
-Important packaging note:
-
-- the current upstream release line used by this wrapper does not include Matrix in `hermes-agent[all]`
-- the wrapper therefore installs `hermes-agent[matrix]` explicitly during image build
-- `libolm-dev` remains installed in the image because encrypted Matrix support still depends on it
-
-For Matrix state persistence and trust establishment:
-
-- upstream Hermes now resolves Matrix storage through `HERMES_HOME`
-- the wrapper also links `/home/hermes/.hermes` to `/opt/data` as a compatibility fallback for any remaining hardcoded `~/.hermes` paths
-- the wrapper patches the upstream `matrix-nio` adapter to honour `MATRIX_DEVICE_ID` for password login so one intended Matrix device can be reused instead of churning fresh login devices
-- the wrapper also carries auto-verification wiring for `MATRIX_ALLOWED_USERS`, so explicitly trusted Matrix users can trigger the verification flow for the stable Hermes device
-- `MATRIX_ALLOWED_USERS` is an exact comma-separated allowlist of Matrix user IDs; wildcard `*` is intentionally not supported in this wrapper
-- for safety, auto-verification is disabled unless `MATRIX_ALLOWED_USERS` is configured
-- the wrapper also patches the upstream `matrix-nio` adapter to register encrypted media callbacks, decrypt Matrix attachment payloads with `nio.crypto.decrypt_attachment`, cache decrypted local files, and avoid bogus ciphertext URL fallbacks for encrypted voice/image/file/video events
-- this improves device trust establishment; it does not import or sync room keys from Element or any other Matrix client
-- if you import room keys or otherwise change Matrix crypto material while Hermes is already running, restart the workspace container once so the live client reloads state from disk
-
-### Matrix validation on the real Podman host
-
-This repository can validate the wrapper mechanics locally, but full Matrix verification still requires a real image build and a live homeserver test from the actual Podman host.
-
-Recommended validation sequence:
-
-1. Rebuild the shared image:
-
-   `./scripts/shared/hermes-build`
-
-2. Start the workspace container:
-
-   `./scripts/shared/hermes-start ezirius`
-
-3. Open a shell inside the image-backed workspace and inspect the upstream-led install:
-
-   `./scripts/shared/hermes-shell ezirius`
-
-   Then verify at minimum:
-
-   - `python3 -c "import nio"` succeeds
-   - `/home/hermes/hermes-agent/gateway/platforms/matrix.py` remains the upstream adapter file rather than a wrapper-managed replacement
-   - `python3 -m py_compile /home/hermes/hermes-agent/gateway/platforms/matrix.py` succeeds
-
-4. Configure Matrix credentials in `hermes-home/.env` and restart the container.
-
-   For password-based Matrix auth, set a fixed device ID explicitly, for example:
-
-   ```env
-   MATRIX_USER_ID=@yourbot:matrix.org
-   MATRIX_PASSWORD=***
-   MATRIX_DEVICE_ID=HERMES
-   MATRIX_ALLOWED_USERS=@trusted-user:matrix.org
-   MATRIX_ENCRYPTION=true
-   ```
-
-   Leave `MATRIX_ALLOWED_USERS` unset only if you intentionally want auto-verification disabled.
-
-5. Run encrypted smoke tests against the real homeserver:
-
-   - encrypted DM text in -> Hermes reply out
-   - encrypted group-room text in -> Hermes reply out
-   - encrypted threaded reply in -> threaded reply out
-   - encrypted voice note in -> STT and Hermes reply
-   - encrypted image in -> media path works
-   - encrypted file in -> document path works
-   - encrypted video in -> media path works
-   - a user listed in `MATRIX_ALLOWED_USERS` can initiate verification and Hermes completes the flow
-   - device appears in Element/Element X as one stable Hermes device
-   - restart the container and confirm the same device persists
-   - if old encrypted history still fails to decrypt, treat that separately as room-key continuity/import work
-
-6. Follow logs during the test run and confirm the verification markers appear:
-
-   `./scripts/shared/hermes-logs ezirius -f`
-
-   Expected verification markers from the trusted user path:
-
-   - `Matrix: auto-accepting verification from ...`
-   - `Matrix: received verification key from ..., confirming...`
-   - `Matrix: verification MAC received from ...`
-
-Until that host-side validation is complete, treat Matrix support here as wrapper-aligned and locally validated, but not yet fully production-proven on the target homeserver.
-
-## Security notes
-
-This repo containerises Hermes itself. Inside that container, Hermes can safely use its normal `local` terminal backend because the container is the execution boundary.
-
-If you want Hermes to use Docker as an internal execution backend too, that is a separate configuration choice. Do not casually forward extra secrets or runtime sockets into nested backends. Keep secrets in `.env`, keep non-secret config in `config.yaml`, and only expose additional credentials deliberately.
-
-## Useful commands
-
-- `./scripts/shared/hermes-build`
-- `./scripts/shared/hermes-upgrade`
-- `./scripts/shared/bootstrap-test [hermes args...]`
-- `./scripts/shared/hermes-start <workspace-name>`
-- `./scripts/shared/hermes-open <workspace-name> [hermes args...]`
-- `./scripts/shared/hermes-status <workspace-name>`
-- `./scripts/shared/hermes-logs <workspace-name> [podman args...]`
-- `./scripts/shared/hermes-shell <workspace-name>`
-- `./scripts/shared/hermes-stop <workspace-name>`
-- `./scripts/shared/hermes-remove <workspace-name>`
-
-Useful `hermes-open` examples:
-
-- `./scripts/shared/hermes-open ezirius setup`
-- `./scripts/shared/hermes-open ezirius model`
-- `./scripts/shared/hermes-open ezirius tools`
-- `./scripts/shared/hermes-open ezirius doctor`
-- `./scripts/shared/hermes-open ezirius gateway`
-- `./scripts/shared/hermes-open ezirius chat`
-- `./scripts/shared/hermes-open ezirius mcp serve`
-
-Useful `hermes-logs` examples:
-
-- `./scripts/shared/hermes-logs ezirius -f`
-- `./scripts/shared/hermes-logs ezirius --tail 100`
-- `./scripts/shared/hermes-logs ezirius --since 10m`
-
-All wrapper scripts support `--help` and document their argument contracts there.
-
-## Verification
-
-Run `tests/shared/test-all.sh` to execute the repository shell checks in one command.
+- `docs/shared/implementation-plan.md`

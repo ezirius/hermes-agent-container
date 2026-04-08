@@ -9,7 +9,6 @@ INSTALL_DIR="$TMPDIR/install"
 HERMES_HOME_DIR="$TMPDIR/hermes-home"
 MOCK_BIN="$TMPDIR/bin"
 LOG_FILE="$TMPDIR/hermes.log"
-SYNC_MARKER="$TMPDIR/skills-sync.log"
 mkdir -p "$INSTALL_DIR/docker" "$INSTALL_DIR/tools" "$INSTALL_DIR/skills" "$MOCK_BIN"
 
 printf 'OPENAI_API_KEY=example\n' > "$INSTALL_DIR/.env.example"
@@ -33,14 +32,6 @@ chmod +x "$MOCK_BIN/hermes"
 assert_contains() {
   local file="$1" needle="$2" message="$3"
   grep -Fq -- "$needle" "$file" || { printf 'assertion failed: %s\nmissing: %s\n' "$message" "$needle" >&2; exit 1; }
-}
-
-assert_not_contains() {
-  local file="$1" needle="$2" message="$3"
-  if grep -Fq -- "$needle" "$file"; then
-    printf 'assertion failed: %s\nunexpected: %s\n' "$message" "$needle" >&2
-    exit 1
-  fi
 }
 
 PATH="$MOCK_BIN:$PATH" HERMES_HOME="$HERMES_HOME_DIR" INSTALL_DIR="$INSTALL_DIR" HERMES_TEST_LOG="$LOG_FILE" \

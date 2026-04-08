@@ -6,43 +6,194 @@ ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$ROOT/lib/shell/common.sh"
 
 if [[ ${1-} == "--help" ]]; then
-  show_help "Usage: $(basename "$0")
+  show_help "Usage: $(basename "$0") <lane> [upstream]
 
-Ensure the shared Hermes image exists.
+Build a Hermes image for one lane and upstream version.
 
-This command resolves the latest upstream Hermes GitHub release by default,
-builds the local image when missing, and exits without rebuilding when the
-image already exists."
+Arguments:
+- <lane>                     'production' or 'test'
+- [upstream]                 exact upstream version tag, 'latest', or 'main'
+-                             if omitted, the script prompts with 'main' and
+-                             the currently available upstream release tags
+
+The image gets one immutable tag only:
+  <lane>-<upstream>-<wrapper>-<commitstamp>
+
+Examples:
+  production-v2026.4.8-main-20260408-153210-ab12cd3
+  test-main-improve-production-and-testing-20260408-153210-ab12cd3
+
+Production builds must run from the canonical main checkout. Test builds may
+run from the canonical main checkout or a worktree.
+
+The build checks whether the pinned Ubuntu LTS and Node LTS versions in config
+are behind the current latest LTS releases and prompts before continuing if an
+update is available."
 fi
 
-if [[ $# -ne 0 ]]; then
-  usage_error "$(basename "$0") takes no arguments"
+if [[ $# -lt 1 || $# -gt 2 ]]; then
+  usage_error "$(basename "$0") requires 1 or 2 arguments: <lane> [upstream]"
+fi
+
+LANE="$1"
+RAW_REF="${2:-}"
+
+if [[ "$LANE" != "production" && "$LANE" != "test" ]]; then
+  fail "lane must be 'production' or 'test', got: $LANE"
+fi
+
+if [[ "$LANE" == "production" && -z "${HERMES_SKIP_PRODUCTION_GUARDS:-}" ]]; then
+  require_canonical_main_checkout "$ROOT"
+fi
+
+require_clean_git "$ROOT"
+
+if [[ -z "$RAW_REF" ]]; then
+  require_podman
+  OPTION_LABELS=("main")
+  OPTION_VALUES=("main")
+  while IFS=$'\t' read -r label value; do
+    [[ -n "$label" && -n "$value" ]] || continue
+    OPTION_LABELS+=("$label")
+    OPTION_VALUES+=("$value")
+  done < <(list_upstream_release_options)
+  SELECTED_LABEL="$(prompt_select_option "Select upstream Hermes version" "${OPTION_LABELS[@]}")"
+  for i in "${!OPTION_LABELS[@]}"; do
+    if [[ "${OPTION_LABELS[i]}" == "$SELECTED_LABEL" ]]; then
+      RAW_REF="${OPTION_VALUES[i]}"
+      break
+    fi
+  done
+  [[ -n "$RAW_REF" ]] || fail "failed to resolve selected upstream Hermes version"
+fi
+
+if [[ "$RAW_REF" == "latest" || "$RAW_REF" == "main" ]]; then
+  :
+elif [[ "$RAW_REF" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+  :
+else
+  fail "upstream must be 'latest', 'main', or an exact upstream version name, got: $RAW_REF"
 fi
 
 require_podman
 
-if image_exists; then
-  echo "==> Hermes image already exists: $HERMES_IMAGE_NAME"
-  echo "==> Skipping rebuild"
-  exit 0
+if [[ "$LANE" == "production" ]]; then
+  if [[ -z "${HERMES_SKIP_PRODUCTION_GUARDS:-}" ]]; then
+    require_main_pushed "$ROOT"
+  fi
 fi
 
-HERMES_REF="$(resolve_hermes_ref)"
+if [[ -z "${HERMES_SKIP_UBUNTU_LTS_CHECK:-}" ]]; then
+  LATEST_UBUNTU_LTS="$(latest_ubuntu_lts_version)"
+else
+  LATEST_UBUNTU_LTS="$HERMES_UBUNTU_LTS_VERSION"
+fi
+
+if [[ "$LATEST_UBUNTU_LTS" != "$HERMES_UBUNTU_LTS_VERSION" ]]; then
+  UBUNTU_ACTION="$(prompt_select_option "Ubuntu LTS update available (pinned: $HERMES_UBUNTU_LTS_VERSION, latest: $LATEST_UBUNTU_LTS)" "keep current pin" "update pin and continue" "cancel")"
+  case "$UBUNTU_ACTION" in
+    "keep current pin")
+      ;;
+    "update pin and continue")
+      python3 - "$ROOT/config/shared/hermes.conf" "$LATEST_UBUNTU_LTS" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+version = sys.argv[2]
+text = path.read_text(encoding='utf-8')
+old = None
+for line in text.splitlines():
+    if line.startswith('HERMES_UBUNTU_LTS_VERSION='):
+        old = line
+        break
+if old is None:
+    raise SystemExit('missing HERMES_UBUNTU_LTS_VERSION in config/shared/hermes.conf')
+path.write_text(text.replace(old, f'HERMES_UBUNTU_LTS_VERSION="{version}"', 1), encoding='utf-8')
+PY
+      HERMES_UBUNTU_LTS_VERSION="$LATEST_UBUNTU_LTS"
+      ;;
+    "cancel")
+      exit 1
+      ;;
+  esac
+fi
+
+if [[ -z "${HERMES_SKIP_NODE_LTS_CHECK:-}" ]]; then
+  LATEST_NODE_LTS="$(latest_node_lts_version)"
+else
+  LATEST_NODE_LTS="$HERMES_NODE_LTS_VERSION"
+fi
+
+if [[ "$LATEST_NODE_LTS" != "$HERMES_NODE_LTS_VERSION" ]]; then
+  NODE_ACTION="$(prompt_select_option "Node LTS update available (pinned: $HERMES_NODE_LTS_VERSION, latest: $LATEST_NODE_LTS)" "keep current pin" "update pin and continue" "cancel")"
+  case "$NODE_ACTION" in
+    "keep current pin")
+      ;;
+    "update pin and continue")
+      python3 - "$ROOT/config/shared/hermes.conf" "$LATEST_NODE_LTS" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+version = sys.argv[2]
+text = path.read_text(encoding='utf-8')
+old = None
+for line in text.splitlines():
+    if line.startswith('HERMES_NODE_LTS_VERSION='):
+        old = line
+        break
+if old is None:
+    raise SystemExit('missing HERMES_NODE_LTS_VERSION in config/shared/hermes.conf')
+path.write_text(text.replace(old, f'HERMES_NODE_LTS_VERSION="{version}"', 1), encoding='utf-8')
+PY
+      HERMES_NODE_LTS_VERSION="$LATEST_NODE_LTS"
+      ;;
+    "cancel")
+      exit 1
+      ;;
+  esac
+fi
+
+SELECTION="$(resolve_hermes_selection "$RAW_REF")"
+RESOLVED_REF="${SELECTION%%$'\t'*}"
+BUILD_REF="${SELECTION#*$'\t'}"
+WRAPPER_CONTEXT="$(current_wrapper_context "$ROOT")"
+COMMITSTAMP="$(git_commit_stamp "$ROOT")"
 LOCAL_BUILD_FINGERPRINT="$(local_build_fingerprint)"
-export HERMES_REF
+
+TAG_ARGS=()
+while IFS= read -r tag; do
+  TAG_ARGS+=(-t "$HERMES_IMAGE_NAME:$tag")
+done < <(build_tags_for_lane "$LANE" "$RESOLVED_REF" "$WRAPPER_CONTEXT" "$COMMITSTAMP")
 
 echo "==> Building Hermes image"
 echo "==> Upstream repo: $HERMES_REPO_URL"
-echo "==> Upstream ref:  $HERMES_REF"
+echo "==> Upstream ref:  $RESOLVED_REF"
+echo "==> Git ref:       $BUILD_REF"
+echo "==> Lane:          $LANE"
+echo "==> Wrapper:       $WRAPPER_CONTEXT"
+echo "==> Commit stamp:  $COMMITSTAMP"
+echo "==> Ubuntu LTS:    $HERMES_UBUNTU_LTS_VERSION"
+echo "==> Node LTS:      $HERMES_NODE_LTS_VERSION"
 echo "==> Local build fingerprint: $LOCAL_BUILD_FINGERPRINT"
+echo "==> Tags:"
+for tag in "${TAG_ARGS[@]}"; do
+  echo "     ${tag#-t }"
+done
+
 podman build \
   --pull=always \
+  "${TAG_ARGS[@]}" \
   --label "hermes.repo_url=$HERMES_REPO_URL" \
-  --label "hermes.ref=$HERMES_REF" \
+  --label "hermes.ref=$RESOLVED_REF" \
+  --label "hermes.git_ref=$BUILD_REF" \
   --label "hermes.wrapper_fingerprint=$LOCAL_BUILD_FINGERPRINT" \
+  --label "hermes.lane=$LANE" \
+  --label "hermes.wrapper_context=$WRAPPER_CONTEXT" \
+  --label "hermes.commitstamp=$COMMITSTAMP" \
   --build-arg "HERMES_REPO_URL=$HERMES_REPO_URL" \
-  --build-arg "HERMES_REF=$HERMES_REF" \
-  -t "$HERMES_IMAGE_NAME" \
+  --build-arg "HERMES_REF=$BUILD_REF" \
+  --build-arg "UBUNTU_LTS_VERSION=$HERMES_UBUNTU_LTS_VERSION" \
+  --build-arg "NODE_LTS_VERSION=$HERMES_NODE_LTS_VERSION" \
   -f "$ROOT/config/containers/Dockerfile" \
   "$ROOT"
 echo "==> Hermes image build complete"

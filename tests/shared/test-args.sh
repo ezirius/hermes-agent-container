@@ -21,63 +21,35 @@ assert_rejects() {
   assert_contains "$err" "$expected" "script reports invalid usage clearly"
 }
 
-assert_rejects "$ROOT/scripts/shared/hermes-build" 'takes no arguments' unexpected
-assert_rejects "$ROOT/scripts/shared/hermes-upgrade" 'takes no arguments' unexpected
-assert_rejects "$ROOT/scripts/shared/hermes-start" 'requires exactly 1 argument'
-assert_rejects "$ROOT/scripts/shared/hermes-start" 'requires exactly 1 argument' one two
+assert_rejects "$ROOT/scripts/shared/hermes-build" 'requires 1 or 2 arguments'
+assert_rejects "$ROOT/scripts/shared/hermes-build" "lane must be 'production' or 'test'" badlane
+assert_rejects "$ROOT/scripts/shared/hermes-build" 'upstream must be' production 'has spaces'
+
+assert_rejects "$ROOT/scripts/shared/hermes-start" 'requires 1 argument for picker mode or 3 explicit arguments'
 assert_rejects "$ROOT/scripts/shared/hermes-open" 'requires at least 1 argument'
-assert_rejects "$ROOT/scripts/shared/hermes-status" 'requires exactly 1 argument'
-assert_rejects "$ROOT/scripts/shared/hermes-shell" 'requires exactly 1 argument'
+assert_rejects "$ROOT/scripts/shared/hermes-shell" 'requires at least 1 argument'
 assert_rejects "$ROOT/scripts/shared/hermes-stop" 'requires exactly 1 argument'
-assert_rejects "$ROOT/scripts/shared/hermes-remove" 'requires exactly 1 argument'
-assert_rejects "$ROOT/scripts/shared/bootstrap" 'requires at least 1 argument'
+assert_rejects "$ROOT/scripts/shared/hermes-status" 'requires exactly 1 argument'
 assert_rejects "$ROOT/scripts/shared/hermes-logs" 'requires at least 1 argument'
+assert_rejects "$ROOT/scripts/shared/hermes-remove" 'requires exactly 1 argument'
+assert_rejects "$ROOT/scripts/shared/hermes-remove" "mode must be 'container' or 'image'" bad
+assert_rejects "$ROOT/scripts/shared/hermes-bootstrap" 'requires at least 1 argument'
 
 HELP_FILE="$TMPDIR/help.out"
-"$ROOT/scripts/shared/bootstrap-test" --help > "$HELP_FILE"
-assert_contains "$HELP_FILE" 'destructive rebuild of the dedicated test lane' 'bootstrap-test help documents destructive test behaviour'
-assert_contains "$HELP_FILE" 'workspace: test' 'bootstrap-test help documents fixed test workspace'
-assert_contains "$HELP_FILE" 'image: hermes-agent-local-test' 'bootstrap-test help documents fixed test image'
-assert_contains "$HELP_FILE" 'does not touch live workspaces such as ezirius' 'bootstrap-test help documents live-lane isolation'
-assert_contains "$HELP_FILE" 'Any extra arguments are forwarded to hermes-open.' 'bootstrap-test help documents forwarded Hermes args'
-
-
-HELP_FILE="$TMPDIR/help.out"
-"$ROOT/scripts/shared/bootstrap" --help > "$HELP_FILE"
-assert_contains "$HELP_FILE" 'Common forwarded Hermes args:' 'bootstrap help documents key forwarded arguments'
-
 "$ROOT/scripts/shared/hermes-build" --help > "$HELP_FILE"
-assert_contains "$HELP_FILE" 'Ensure the shared Hermes image exists.' 'build help is available'
+assert_contains "$HELP_FILE" 'Usage: hermes-build <lane> [upstream]' 'build help documents optional upstream arg'
+assert_contains "$HELP_FILE" 'The image gets one immutable tag only:' 'build help documents immutable image tag model'
 
-"$ROOT/scripts/shared/hermes-upgrade" --help > "$HELP_FILE"
-assert_contains "$HELP_FILE" 'or when the local wrapper image recipe changed.' 'upgrade help is available'
-
-"$ROOT/scripts/shared/bootstrap" --help > "$HELP_FILE"
-assert_contains "$HELP_FILE" 'local wrapper image recipe changed' 'bootstrap help documents local rebuild triggers'
-assert_contains "$HELP_FILE" 'execing into the running workspace container' 'bootstrap help documents exec-based open flow'
-
-"$ROOT/scripts/shared/hermes-open" --help > "$HELP_FILE"
-assert_contains "$HELP_FILE" 'Common Hermes args:' 'open help documents key forwarded arguments'
-assert_contains "$HELP_FILE" 'gateway                   run gateway subcommands' 'open help documents gateway forwarding'
+"$ROOT/scripts/shared/hermes-bootstrap" --help > "$HELP_FILE"
+assert_contains "$HELP_FILE" 'Usage: hermes-bootstrap <workspace-name> [hermes args...]' 'hermes-bootstrap help documents workspace-only contract'
 
 "$ROOT/scripts/shared/hermes-start" --help > "$HELP_FILE"
-assert_contains "$HELP_FILE" 'The wrapper mounts:' 'start help documents mount layout'
-assert_contains "$HELP_FILE" '/opt/data/.env and' 'start help documents upstream config loading'
-assert_contains "$HELP_FILE" 'unless-stopped' 'start help documents restart policy'
+assert_contains "$HELP_FILE" 'Image naming:' 'start help documents immutable image naming'
 
-"$ROOT/scripts/shared/hermes-logs" --help > "$HELP_FILE"
-assert_contains "$HELP_FILE" 'Common podman log args:' 'logs help documents key forwarded arguments'
-
-"$ROOT/scripts/shared/hermes-status" --help > "$HELP_FILE"
-assert_contains "$HELP_FILE" 'Show the Hermes Gateway container status' 'status help is available'
-
-"$ROOT/scripts/shared/hermes-shell" --help > "$HELP_FILE"
-assert_contains "$HELP_FILE" 'Open an interactive shell by execing into the running Hermes Gateway container' 'shell help is available'
-
-"$ROOT/scripts/shared/hermes-stop" --help > "$HELP_FILE"
-assert_contains "$HELP_FILE" 'Stop the Hermes Gateway container' 'stop help is available'
+"$ROOT/scripts/shared/hermes-open" --help > "$HELP_FILE"
+assert_contains "$HELP_FILE" 'Open Hermes by execing into the running container' 'open help is available'
 
 "$ROOT/scripts/shared/hermes-remove" --help > "$HELP_FILE"
-assert_contains "$HELP_FILE" 'Remove the Hermes Gateway container' 'remove help is available'
+assert_contains "$HELP_FILE" 'Usage: hermes-remove <container|image>' 'remove help documents mode-based contract'
 
 echo "Argument contract checks passed"
