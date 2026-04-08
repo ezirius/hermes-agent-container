@@ -14,6 +14,14 @@ assert_contains() {
   grep -Fq -- "$needle" "$file" || { printf 'assertion failed: %s\nmissing: %s\n' "$message" "$needle" >&2; exit 1; }
 }
 
+assert_not_contains() {
+  local file="$1" needle="$2" message="$3"
+  if grep -Fq -- "$needle" "$file"; then
+    printf 'assertion failed: %s\nunexpected: %s\n' "$message" "$needle" >&2
+    exit 1
+  fi
+}
+
 write_value() {
   printf '%s' "$2" > "$STATE_DIR/$1"
 }
@@ -26,7 +34,7 @@ add_image() {
   local ref="$1" lane="$2" upstream="$3" wrapper="$4" commitstamp="$5"
   touch "$STATE_DIR/image_exists_${ref//[:\/]/_}"
   printf '%s\n' "$ref" >> "$STATE_DIR/images.list"
-  write_value "image_id_${ref//[:\/]/_}" "image-${lane}-${upstream}-${wrapper}"
+  write_value "image_id_${ref//[:\/]/_}" "image-${lane}-${upstream}-${wrapper}-${commitstamp}"
   write_value "image_label_hermes_lane_${ref//[:\/]/_}" "$lane"
   write_value "image_label_hermes_ref_${ref//[:\/]/_}" "$upstream"
   write_value "image_label_hermes_wrapper_context_${ref//[:\/]/_}" "$wrapper"
@@ -80,10 +88,15 @@ case "$subcommand" in
         format="$2"; ref="$3"
         case "$format" in
           '{{ index .Labels "hermes.lane" }}') read_value "image_label_hermes_lane_${ref//[:\/]/_}" ;;
+          '{{index .Labels "hermes.lane"}}') read_value "image_label_hermes_lane_${ref//[:\/]/_}" ;;
           '{{ index .Labels "hermes.ref" }}') read_value "image_label_hermes_ref_${ref//[:\/]/_}" ;;
+          '{{index .Labels "hermes.ref"}}') read_value "image_label_hermes_ref_${ref//[:\/]/_}" ;;
           '{{ index .Labels "hermes.wrapper_context" }}') read_value "image_label_hermes_wrapper_context_${ref//[:\/]/_}" ;;
+          '{{index .Labels "hermes.wrapper_context"}}') read_value "image_label_hermes_wrapper_context_${ref//[:\/]/_}" ;;
           '{{ index .Labels "hermes.commitstamp" }}') read_value "image_label_hermes_commitstamp_${ref//[:\/]/_}" ;;
+          '{{index .Labels "hermes.commitstamp"}}') read_value "image_label_hermes_commitstamp_${ref//[:\/]/_}" ;;
           '{{ index .Labels "hermes.wrapper_fingerprint" }}') read_value "image_label_hermes_wrapper_fingerprint_${ref//[:\/]/_}" ;;
+          '{{index .Labels "hermes.wrapper_fingerprint"}}') read_value "image_label_hermes_wrapper_fingerprint_${ref//[:\/]/_}" ;;
           '{{.Id}}') read_value "image_id_${ref//[:\/]/_}" ;;
         esac ;;
       rm)
@@ -200,18 +213,62 @@ assert_contains "$STATE_DIR/build.out" 'Building Hermes image' 'build reports bu
 assert_contains "$STATE_DIR/build.out" 'Git ref:       v1.2.3' 'build reports resolved git ref'
 assert_contains "$STATE_DIR/podman.log" 'mock-hermes-image:production-1.2.3-main-20260408-153210-ab12cd3' 'build uses human upstream version in immutable image tag'
 assert_contains "$STATE_DIR/build.out" 'Node LTS:      22' 'build reports configured node lts pin'
+assert_contains "$STATE_DIR/podman.log" '--build-arg NODE_LTS_VERSION=22' 'build forwards node lts build arg'
+assert_contains "$STATE_DIR/podman.log" '--build-arg UBUNTU_LTS_VERSION=24.04' 'build forwards ubuntu lts build arg'
+
+if "$ROOT/scripts/shared/hermes-start" ezirius production 9.9.9 >/dev/null 2> "$STATE_DIR/start-missing.err"; then
+  printf 'assertion failed: hermes-start should fail when the requested image does not exist\n' >&2
+  exit 1
+fi
+assert_contains "$STATE_DIR/start-missing.err" 'image not found:' 'start fails clearly when image is missing'
 
 reset_state
 IMAGE_REF="mock-hermes-image:production-1.2.3-main-20260408-153210-ab12cd3"
 add_image "$IMAGE_REF" production 1.2.3 main 20260408-153210-ab12cd3
+OLDER_IMAGE_REF="mock-hermes-image:production-1.2.3-main-20260407-090000-deadbee"
+add_image "$OLDER_IMAGE_REF" production 1.2.3 main 20260407-090000-deadbee
+add_container "hermes-agent-ezirius-production-1.2.3-main" production 1.2.3 main 20260407-090000-deadbee false "$OLDER_IMAGE_REF"
+
+TARGET_ROWS="$(source "$ROOT/lib/shell/common.sh"; workspace_image_targets ezirius | sort_targets)"
+assert_contains <(printf '%s\n' "$TARGET_ROWS") $'mock-hermes-image:production-1.2.3-main-20260408-153210-ab12cd3\tproduction\t1.2.3\tmain\t20260408-153210-ab12cd3\timage only' 'newer image is not misreported as attached to an older container'
+assert_contains <(printf '%s\n' "$TARGET_ROWS") $'mock-hermes-image:production-1.2.3-main-20260407-090000-deadbee\tproduction\t1.2.3\tmain\t20260407-090000-deadbee\tstopped' 'older image reports stopped when the matching container uses it'
 
 export HERMES_SELECT_INDEX=1
 "$ROOT/scripts/shared/hermes-start" ezirius > "$STATE_DIR/start.out"
 assert_contains "$STATE_DIR/podman.log" 'run -d --name hermes-agent-ezirius-production-1.2.3-main' 'start creates workspace container from selected image'
+assert_contains "$STATE_DIR/podman.log" '--label hermes.workspace=ezirius' 'start labels containers with workspace identity'
+assert_contains "$STATE_DIR/podman.log" '--label hermes.commitstamp=20260408-153210-ab12cd3' 'start labels containers with commit stamp'
+assert_contains "$STATE_DIR/podman.log" '-e HERMES_BUILD_FINGERPRINT=fp' 'start forwards image fingerprint into runtime env'
+
+reset_state
+add_image "$IMAGE_REF" production 1.2.3 main 20260408-153210-ab12cd3
+add_container "hermes-agent-ezirius-production-1.2.3-main" production 1.2.3 main 20260408-153210-ab12cd3 false "$IMAGE_REF"
+"$ROOT/scripts/shared/hermes-start" ezirius production 1.2.3 > "$STATE_DIR/start-existing.out"
+assert_contains "$STATE_DIR/podman.log" 'start hermes-agent-ezirius-production-1.2.3-main' 'start reuses stopped matching container'
+assert_not_contains "$STATE_DIR/podman.log" 'run -d --name hermes-agent-ezirius-production-1.2.3-main' 'start does not recreate matching stopped container'
+
+reset_state
+add_image "$IMAGE_REF" production 1.2.3 main 20260408-153210-ab12cd3
+add_container "hermes-agent-ezirius-production-1.2.3-main" production 1.2.3 main 20260408-153210-ab12cd3 true "$IMAGE_REF"
+"$ROOT/scripts/shared/hermes-start" ezirius production 1.2.3 > "$STATE_DIR/start-running.out"
+assert_not_contains "$STATE_DIR/podman.log" 'run -d --name hermes-agent-ezirius-production-1.2.3-main' 'start does not recreate matching running container'
+assert_not_contains "$STATE_DIR/podman.log" 'rm -f hermes-agent-ezirius-production-1.2.3-main' 'start does not remove matching running container'
+
+reset_state
+add_image "$IMAGE_REF" production 1.2.3 main 20260408-153210-ab12cd3
+LEGACY_IMAGE_REF="mock-hermes-image:production-1.2.3-main-20260407-010203-oldold1"
+add_image "$LEGACY_IMAGE_REF" production 1.2.3 main 20260407-010203-oldold1
+add_container "hermes-agent-ezirius-production-1.2.3-main" production 1.2.3 main 20260407-010203-oldold1 true "$LEGACY_IMAGE_REF"
+"$ROOT/scripts/shared/hermes-start" ezirius production 1.2.3 > "$STATE_DIR/start-recreate.out"
+assert_contains "$STATE_DIR/podman.log" 'rm -f hermes-agent-ezirius-production-1.2.3-main' 'start removes running container when image changed'
+assert_contains "$STATE_DIR/podman.log" 'run -d --name hermes-agent-ezirius-production-1.2.3-main' 'start recreates container on updated image'
 
 export HERMES_SELECT_INDEX=1
 "$ROOT/scripts/shared/hermes-open" ezirius doctor > "$STATE_DIR/open.out"
 assert_contains "$STATE_DIR/podman.log" 'exec -i --workdir /workspace hermes-agent-ezirius-production-1.2.3-main hermes doctor' 'open execs hermes inside selected container'
+
+"$ROOT/scripts/shared/hermes-open" ezirius production 1.2.3 doctor > "$STATE_DIR/open-explicit.out"
+assert_contains "$STATE_DIR/podman.log" 'exec -i --workdir /workspace hermes-agent-ezirius-production-1.2.3-main hermes doctor' 'open explicit mode resolves deterministic container name'
 
 export HERMES_SELECT_INDEX=1,1
 "$ROOT/scripts/shared/hermes-bootstrap" ezirius --help > "$STATE_DIR/bootstrap.out"
@@ -220,6 +277,10 @@ assert_contains "$STATE_DIR/podman.log" 'exec -i --workdir /workspace hermes-age
 export HERMES_SELECT_INDEX=1
 "$ROOT/scripts/shared/hermes-shell" ezirius pwd > "$STATE_DIR/shell.out"
 assert_contains "$STATE_DIR/podman.log" 'exec -i --workdir /workspace hermes-agent-ezirius-production-1.2.3-main pwd' 'shell runs explicit command in container'
+
+export HERMES_SELECT_INDEX=1
+"$ROOT/scripts/shared/hermes-shell" ezirius > "$STATE_DIR/shell-default.out"
+assert_contains "$STATE_DIR/podman.log" 'exec -i --workdir /workspace hermes-agent-ezirius-production-1.2.3-main /bin/bash' 'shell defaults to /bin/bash when no command is provided'
 
 export HERMES_SELECT_INDEX=1
 "$ROOT/scripts/shared/hermes-logs" ezirius -f > "$STATE_DIR/logs.out"
@@ -233,6 +294,13 @@ export HERMES_SELECT_INDEX=1
 "$ROOT/scripts/shared/hermes-stop" ezirius > "$STATE_DIR/stop.out"
 assert_contains "$STATE_DIR/podman.log" 'stop hermes-agent-ezirius-production-1.2.3-main' 'stop stops selected container'
 
+reset_state
+add_image "$IMAGE_REF" production 1.2.3 main 20260408-153210-ab12cd3
+add_container "hermes-agent-ezirius-production-1.2.3-main" production 1.2.3 main 20260408-153210-ab12cd3 false "$IMAGE_REF"
+export HERMES_SELECT_INDEX=1
+"$ROOT/scripts/shared/hermes-stop" ezirius > "$STATE_DIR/stop-already.out"
+assert_not_contains "$STATE_DIR/podman.log" 'stop hermes-agent-ezirius-production-1.2.3-main' 'stop does not call podman stop for an already stopped container'
+
 SECOND_IMAGE_REF="mock-hermes-image:test-main-improve-production-and-testing-20260407-101500-deadbee"
 add_image "$SECOND_IMAGE_REF" test main improve-production-and-testing 20260407-101500-deadbee
 add_container "hermes-agent-nala-test-main-improve-production-and-testing" test main improve-production-and-testing 20260407-101500-deadbee false "$SECOND_IMAGE_REF"
@@ -244,5 +312,30 @@ assert_contains "$STATE_DIR/podman.log" 'image rm -f mock-hermes-image:productio
 export HERMES_SELECT_INDEX=3
 "$ROOT/scripts/shared/hermes-remove" container > "$STATE_DIR/remove-container.out"
 assert_contains "$STATE_DIR/podman.log" 'rm -f hermes-agent-ezirius-production-1.2.3-main' 'remove container removes selected container'
+
+reset_state
+IMAGE_NEW_EZIRIUS="mock-hermes-image:production-1.2.3-main-20260408-153210-ab12cd3"
+IMAGE_OLD_EZIRIUS="mock-hermes-image:production-1.2.3-main-20260407-101500-deadbee"
+IMAGE_NEW_NALA="mock-hermes-image:test-main-improve-production-and-testing-20260409-080000-beef123"
+add_image "$IMAGE_NEW_EZIRIUS" production 1.2.3 main 20260408-153210-ab12cd3
+add_image "$IMAGE_OLD_EZIRIUS" production 1.2.3 main 20260407-101500-deadbee
+add_image "$IMAGE_NEW_NALA" test main improve-production-and-testing 20260409-080000-beef123
+add_container "hermes-agent-ezirius-production-1.2.3-main" production 1.2.3 main 20260408-153210-ab12cd3 true "$IMAGE_NEW_EZIRIUS"
+add_container "hermes-agent-nala-test-main-improve-production-and-testing" test main improve-production-and-testing 20260409-080000-beef123 false "$IMAGE_NEW_NALA"
+export HERMES_SELECT_INDEX=1
+"$ROOT/scripts/shared/hermes-remove" image > "$STATE_DIR/remove-image-all-but-newest.out"
+assert_contains "$STATE_DIR/podman.log" 'image rm -f mock-hermes-image:production-1.2.3-main-20260407-101500-deadbee' 'remove image all-but-newest removes superseded image'
+assert_not_contains "$STATE_DIR/podman.log" 'image rm -f mock-hermes-image:production-1.2.3-main-20260408-153210-ab12cd3' 'remove image all-but-newest keeps newest associated workspace image'
+assert_not_contains "$STATE_DIR/podman.log" 'image rm -f mock-hermes-image:test-main-improve-production-and-testing-20260409-080000-beef123' 'remove image all-but-newest keeps newest image for other workspace'
+
+reset_state
+add_container "hermes-agent-ezirius-production-1.2.3-main" production 1.2.3 main 20260408-153210-ab12cd3 true "$IMAGE_REF"
+add_container "hermes-agent-ezirius-production-1.2.2-main" production 1.2.2 main 20260407-101500-deadbee false "$SECOND_IMAGE_REF"
+add_container "hermes-agent-nala-test-main-improve-production-and-testing" test main improve-production-and-testing 20260409-080000-beef123 false "$SECOND_IMAGE_REF"
+export HERMES_SELECT_INDEX=1
+"$ROOT/scripts/shared/hermes-remove" container > "$STATE_DIR/remove-container-all-but-newest.out"
+assert_contains "$STATE_DIR/podman.log" 'rm -f hermes-agent-ezirius-production-1.2.2-main' 'remove container all-but-newest removes older workspace container'
+assert_not_contains "$STATE_DIR/podman.log" 'rm -f hermes-agent-ezirius-production-1.2.3-main' 'remove container all-but-newest keeps newest workspace container'
+assert_not_contains "$STATE_DIR/podman.log" 'rm -f hermes-agent-nala-test-main-improve-production-and-testing' 'remove container all-but-newest keeps newest container for other workspace'
 
 echo "Runtime checks passed"

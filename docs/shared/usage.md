@@ -29,6 +29,8 @@ If `upstream` is omitted, the script prompts with:
 - `main`
 - available upstream release tags, newest to oldest
 
+If `latest` is selected, the wrapper resolves it from the upstream release list, uses the display label in the immutable image tag, and stores the exact upstream git ref separately in image metadata.
+
 Production builds:
 
 - must run from the canonical main checkout
@@ -42,7 +44,7 @@ Test builds:
 
 ## Workspace commands
 
-The workspace-facing commands now take only a workspace name:
+The default workspace-facing commands take a workspace name and use interactive project-scoped selection:
 
 - `./scripts/shared/hermes-bootstrap <workspace> [hermes args...]`
 - `./scripts/shared/hermes-start <workspace> [hermes args...]`
@@ -56,6 +58,13 @@ The workspace-facing commands now take only a workspace name:
 
 `hermes-open`, `hermes-shell`, `hermes-logs`, `hermes-status`, and `hermes-stop` select only existing containers for a workspace.
 
+The current shared scripts also support explicit targeting where a picker is not desired:
+
+- `./scripts/shared/hermes-start <workspace> <lane> <upstream>`
+- `./scripts/shared/hermes-open <workspace> <lane> <upstream> [hermes args...]`
+
+In explicit mode, the wrapper derives the deterministic container name and immutable image reference from the supplied `workspace`, `lane`, and `upstream` values together with the current wrapper context and commit identity.
+
 Picker ordering:
 
 - production first
@@ -68,11 +77,13 @@ Picker display shows:
 - lane
 - upstream
 - wrapper
+- commit stamp
 - status
 
 Status values are:
 
 - target picker: `running`, `stopped`, `image only`
+- container picker: `running`, `stopped`
 - image removal picker: `in use`, `unused`
 
 ## Remove
@@ -91,7 +102,7 @@ The remove picker shows:
 `All, but newest` means:
 
 - for containers: leave the newest container per workspace
-- for images: leave the newest image per workspace where a workspace association exists through existing containers; otherwise keep the newest image overall
+- for images: leave the newest image per workspace where a workspace association exists through existing containers; if no image can be associated to a workspace through current containers, keep the newest image overall
 
 ## Workspace state
 

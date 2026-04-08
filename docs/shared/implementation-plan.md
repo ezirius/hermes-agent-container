@@ -101,7 +101,9 @@ Resolution:
 
 - `main` stays `main`
 - explicit version stays exactly as given
-- `latest` resolves live from upstream to the current latest upstream release tag, and that exact release name is then used in naming
+- `latest` resolves live from upstream releases to a display label plus exact git ref
+- the display label is used in immutable wrapper naming
+- the exact upstream git ref is kept separately in image metadata and build arguments
 
 Examples:
 
@@ -313,6 +315,7 @@ Behavior:
 Usage:
 
 - `hermes-start <workspace> [hermes args...]`
+- `hermes-start <workspace> <lane> <upstream>`
 
 Behavior:
 
@@ -321,12 +324,14 @@ Behavior:
 - fail with a helpful message if no built project images exist for that workspace
 - start if needed
 - forward any extra args to Hermes inside the selected running container
+- in explicit mode, bypass the picker and resolve the target directly from `workspace`, `lane`, and `upstream`
 
 ### hermes-open
 
 Usage:
 
 - `hermes-open <workspace> [hermes args...]`
+- `hermes-open <workspace> <lane> <upstream> [hermes args...]`
 
 Behavior:
 
@@ -334,6 +339,7 @@ Behavior:
 - fail with a helpful message if no matching project containers exist for that workspace
 - `exec` Hermes inside the running container
 - forward all extra args to Hermes
+- in explicit mode, bypass the picker and resolve the deterministic container name directly from `workspace`, `lane`, and `upstream`
 
 Examples:
 
@@ -449,6 +455,7 @@ Display columns:
 - lane
 - upstream
 - wrapper
+- commit stamp
 - container status
 
 Example:
@@ -468,6 +475,7 @@ Display columns should align with container display for consistency:
 - lane
 - upstream
 - wrapper
+- commit stamp
 - image usage/status
 
 Example:
@@ -477,8 +485,8 @@ Example:
 
 Status labels:
 
-- `in use`
-- `unused`
+- removal picker: `in use`, `unused`
+- workspace target picker when image-backed rows are mixed with containers: `running`, `stopped`, `image only`
 
 ### Empty Results
 

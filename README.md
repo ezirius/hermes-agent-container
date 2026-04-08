@@ -59,7 +59,24 @@ The shared usage document reflects the current script contracts:
 - container names are human-readable and deterministic
 - Ubuntu LTS and Node LTS are pinned in config, and `hermes-build` checks whether newer LTS versions exist
 - `hermes-bootstrap` and `hermes-start` select from existing project targets for a workspace, while `hermes-open`, `hermes-shell`, `hermes-logs`, `hermes-status`, and `hermes-stop` operate on existing project containers for a workspace
+- `hermes-start` and `hermes-open` also support explicit `workspace lane upstream` targeting when the user wants to bypass the picker
 - there is no `hermes-upgrade` command and no `bootstrap-test`
+
+## Command style
+
+The default workflow is workspace-first and picker-driven:
+
+- `hermes-build <lane> [upstream]`
+- `hermes-bootstrap <workspace> [hermes args...]`
+- `hermes-start <workspace> [hermes args...]`
+- `hermes-open <workspace> [hermes args...]`
+
+For power-user and scriptable flows, the current shared scripts also allow explicit target selection where implemented:
+
+- `hermes-start <workspace> <lane> <upstream>`
+- `hermes-open <workspace> <lane> <upstream> [hermes args...]`
+
+When `latest` is selected, the wrapper resolves it from upstream releases, uses the human release label in immutable image naming, and keeps the exact upstream git ref separately in image metadata.
 
 ## Matrix and patches
 

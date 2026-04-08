@@ -31,7 +31,7 @@ Image naming:
 Build labels (ref, lane, wrapper, fingerprint) are automatically injected from the image."
 fi
 
-if [[ $# -lt 1 || $# -gt 3 ]]; then
+if [[ $# -ne 1 && $# -ne 3 ]]; then
   usage_error "$(basename "$0") requires 1 argument for picker mode or 3 explicit arguments: <workspace-name> [lane] [upstream]"
 fi
 

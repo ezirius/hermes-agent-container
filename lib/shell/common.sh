@@ -28,7 +28,7 @@ HERMES_REPO_URL="${HERMES_REPO_URL:-https://github.com/NousResearch/hermes-agent
 HERMES_REF="${HERMES_REF:-latest}"
 HERMES_GITHUB_API_BASE="${HERMES_GITHUB_API_BASE:-https://api.github.com}"
 HERMES_UBUNTU_LTS_VERSION="${HERMES_UBUNTU_LTS_VERSION:-24.04}"
-HERMES_NODE_LTS_VERSION="${HERMES_NODE_LTS_VERSION:-22}"
+HERMES_NODE_LTS_VERSION="${HERMES_NODE_LTS_VERSION:-24}"
 HERMES_BASE_ROOT="${HERMES_BASE_ROOT:-$HOME/Documents/Ezirius/.applications-data/.hermes-agent}"
 
 fail() {
@@ -181,7 +181,7 @@ normalize_path() {
       printf '%s' "${HOME:?HOME is required}"
       ;;
     "~/"*)
-      printf '%s' "${HOME:?HOME is required}/${value#~/}"
+      printf '%s' "${HOME:?HOME is required}/${value#\~/}"
       ;;
     "~"*)
       fail "unsupported path form: $value (use an absolute path or ~/...)"
@@ -207,6 +207,87 @@ require_workspace_name() {
   [[ "$name" != "." ]] || fail "workspace name must not be '.'"
   [[ "$name" != ".." ]] || fail "workspace name must not be '..'"
   [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || fail "workspace name may only contain letters, numbers, dots, underscores, and hyphens"
+}
+
+is_ignorable_host_untracked_path() {
+  local path="$1"
+
+  case "$path" in
+    .DS_Store|*/.DS_Store|.AppleDouble|*/.AppleDouble|.LSOverride|*/.LSOverride|Icon$'\r'|*/Icon$'\r'|._*|*/._*|.Spotlight-V100|.Spotlight-V100/*|*/.Spotlight-V100|*/.Spotlight-V100/*|.Trashes|.Trashes/*|*/.Trashes|*/.Trashes/*|.fseventsd|.fseventsd/*|*/.fseventsd|*/.fseventsd/*)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+has_meaningful_untracked_files() {
+  local path
+
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    if ! is_ignorable_host_untracked_path "$path"; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+git_has_meaningful_worktree_changes() {
+  local git_prefix=("$@")
+  local diff_args
+  local raw_output
+  local numstat_output
+  local summary_output
+  local line
+  local additions
+  local deletions
+  local untracked_output
+
+  for diff_args in "" "--cached"; do
+    if [[ -n "$diff_args" ]]; then
+      raw_output="$("${git_prefix[@]}" diff "$diff_args" --raw --no-abbrev 2>/dev/null || true)"
+    else
+      raw_output="$("${git_prefix[@]}" diff --raw --no-abbrev 2>/dev/null || true)"
+    fi
+    [[ -n "$raw_output" ]] || continue
+
+    if [[ -n "$diff_args" ]]; then
+      numstat_output="$("${git_prefix[@]}" diff "$diff_args" --numstat 2>/dev/null || true)"
+    else
+      numstat_output="$("${git_prefix[@]}" diff --numstat 2>/dev/null || true)"
+    fi
+    while IFS=$'\t' read -r additions deletions _; do
+      [[ -n "$additions" ]] || continue
+      if [[ "$additions" != "0" || "$deletions" != "0" ]]; then
+        return 0
+      fi
+    done <<< "$numstat_output"
+
+    if [[ -n "$diff_args" ]]; then
+      summary_output="$("${git_prefix[@]}" diff "$diff_args" --summary 2>/dev/null || true)"
+    else
+      summary_output="$("${git_prefix[@]}" diff --summary 2>/dev/null || true)"
+    fi
+    if [[ -z "$summary_output" ]]; then
+      return 0
+    fi
+
+    while IFS= read -r line; do
+      [[ -n "$line" ]] || continue
+      if [[ "$line" != ' mode change '* ]]; then
+        return 0
+      fi
+    done <<< "$summary_output"
+  done
+
+  untracked_output="$("${git_prefix[@]}" ls-files --others --exclude-standard 2>/dev/null || true)"
+  if has_meaningful_untracked_files <<<"$untracked_output"; then
+    return 0
+  fi
+
+  return 1
 }
 
 current_wrapper_workdir() {
@@ -570,15 +651,13 @@ require_clean_git() {
   fi
 
   local workdir="${1:-$ROOT}"
-  local status_output
   local fallback_repo
   local fallback_ref
   local fallback_git_dir
-  local untracked
   [[ -n "$workdir" ]] || fail "ROOT must be set before calling require_clean_git"
 
-  if status_output="$(git -C "$workdir" status --porcelain 2>/dev/null)"; then
-    if [[ -n "$status_output" ]]; then
+  if git -C "$workdir" rev-parse --git-dir >/dev/null 2>&1; then
+    if git_has_meaningful_worktree_changes git -C "$workdir"; then
       fail "uncommitted changes detected in $workdir; commit or stash before building"
     fi
     return 0
@@ -593,19 +672,11 @@ require_clean_git() {
       fail "could not normalize fallback git metadata path for $fallback_repo"
     fi
 
-    if ! git --git-dir="$fallback_git_dir" --work-tree="$workdir" diff --no-ext-diff --quiet "$fallback_ref" -- 2>/dev/null; then
+    if git_has_meaningful_worktree_changes git --git-dir="$fallback_git_dir" --work-tree="$workdir"; then
       fail "uncommitted changes detected in $workdir; commit or stash before building"
     fi
 
-    untracked="$(git --git-dir="$fallback_git_dir" --work-tree="$workdir" ls-files --others --exclude-standard 2>/dev/null || true)"
-    if [[ -n "$untracked" ]]; then
-      fail "uncommitted changes detected in $workdir; commit or stash before building"
-    fi
-
-    if [[ "$(current_wrapper_context "$workdir")" == "main" ]]; then
-      status_output="$(git -C "$fallback_repo" status --porcelain 2>/dev/null || true)"
-    fi
-    if [[ -n "$status_output" ]]; then
+    if [[ "$(current_wrapper_context "$workdir")" == "main" ]] && git_has_meaningful_worktree_changes git -C "$fallback_repo"; then
       fail "uncommitted changes detected in $fallback_repo; commit or stash before building"
     fi
     return 0
@@ -955,20 +1026,36 @@ sort_targets() {
   python3 -c 'import sys; rows=[line.rstrip("\n").split("\t") for line in sys.stdin if line.strip()]; rows=sorted(rows, key=lambda row: (0 if row[1] == "production" else 1, "".join(chr(255 - ord(c)) for c in (row[4] if len(row) > 4 else "")))); [print("\t".join(row)) for row in rows]'
 }
 
+format_target_option() {
+  local lane="$1"
+  local upstream="$2"
+  local wrapper="$3"
+  local commitstamp="$4"
+  local status="$5"
+
+  printf '%-10s %-12s %-34s %-24s %s' "$lane" "$(display_upstream_ref "$upstream")" "$wrapper" "$commitstamp" "$status"
+}
+
 workspace_image_targets() {
   local workspace="$1"
   local image_ref metadata container_name status
+  local image_identity
+  local container_identity
   while IFS= read -r image_ref; do
     [[ -n "$image_ref" ]] || continue
     metadata="$(image_metadata "$image_ref" 2>/dev/null || true)"
     [[ -n "$metadata" ]] || continue
     IFS=$'\t' read -r _ lane upstream wrapper commitstamp <<< "$metadata"
     container_name="${HERMES_PROJECT_PREFIX}-${workspace}-${lane}-${upstream}-${wrapper}"
+    image_identity="$(image_id "$image_ref" 2>/dev/null || true)"
     if podman container exists "$container_name" 2>/dev/null; then
-      if [[ "$(podman inspect -f '{{.State.Running}}' "$container_name" 2>/dev/null)" == "true" ]]; then
+      container_identity="$(container_image_id "$container_name" 2>/dev/null || true)"
+      if [[ -n "$image_identity" && "$container_identity" == "$image_identity" && "$(podman inspect -f '{{.State.Running}}' "$container_name" 2>/dev/null)" == "true" ]]; then
         status="running"
-      else
+      elif [[ -n "$image_identity" && "$container_identity" == "$image_identity" ]]; then
         status="stopped"
+      else
+        status="image only"
       fi
     else
       status="image only"
@@ -1030,7 +1117,7 @@ pick_workspace_target() {
   local options=()
   for row in "${rows[@]}"; do
     IFS=$'\t' read -r value lane upstream wrapper commitstamp status <<< "$row"
-    options+=("$(printf '%-10s %-12s %-34s %s' "$lane" "$(display_upstream_ref "$upstream")" "$wrapper" "$status")")
+    options+=("$(format_target_option "$lane" "$upstream" "$wrapper" "$commitstamp" "$status")")
   done
 
   display="$(prompt_select_option "Select ${mode} for workspace '$workspace'" "${options[@]}")"
@@ -1065,7 +1152,7 @@ pick_remove_target() {
   local options=("All, but newest" "All")
   for row in "${rows[@]}"; do
     IFS=$'\t' read -r value lane upstream wrapper commitstamp status <<< "$row"
-    options+=("$(printf '%-10s %-12s %-34s %s' "$lane" "$(display_upstream_ref "$upstream")" "$wrapper" "$status")")
+    options+=("$(format_target_option "$lane" "$upstream" "$wrapper" "$commitstamp" "$status")")
   done
 
   local selected

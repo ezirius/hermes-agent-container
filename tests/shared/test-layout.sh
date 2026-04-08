@@ -31,7 +31,7 @@ test ! -e "$ROOT/config/patches/apply-hermes-matrix-upload-filesize.py"
 test ! -e "$ROOT/config/patches/apply-hermes-matrix-encrypted-media.py"
 
 grep -q '^ARG UBUNTU_LTS_VERSION=24.04$' "$ROOT/config/containers/Dockerfile"
-grep -q '^ARG NODE_LTS_VERSION=22$' "$ROOT/config/containers/Dockerfile"
+grep -q '^ARG NODE_LTS_VERSION=24$' "$ROOT/config/containers/Dockerfile"
 grep -q '^FROM ubuntu:\${UBUNTU_LTS_VERSION}$' "$ROOT/config/containers/Dockerfile"
 grep -q 'https://deb.nodesource.com/node_\${NODE_LTS_VERSION}.x' "$ROOT/config/containers/Dockerfile"
 grep -q '^  && python3 /tmp/hermes-patches/apply-hermes-matrix-device-id.py \\$' "$ROOT/config/containers/Dockerfile"
@@ -51,7 +51,7 @@ if grep -q 'apply-hermes-matrix-encrypted-media.py' "$ROOT/config/containers/Doc
 fi
 
 grep -q '^HERMES_UBUNTU_LTS_VERSION="24.04"$' "$ROOT/config/shared/hermes.conf"
-grep -q '^HERMES_NODE_LTS_VERSION="22"$' "$ROOT/config/shared/hermes.conf"
+grep -q '^HERMES_NODE_LTS_VERSION="24"$' "$ROOT/config/shared/hermes.conf"
 grep -q '^HERMES_BASE_ROOT=' "$ROOT/config/shared/hermes.conf"
 grep -q '^latest_ubuntu_lts_version() {$' "$ROOT/lib/shell/common.sh"
 grep -q '^latest_node_lts_version() {$' "$ROOT/lib/shell/common.sh"

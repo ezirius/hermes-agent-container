@@ -4,6 +4,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 source "$ROOT/lib/shell/common.sh"
 
+assert_contains() {
+  local haystack="$1"
+  local needle="$2"
+  local message="$3"
+  [[ "$haystack" == *"$needle"* ]] || { printf 'assertion failed: %s\nmissing: %s\n' "$message" "$needle" >&2; exit 1; }
+}
+
 assert_eq() {
   local expected="$1"
   local actual="$2"
@@ -13,6 +20,10 @@ assert_eq() {
 
 export HERMES_BASE_ROOT="$ROOT/.tmp/workspaces"
 rm -rf "$HERMES_BASE_ROOT"
+assert_eq "$HOME" "$(normalize_path '~')" 'normalize_path expands bare tilde'
+assert_eq "$HOME/tmp/demo" "$(normalize_path '~/tmp/demo')" 'normalize_path expands home-relative path'
+assert_eq '/tmp/demo' "$(normalize_path '/tmp/demo')" 'normalize_path leaves absolute path unchanged'
+
 resolve_workspace "ezirius"
 assert_eq "ezirius" "$WORKSPACE_NAME" "workspace name resolves"
 assert_eq "$ROOT/.tmp/workspaces/ezirius" "$WORKSPACE_ROOT" "workspace root resolves under base root"
@@ -105,6 +116,44 @@ if bash -lc 'set -euo pipefail; source "$1"; export HERMES_BASE_ROOT="~other/tmp
 fi
 grep -Fq 'unsupported path form: ~other/tmp (use an absolute path or ~/...)' "$ERR_FILE"
 
+assert_eq 'main' "$(HERMES_RELEASE_OPTION_CACHE=$'1.2.3\tv1.2.3' display_upstream_ref main)" 'display_upstream_ref preserves main'
+assert_eq '1.2.3' "$(HERMES_RELEASE_OPTION_CACHE=$'1.2.3\tv1.2.3' display_upstream_ref v1.2.3)" 'display_upstream_ref maps git tag to display label'
+assert_eq 'custom-tag' "$(HERMES_RELEASE_OPTION_CACHE=$'1.2.3\tv1.2.3' display_upstream_ref custom-tag)" 'display_upstream_ref falls back to literal ref'
+assert_eq $'beta\nalpha' "$(bash -lc 'set -euo pipefail; source "$1"; export HERMES_SELECT_INDEX=2,1; prompt_select_option prompt alpha beta; printf "\\n"; prompt_select_option prompt alpha beta' _ "$ROOT/lib/shell/common.sh")" 'prompt_select_option consumes scripted selections in order'
+
+resolve_build_target "ezirius" "test" "main" "feature-worktree" "20260408-153210-ab12cd3"
+assert_eq 'main' "$HERMES_UPSTREAM_REF" 'resolve_build_target stores resolved upstream ref'
+assert_eq 'feature-worktree' "$HERMES_WRAPPER_CONTEXT" 'resolve_build_target stores wrapper context'
+assert_eq '20260408-153210-ab12cd3' "$HERMES_COMMITSTAMP" 'resolve_build_target stores commit stamp'
+assert_eq 'hermes-agent-ezirius-test-main-feature-worktree' "$HERMES_CONTAINER_NAME" 'resolve_build_target builds deterministic container name'
+assert_eq 'hermes-agent-local:test-main-feature-worktree-20260408-153210-ab12cd3' "$HERMES_IMAGE" 'resolve_build_target builds immutable image ref'
+assert_eq 'test-main-feature-worktree-20260408-153210-ab12cd3' "$(build_tags_for_lane test main feature-worktree 20260408-153210-ab12cd3)" 'build_tags_for_lane emits immutable image tag'
+
+if ! bash -lc 'set -euo pipefail; source "$1"; is_ignorable_host_untracked_path .DS_Store' _ "$ROOT/lib/shell/common.sh"; then
+  printf 'assertion failed: .DS_Store should be treated as ignorable host junk\n' >&2
+  exit 1
+fi
+if bash -lc 'set -euo pipefail; source "$1"; is_ignorable_host_untracked_path src/app.js' _ "$ROOT/lib/shell/common.sh"; then
+  printf 'assertion failed: ordinary untracked files must not be treated as ignorable\n' >&2
+  exit 1
+fi
+if ! bash -lc 'set -euo pipefail; source "$1"; has_meaningful_untracked_files <<"EOF"
+.DS_Store
+._tmp
+EOF' _ "$ROOT/lib/shell/common.sh"; then
+  :
+else
+  printf 'assertion failed: only ignorable host files should not count as meaningful untracked files\n' >&2
+  exit 1
+fi
+if ! bash -lc 'set -euo pipefail; source "$1"; has_meaningful_untracked_files <<"EOF"
+.DS_Store
+notes.txt
+EOF' _ "$ROOT/lib/shell/common.sh"; then
+  printf 'assertion failed: meaningful untracked files should be detected\n' >&2
+  exit 1
+fi
+
 EXPECTED_BUILD_FINGERPRINT="$(python3 - "$ROOT" <<'PY'
 import hashlib
 import pathlib
@@ -160,5 +209,48 @@ if bash -lc 'set -euo pipefail; source "$1"; move_path_contents "$2" "$3"' _ "$R
 fi
 grep -Fq 'migration target already exists:' "$ERR_FILE"
 rm -rf "$CONFLICT_TMP"
+
+GIT_TMP="$(mktemp -d)"
+trap 'rm -f "$ERR_FILE"; rm -rf "$WRAP_TMP" "$GIT_TMP"' EXIT
+git init "$GIT_TMP" >/dev/null 2>&1
+git -C "$GIT_TMP" config user.name test >/dev/null 2>&1
+git -C "$GIT_TMP" config user.email test@example.com >/dev/null 2>&1
+printf 'tracked\n' > "$GIT_TMP/tracked.txt"
+git -C "$GIT_TMP" add tracked.txt
+git -C "$GIT_TMP" commit -m 'test' >/dev/null 2>&1
+
+if ! bash -lc 'set -euo pipefail; source "$1"; require_clean_git "$2"' _ "$ROOT/lib/shell/common.sh" "$GIT_TMP" >/dev/null 2> "$ERR_FILE"; then
+  printf 'assertion failed: clean git repo should pass require_clean_git\n' >&2
+  exit 1
+fi
+
+touch "$GIT_TMP/.DS_Store"
+if ! bash -lc 'set -euo pipefail; source "$1"; require_clean_git "$2"' _ "$ROOT/lib/shell/common.sh" "$GIT_TMP" >/dev/null 2> "$ERR_FILE"; then
+  printf 'assertion failed: macOS junk files should not fail require_clean_git\n' >&2
+  exit 1
+fi
+rm -f "$GIT_TMP/.DS_Store"
+
+chmod +x "$GIT_TMP/tracked.txt"
+if ! bash -lc 'set -euo pipefail; source "$1"; require_clean_git "$2"' _ "$ROOT/lib/shell/common.sh" "$GIT_TMP" >/dev/null 2> "$ERR_FILE"; then
+  printf 'assertion failed: mode-only changes should not fail require_clean_git\n' >&2
+  exit 1
+fi
+chmod -x "$GIT_TMP/tracked.txt"
+
+printf 'changed\n' > "$GIT_TMP/tracked.txt"
+if bash -lc 'set -euo pipefail; source "$1"; require_clean_git "$2"' _ "$ROOT/lib/shell/common.sh" "$GIT_TMP" >/dev/null 2> "$ERR_FILE"; then
+  printf 'assertion failed: tracked content changes should fail require_clean_git\n' >&2
+  exit 1
+fi
+grep -Fq 'uncommitted changes detected in' "$ERR_FILE"
+
+git -C "$GIT_TMP" checkout -- tracked.txt >/dev/null 2>&1
+touch "$GIT_TMP/notes.txt"
+if bash -lc 'set -euo pipefail; source "$1"; require_clean_git "$2"' _ "$ROOT/lib/shell/common.sh" "$GIT_TMP" >/dev/null 2> "$ERR_FILE"; then
+  printf 'assertion failed: meaningful untracked files should fail require_clean_git\n' >&2
+  exit 1
+fi
+grep -Fq 'uncommitted changes detected in' "$ERR_FILE"
 
 echo "Common helper checks passed"

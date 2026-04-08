@@ -34,6 +34,14 @@ assert_contains() {
   grep -Fq -- "$needle" "$file" || { printf 'assertion failed: %s\nmissing: %s\n' "$message" "$needle" >&2; exit 1; }
 }
 
+assert_not_contains() {
+  local file="$1" needle="$2" message="$3"
+  if grep -Fq -- "$needle" "$file"; then
+    printf 'assertion failed: %s\nunexpected: %s\n' "$message" "$needle" >&2
+    exit 1
+  fi
+}
+
 PATH="$MOCK_BIN:$PATH" HERMES_HOME="$HERMES_HOME_DIR" INSTALL_DIR="$INSTALL_DIR" HERMES_TEST_LOG="$LOG_FILE" \
   bash "$ROOT/config/containers/entrypoint.sh" gateway run
 
@@ -63,5 +71,18 @@ assert_contains "$HERMES_HOME_DIR/SOUL.md" 'user soul' 'entrypoint does not over
 assert_contains "$HERMES_HOME_DIR/AGENTS.md" 'user agents' 'entrypoint does not overwrite existing AGENTS.md'
 test -f "$HERMES_HOME_DIR/skills-sync-ran"
 assert_contains "$LOG_FILE" 'chat' 'entrypoint forwards later commands to hermes'
+
+rm -f "$INSTALL_DIR/tools/skills_sync.py" "$HERMES_HOME_DIR/skills-sync-ran"
+rm -f "$HERMES_HOME_DIR/config.yaml"
+: > "$LOG_FILE"
+
+PATH="$MOCK_BIN:$PATH" HERMES_HOME="$HERMES_HOME_DIR" INSTALL_DIR="$INSTALL_DIR" HERMES_TEST_LOG="$LOG_FILE" \
+  bash "$ROOT/config/containers/entrypoint.sh" doctor --verbose
+
+assert_contains "$HERMES_HOME_DIR/.env" 'user env' 'entrypoint still preserves existing .env when sync helper is absent'
+assert_contains "$HERMES_HOME_DIR/config.yaml" 'model: test-model' 'entrypoint seeds only missing config files on later runs'
+assert_contains "$LOG_FILE" 'doctor --verbose' 'entrypoint forwards arbitrary later command arguments'
+test ! -f "$HERMES_HOME_DIR/skills-sync-ran"
+assert_not_contains "$LOG_FILE" 'skills_sync.py' 'entrypoint does not invoke missing skills sync helper'
 
 echo "Entrypoint behaviour checks passed"
