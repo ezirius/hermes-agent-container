@@ -283,6 +283,15 @@ assert_eq false "$(git_is_primary_worktree "$WORKTREE_ROOT/worktrees/feature-wor
 EXPECTED_STAMP="$(git -C "$GIT_TMP" show -s --format=%cd --date=format:%Y%m%d-%H%M%S feature-worktree)-$(git -C "$GIT_TMP" rev-parse --short=7 feature-worktree)"
 assert_eq "$EXPECTED_STAMP" "$(git_commit_stamp "$WORKTREE_ROOT/worktrees/feature-worktree")" 'git_commit_stamp resolves linked worktree commit identity'
 
+DOT_WORKTREE_ROOT="$GIT_TMP/.worktrees"
+git -C "$GIT_TMP" worktree add "$DOT_WORKTREE_ROOT/dot-worktree" -b dot-worktree >/dev/null 2>&1
+assert_eq 'dot-worktree' "$(current_wrapper_context "$DOT_WORKTREE_ROOT/dot-worktree")" 'current_wrapper_context reports project-local dot-worktree basename'
+assert_eq "$GIT_TMP" "$(fallback_repo_root "$DOT_WORKTREE_ROOT/dot-worktree")" 'fallback_repo_root resolves the canonical checkout from .worktrees directories'
+assert_eq 'refs/heads/dot-worktree' "$(fallback_ref_for_workdir "$DOT_WORKTREE_ROOT/dot-worktree")" 'fallback_ref_for_workdir resolves linked branch refs from .worktrees directories'
+assert_eq false "$(git_is_primary_worktree "$DOT_WORKTREE_ROOT/dot-worktree" && printf true || printf false)" 'git_is_primary_worktree rejects .worktrees linked worktrees'
+EXPECTED_DOT_STAMP="$(git -C "$GIT_TMP" show -s --format=%cd --date=format:%Y%m%d-%H%M%S dot-worktree)-$(git -C "$GIT_TMP" rev-parse --short=7 dot-worktree)"
+assert_eq "$EXPECTED_DOT_STAMP" "$(git_commit_stamp "$DOT_WORKTREE_ROOT/dot-worktree")" 'git_commit_stamp resolves .worktrees linked worktree commit identity'
+
 REMOTE_TMP="$(mktemp -d)"
 git init --bare "$REMOTE_TMP/origin.git" >/dev/null 2>&1
 git -C "$GIT_TMP" branch -M main >/dev/null 2>&1

@@ -352,7 +352,7 @@ fallback_repo_root() {
     fi
   fi
 
-  if [[ "$parent_base" == "worktrees" ]]; then
+  if [[ "$parent_base" == "worktrees" || "$parent_base" == ".worktrees" ]]; then
     candidate="$(dirname "$parent_dir")"
     if git -C "$candidate" rev-parse --show-toplevel >/dev/null 2>&1; then
       normalize_absolute_path "$candidate"
