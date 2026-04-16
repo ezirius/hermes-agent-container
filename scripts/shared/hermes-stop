@@ -6,21 +6,20 @@ ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$ROOT/lib/shell/common.sh"
 
 if [[ ${1-} == "--help" ]]; then
-  show_help "Usage: $(basename "$0") <workspace-name>
+  show_help "Usage: $(basename "$0") [<workspace-name>]
 
 Stop the Hermes Gateway container.
 
 Arguments:
-- <workspace-name>           required workspace name under HERMES_BASE_ROOT"
+- <workspace-name>           optional workspace name under HERMES_BASE_ROOT"
 fi
 
-if [[ $# -ne 1 ]]; then
-  usage_error "$(basename "$0") requires exactly 1 argument: <workspace-name>"
+[[ $# -le 1 ]] || usage_error "$(basename "$0") [<workspace-name>]"
+if [[ $# -eq 1 ]]; then
+  WORKSPACE="$(resolve_workspace_argument "$1")"
+else
+  WORKSPACE="$(resolve_workspace_argument '')"
 fi
-
-WORKSPACE="$1"
-
-require_workspace_name "$WORKSPACE"
 
 require_podman
 TARGET_ROW="$(pick_workspace_target "$WORKSPACE" container)"

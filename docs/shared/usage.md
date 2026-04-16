@@ -7,7 +7,7 @@ This wrapper now uses:
 - immutable image tags
 - deterministic container names
 - picker-based workspace commands
-- pinned Ubuntu LTS and Node LTS versions configured in `config/shared/hermes.conf`
+- pinned Ubuntu LTS and Node LTS versions configured in `config/shared/tool-versions.conf`
 - no `hermes-upgrade`
 - no `bootstrap-test`
 - no auto-build from workspace commands
@@ -16,13 +16,15 @@ This wrapper now uses:
 
 Use:
 
-- `./scripts/shared/hermes-build <lane> <upstream>`
-- `./scripts/shared/hermes-build <lane>`
+- `./scripts/shared/hermes-build [lane] <upstream>`
+- `./scripts/shared/hermes-build [lane]`
 
 Where:
 
-- `lane` is `production` or `test`
-- `upstream` is `main`, `latest`, or an exact upstream version name
+- `lane` is the configured production or test lane from `config/shared/hermes.conf`
+- `upstream` is `main`, `latest`, or an exact stable upstream version name
+
+If `lane` is omitted, the script prompts for a build lane first.
 
 If `upstream` is omitted, the script prompts with:
 
@@ -30,6 +32,8 @@ If `upstream` is omitted, the script prompts with:
 - available upstream release tags, newest to oldest
 
 If `latest` is selected, the wrapper resolves it from the upstream release list, uses the display label in the immutable image tag, and stores the exact upstream git ref separately in image metadata.
+
+`latest` only considers stable upstream releases. Drafts, prereleases, beta releases, RCs, and arbitrary branch-like selectors are rejected by default. Exact stable version selectors remain valid even if the release list is stale.
 
 Production builds:
 
@@ -44,15 +48,17 @@ Test builds:
 
 ## Workspace commands
 
-The default workspace-facing commands take a workspace name and use interactive project-scoped selection:
+The default workspace-facing commands accept an optional workspace name and use interactive project-scoped selection:
 
-- `./scripts/shared/hermes-bootstrap <workspace> [hermes args...]`
-- `./scripts/shared/hermes-start <workspace> [hermes args...]`
-- `./scripts/shared/hermes-open <workspace> [hermes args...]`
-- `./scripts/shared/hermes-shell <workspace> [command args...]`
-- `./scripts/shared/hermes-logs <workspace> [podman log args...]`
-- `./scripts/shared/hermes-status <workspace>`
-- `./scripts/shared/hermes-stop <workspace>`
+- `./scripts/shared/hermes-bootstrap [workspace] [hermes args...]`
+- `./scripts/shared/hermes-start [workspace] [hermes args...]`
+- `./scripts/shared/hermes-open [workspace] [hermes args...]`
+- `./scripts/shared/hermes-shell [workspace] [command args...]`
+- `./scripts/shared/hermes-logs [workspace] [podman log args...]`
+- `./scripts/shared/hermes-status [workspace]`
+- `./scripts/shared/hermes-stop [workspace]`
+
+If `workspace` is omitted, the wrapper prompts with workspace names from `HERMES_BASE_ROOT` in alphabetical order.
 
 `hermes-bootstrap` and `hermes-start` can select image-only targets for a workspace.
 
@@ -62,10 +68,16 @@ The default workspace-facing commands take a workspace name and use interactive 
 
 The current shared scripts also support explicit targeting where a picker is not desired:
 
-- `./scripts/shared/hermes-start <workspace> <lane> <upstream> [hermes args...]`
-- `./scripts/shared/hermes-open <workspace> <lane> <upstream> [hermes args...]`
+- `./scripts/shared/hermes-start [workspace] <lane> <upstream> [hermes args...]`
+- `./scripts/shared/hermes-open [workspace] <lane> <upstream> [hermes args...]`
+- `./scripts/shared/hermes-shell [workspace] <lane> <upstream> [command args...]`
+- `./scripts/shared/hermes-start -- <lane> <upstream> [hermes args...]`
+- `./scripts/shared/hermes-open -- <lane> <upstream> [hermes args...]`
+- `./scripts/shared/hermes-shell -- <lane> <upstream> [command args...]`
 
 In explicit mode, `hermes-start` resolves the newest matching image for the current wrapper context, and `hermes-open` resolves the deterministic container name for the current wrapper context. The `workspace lane upstream` arguments do not override the wrapper context; that still comes from where the command is run.
+
+Use a leading `--` when omitting the workspace and the next wrapper argument or forwarded command argument would otherwise be ambiguous.
 
 `hermes-start` and `hermes-bootstrap` use a mixed picker that may show:
 
@@ -81,6 +93,8 @@ If extra Hermes args are supplied to `hermes-start`, it starts the selected targ
 `hermes-open` and `hermes-shell` require the selected container to already be running.
 
 `hermes-status` prints a concise wrapper-oriented summary including container name, workspace, lane, upstream, wrapper, commit, status, and backing image.
+
+`hermes-status` is read-only. It does not start containers, exec into containers, or otherwise mutate runtime state.
 
 `hermes-stop` stops a running selected container, and reports clearly when the selected container is already stopped.
 
@@ -137,23 +151,35 @@ Each workspace uses:
 - `<workspace-root>/hermes-home` for persistent Hermes state
 - `<workspace-root>/hermes-workspace` for project files
 
+The default base root is `~/Documents/Ezirius/.applications-data/.containers-artificial-intelligence`.
+
 Hermes runs with:
 
-- `/opt/data` mapped to `hermes-home`
-- `/workspace/hermes-workspace` mapped to the project workspace
+- `USER hermes` with `HOME=/home/hermes` and `HERMES_HOME=/home/hermes`
+- `/home/hermes` mapped to `hermes-home`
+- `/workspace/hermes-workspace` mapped to `hermes-workspace`
+- no wrapper-managed `AGENTS.md` bootstrap
 
 The wrapper continues to seed missing baseline files such as:
 
 - `.env`
 - `config.yaml`
 - `SOUL.md`
-- `AGENTS.md`
 
-Unlike Hindsight, Hermes still reads runtime config from file-based state under `/opt/data`, especially `/opt/data/.env` and `/opt/data/config.yaml`.
+Unlike Hindsight, Hermes still reads runtime config from file-based state under `/home/hermes`, especially `/home/hermes/.env` and `/home/hermes/config.yaml`.
+
+This is a clean breaking change:
+
+- `/opt/data` has been replaced by `/home/hermes` with no compatibility layer
 
 ## Matrix patch direction
 
-For upstream `0.8.0`, the wrapper now keeps only the narrow Matrix behavior still required by policy:
+For upstream `0.8.0`, the wrapper still keeps a small set of wrapper-owned patches:
+
+- `apply-hermes-host-agents-context.py`
+- `apply-hermes-transcription-oga.py`
+
+For Matrix-specific policy, the wrapper keeps only the narrow behaviour still required:
 
 - keep `apply-hermes-matrix-device-id.py`
 - keep the narrow `MATRIX_ALLOWED_USERS` remainder from `apply-hermes-matrix-config-overrides.py`
@@ -166,6 +192,6 @@ Removed from the wrapper patch surface:
 
 ## Source of truth
 
-For the full design rationale and the remaining implementation details, use:
+For the historical design rationale, use:
 
 - `docs/shared/implementation-plan.md`

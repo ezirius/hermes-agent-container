@@ -1,5 +1,7 @@
 # Hermes Agent Container Implementation Plan
 
+> Historical note: `README.md` and `docs/shared/usage.md` describe the current behaviour. This file is retained as a historical design reference.
+
 ## Goal
 
 Move the Hermes container wrapper from the older mutable-image lifecycle to a cleaner Podman-first multi-workspace model with immutable image tags, deterministic container names, and interactive target selection.
@@ -695,4 +697,4 @@ The Hermes wrapper should move to:
 - a sharply reduced Matrix patch surface for upstream `0.8.0`
 - shared implementation in `lib/`
 
-This document should be treated as the implementation source of truth for the current worktree.
+This document is historical context only and should not be treated as the current behaviour source of truth.

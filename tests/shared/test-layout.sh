@@ -7,7 +7,9 @@ test -f "$ROOT/README.md"
 test -f "$ROOT/docs/shared/usage.md"
 test -f "$ROOT/docs/shared/implementation-plan.md"
 test -f "$ROOT/config/shared/hermes.conf"
-test -f "$ROOT/config/containers/Dockerfile"
+test -f "$ROOT/config/shared/tool-versions.conf"
+test -f "$ROOT/config/containers/Containerfile.wrapper"
+test -f "$ROOT/config/containers/Containerfile.source-base.template"
 test -f "$ROOT/config/containers/entrypoint.sh"
 test -f "$ROOT/config/patches/apply-hermes-host-agents-context.py"
 test -f "$ROOT/config/patches/apply-hermes-matrix-device-id.py"
@@ -31,29 +33,50 @@ test ! -e "$ROOT/config/patches/apply-hermes-matrix-auto-verification.py"
 test ! -e "$ROOT/config/patches/apply-hermes-matrix-upload-filesize.py"
 test ! -e "$ROOT/config/patches/apply-hermes-matrix-encrypted-media.py"
 
-grep -q '^ARG UBUNTU_LTS_VERSION=24.04$' "$ROOT/config/containers/Dockerfile"
-grep -q '^ARG NODE_LTS_VERSION=24$' "$ROOT/config/containers/Dockerfile"
-grep -q '^FROM ubuntu:\${UBUNTU_LTS_VERSION}$' "$ROOT/config/containers/Dockerfile"
-grep -q 'https://deb.nodesource.com/node_\${NODE_LTS_VERSION}.x' "$ROOT/config/containers/Dockerfile"
-grep -q '^  && python3 /tmp/hermes-patches/apply-hermes-matrix-device-id.py \\$' "$ROOT/config/containers/Dockerfile"
-grep -q '^  && python3 /tmp/hermes-patches/apply-hermes-matrix-config-overrides.py \\$' "$ROOT/config/containers/Dockerfile"
-grep -q '^  && python3 /tmp/hermes-patches/apply-hermes-transcription-oga.py \\$' "$ROOT/config/containers/Dockerfile"
-if grep -q 'apply-hermes-matrix-auto-verification.py' "$ROOT/config/containers/Dockerfile"; then
-  printf 'assertion failed: Dockerfile should not apply removed matrix auto verification patch\n' >&2
-  exit 1
-fi
-if grep -q 'apply-hermes-matrix-upload-filesize.py' "$ROOT/config/containers/Dockerfile"; then
-  printf 'assertion failed: Dockerfile should not apply removed matrix upload filesize patch\n' >&2
-  exit 1
-fi
-if grep -q 'apply-hermes-matrix-encrypted-media.py' "$ROOT/config/containers/Dockerfile"; then
-  printf 'assertion failed: Dockerfile should not apply removed matrix encrypted media patch\n' >&2
-  exit 1
-fi
-
-grep -q '^HERMES_UBUNTU_LTS_VERSION="24.04"$' "$ROOT/config/shared/hermes.conf"
-grep -q '^HERMES_NODE_LTS_VERSION="24"$' "$ROOT/config/shared/hermes.conf"
+grep -q '^HERMES_LABEL_NAMESPACE="hermes.wrapper"$' "$ROOT/config/shared/hermes.conf"
+grep -q '^HERMES_LABEL_WORKSPACE="hermes.wrapper.workspace"$' "$ROOT/config/shared/hermes.conf"
+grep -q '^HERMES_LABEL_LANE="hermes.wrapper.lane"$' "$ROOT/config/shared/hermes.conf"
+grep -q '^HERMES_LABEL_UPSTREAM="hermes.wrapper.upstream"$' "$ROOT/config/shared/hermes.conf"
+grep -q '^HERMES_LABEL_WRAPPER="hermes.wrapper.context"$' "$ROOT/config/shared/hermes.conf"
+grep -q '^HERMES_LABEL_COMMITSTAMP="hermes.wrapper.commitstamp"$' "$ROOT/config/shared/hermes.conf"
+grep -q '^HERMES_LANE_PRODUCTION="production"$' "$ROOT/config/shared/hermes.conf"
+grep -q '^HERMES_LANE_TEST="test"$' "$ROOT/config/shared/hermes.conf"
+grep -q '^HERMES_UPSTREAM_MAIN_SELECTOR="main"$' "$ROOT/config/shared/hermes.conf"
+grep -q '^HERMES_DEFAULT_UPSTREAM_SELECTOR="latest"$' "$ROOT/config/shared/hermes.conf"
+grep -q '^HERMES_RELEASE_TAG_PREFIX="v"$' "$ROOT/config/shared/hermes.conf"
 grep -q '^HERMES_BASE_ROOT="\$HOME/Documents/Ezirius/.applications-data/.containers-artificial-intelligence"$' "$ROOT/config/shared/hermes.conf"
+grep -q '^HERMES_WORKSPACE_HOME_DIRNAME="hermes-home"$' "$ROOT/config/shared/hermes.conf"
+grep -q '^HERMES_WORKSPACE_DIRNAME="hermes-workspace"$' "$ROOT/config/shared/hermes.conf"
+grep -q '^HERMES_CONTAINER_RUNTIME_HOME="/home/hermes"$' "$ROOT/config/shared/hermes.conf"
+grep -q '^HERMES_CONTAINER_WORKSPACE_DIR="/workspace/hermes-workspace"$' "$ROOT/config/shared/hermes.conf"
+grep -q '^HERMES_CONTAINER_RESTART_POLICY="unless-stopped"$' "$ROOT/config/shared/hermes.conf"
+grep -q '^HERMES_PODMAN_TTY_WRAPPER="auto"$' "$ROOT/config/shared/hermes.conf"
+if grep -q '^# HERMES_HOST_SERVER_PORT=' "$ROOT/config/shared/hermes.conf"; then
+  printf 'assertion failed: shared config should not advertise an unsupported managed host port setting\n' >&2
+  exit 1
+fi
+grep -q '^HERMES_UBUNTU_LTS_VERSION="24.04"$' "$ROOT/config/shared/tool-versions.conf"
+grep -q '^HERMES_NODE_LTS_VERSION="24"$' "$ROOT/config/shared/tool-versions.conf"
+grep -q '^ARG UBUNTU_VERSION$' "$ROOT/config/containers/Containerfile.wrapper"
+grep -q '^FROM ubuntu:${UBUNTU_VERSION}$' "$ROOT/config/containers/Containerfile.wrapper"
+[[ "$(grep -c '^ARG HERMES_CONTAINER_WORKSPACE_DIR$' "$ROOT/config/containers/Containerfile.wrapper")" == '2' ]]
+[[ "$(grep -c '^ARG HERMES_CONTAINER_RUNTIME_HOME$' "$ROOT/config/containers/Containerfile.wrapper")" == '2' ]]
+grep -q '^ENTRYPOINT \["/usr/bin/tini", "--", "/usr/local/bin/hermes-entrypoint.sh"\]$' "$ROOT/config/containers/Containerfile.wrapper"
+grep -q '^CMD \["sleep", "infinity"\]$' "$ROOT/config/containers/Containerfile.wrapper"
+grep -q '^USER hermes$' "$ROOT/config/containers/Containerfile.wrapper"
+grep -q '^FROM ubuntu:__HERMES_UBUNTU_LTS_VERSION__$' "$ROOT/config/containers/Containerfile.source-base.template"
+grep -q '__HERMES_CONTAINER_WORKSPACE_DIR__' "$ROOT/config/containers/Containerfile.source-base.template"
+grep -q '__HERMES_CONTAINER_RUNTIME_HOME__' "$ROOT/config/containers/Containerfile.source-base.template"
+grep -q '^USER hermes$' "$ROOT/config/containers/Containerfile.source-base.template"
+test ! -e "$ROOT/config/containers/Dockerfile"
+grep -q '^update_config_assignment() {$' "$ROOT/lib/shell/common.sh"
+grep -q '^tool_versions_config_path() {$' "$ROOT/lib/shell/common.sh"
+grep -q '^hermes_upstream_ref_label_key() {$' "$ROOT/lib/shell/common.sh"
+grep -q '^hermes_build_fingerprint_label_key() {$' "$ROOT/lib/shell/common.sh"
+grep -q '^container_restart_policy() {$' "$ROOT/lib/shell/common.sh"
+grep -q '^workspace_names_from_base_root() {$' "$ROOT/lib/shell/common.sh"
+grep -q '^resolve_workspace_argument() {$' "$ROOT/lib/shell/common.sh"
+grep -q '^wrapper_build_commitstamp() {$' "$ROOT/lib/shell/common.sh"
 grep -q '^latest_ubuntu_lts_version() {$' "$ROOT/lib/shell/common.sh"
 grep -q '^latest_node_lts_version() {$' "$ROOT/lib/shell/common.sh"
 grep -q '^require_canonical_main_checkout() {$' "$ROOT/lib/shell/common.sh"
@@ -67,15 +90,23 @@ if grep -q 'MATRIX_DEVICE_ID' "$ROOT/config/patches/apply-hermes-matrix-config-o
   printf 'assertion failed: matrix config overrides patch should no longer wire MATRIX_DEVICE_ID\n' >&2
   exit 1
 fi
-
-grep -q 'there is no `hermes-upgrade` command and no `bootstrap-test`' "$ROOT/README.md"
-grep -q 'hermes-workspace' "$ROOT/README.md"
-grep -q 'newer image-only targets remain selectable' "$ROOT/README.md"
-grep -q 'used by' "$ROOT/README.md"
-grep -q 'implementation-plan.md' "$ROOT/README.md"
-grep -q 'picker-based workspace commands' "$ROOT/docs/shared/usage.md"
-grep -q '/workspace/hermes-workspace' "$ROOT/docs/shared/usage.md"
-grep -q 'used by' "$ROOT/docs/shared/usage.md"
-grep -q 'newer immutable image exists' "$ROOT/docs/shared/usage.md"
+if grep -q 'implementation source of truth for the current worktree' "$ROOT/docs/shared/implementation-plan.md"; then
+  printf 'assertion failed: historical implementation plan must not be described as the current source of truth\n' >&2
+  exit 1
+fi
+if grep -q '^## Current source of truth$' "$ROOT/README.md"; then
+  printf 'assertion failed: README must not describe the historical implementation plan as the current source of truth\n' >&2
+  exit 1
+fi
+grep -q -- '- `USER hermes` with `HOME=/home/hermes` and `HERMES_HOME=/home/hermes`$' "$ROOT/README.md"
+grep -q -- '- `/home/hermes` backed by the host `hermes-home` mount$' "$ROOT/README.md"
+grep -q -- '- `/workspace/hermes-workspace` backed by the host `hermes-workspace` mount$' "$ROOT/README.md"
+grep -q -- '- no wrapper-managed `AGENTS.md` bootstrap$' "$ROOT/README.md"
+grep -q -- '- the `/opt/data` to `/home/hermes` move is a clean breaking change with no compatibility layer$' "$ROOT/README.md"
+grep -q -- '- `USER hermes` with `HOME=/home/hermes` and `HERMES_HOME=/home/hermes`$' "$ROOT/docs/shared/usage.md"
+grep -q -- '- `/home/hermes` mapped to `hermes-home`$' "$ROOT/docs/shared/usage.md"
+grep -q -- '- `/workspace/hermes-workspace` mapped to `hermes-workspace`$' "$ROOT/docs/shared/usage.md"
+grep -q -- '- no wrapper-managed `AGENTS.md` bootstrap$' "$ROOT/docs/shared/usage.md"
+grep -q -- '- `/opt/data` has been replaced by `/home/hermes` with no compatibility layer$' "$ROOT/docs/shared/usage.md"
 
 echo "Layout checks passed"

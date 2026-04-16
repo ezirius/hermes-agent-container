@@ -1,35 +1,69 @@
 #!/usr/bin/env bash
 
+if [[ -z "${ROOT:-}" ]]; then
+  ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+fi
+
 __env_HERMES_IMAGE_NAME="${HERMES_IMAGE_NAME-}"
 __env_HERMES_PROJECT_PREFIX="${HERMES_PROJECT_PREFIX-}"
+__env_HERMES_LABEL_NAMESPACE="${HERMES_LABEL_NAMESPACE-}"
+__env_HERMES_LABEL_WORKSPACE="${HERMES_LABEL_WORKSPACE-}"
+__env_HERMES_LABEL_LANE="${HERMES_LABEL_LANE-}"
+__env_HERMES_LABEL_UPSTREAM="${HERMES_LABEL_UPSTREAM-}"
+__env_HERMES_LABEL_WRAPPER="${HERMES_LABEL_WRAPPER-}"
+__env_HERMES_LABEL_COMMITSTAMP="${HERMES_LABEL_COMMITSTAMP-}"
 __env_HERMES_REPO_URL="${HERMES_REPO_URL-}"
 __env_HERMES_GITHUB_API_BASE="${HERMES_GITHUB_API_BASE-}"
 __env_HERMES_UBUNTU_LTS_VERSION="${HERMES_UBUNTU_LTS_VERSION-}"
 __env_HERMES_NODE_LTS_VERSION="${HERMES_NODE_LTS_VERSION-}"
+__env_HERMES_LANE_PRODUCTION="${HERMES_LANE_PRODUCTION-}"
+__env_HERMES_LANE_TEST="${HERMES_LANE_TEST-}"
+__env_HERMES_DEFAULT_UPSTREAM_SELECTOR="${HERMES_DEFAULT_UPSTREAM_SELECTOR-}"
+__env_HERMES_UPSTREAM_MAIN_SELECTOR="${HERMES_UPSTREAM_MAIN_SELECTOR-}"
+__env_HERMES_RELEASE_TAG_PREFIX="${HERMES_RELEASE_TAG_PREFIX-}"
 __env_HERMES_BASE_ROOT="${HERMES_BASE_ROOT-}"
+__env_HERMES_WORKSPACE_HOME_DIRNAME="${HERMES_WORKSPACE_HOME_DIRNAME-}"
+__env_HERMES_WORKSPACE_DIRNAME="${HERMES_WORKSPACE_DIRNAME-}"
+__env_HERMES_CONTAINER_RUNTIME_HOME="${HERMES_CONTAINER_RUNTIME_HOME-}"
+__env_HERMES_CONTAINER_WORKSPACE_DIR="${HERMES_CONTAINER_WORKSPACE_DIR-}"
+__env_HERMES_CONTAINER_RESTART_POLICY="${HERMES_CONTAINER_RESTART_POLICY-}"
+__env_HERMES_PODMAN_TTY_WRAPPER="${HERMES_PODMAN_TTY_WRAPPER-}"
 
 if [[ -n "${ROOT:-}" && -f "$ROOT/config/shared/hermes.conf" ]]; then
   # shellcheck disable=SC1090
   source "$ROOT/config/shared/hermes.conf"
 fi
 
+if [[ -n "${ROOT:-}" && -f "$ROOT/config/shared/tool-versions.conf" ]]; then
+  # shellcheck disable=SC1090
+  source "$ROOT/config/shared/tool-versions.conf"
+fi
+
 [[ -z "${__env_HERMES_IMAGE_NAME}" ]] || HERMES_IMAGE_NAME="$__env_HERMES_IMAGE_NAME"
 [[ -z "${__env_HERMES_PROJECT_PREFIX}" ]] || HERMES_PROJECT_PREFIX="$__env_HERMES_PROJECT_PREFIX"
+[[ -z "${__env_HERMES_LABEL_NAMESPACE}" ]] || HERMES_LABEL_NAMESPACE="$__env_HERMES_LABEL_NAMESPACE"
+[[ -z "${__env_HERMES_LABEL_WORKSPACE}" ]] || HERMES_LABEL_WORKSPACE="$__env_HERMES_LABEL_WORKSPACE"
+[[ -z "${__env_HERMES_LABEL_LANE}" ]] || HERMES_LABEL_LANE="$__env_HERMES_LABEL_LANE"
+[[ -z "${__env_HERMES_LABEL_UPSTREAM}" ]] || HERMES_LABEL_UPSTREAM="$__env_HERMES_LABEL_UPSTREAM"
+[[ -z "${__env_HERMES_LABEL_WRAPPER}" ]] || HERMES_LABEL_WRAPPER="$__env_HERMES_LABEL_WRAPPER"
+[[ -z "${__env_HERMES_LABEL_COMMITSTAMP}" ]] || HERMES_LABEL_COMMITSTAMP="$__env_HERMES_LABEL_COMMITSTAMP"
 [[ -z "${__env_HERMES_REPO_URL}" ]] || HERMES_REPO_URL="$__env_HERMES_REPO_URL"
 [[ -z "${__env_HERMES_GITHUB_API_BASE}" ]] || HERMES_GITHUB_API_BASE="$__env_HERMES_GITHUB_API_BASE"
 [[ -z "${__env_HERMES_UBUNTU_LTS_VERSION}" ]] || HERMES_UBUNTU_LTS_VERSION="$__env_HERMES_UBUNTU_LTS_VERSION"
 [[ -z "${__env_HERMES_NODE_LTS_VERSION}" ]] || HERMES_NODE_LTS_VERSION="$__env_HERMES_NODE_LTS_VERSION"
+[[ -z "${__env_HERMES_LANE_PRODUCTION}" ]] || HERMES_LANE_PRODUCTION="$__env_HERMES_LANE_PRODUCTION"
+[[ -z "${__env_HERMES_LANE_TEST}" ]] || HERMES_LANE_TEST="$__env_HERMES_LANE_TEST"
+[[ -z "${__env_HERMES_DEFAULT_UPSTREAM_SELECTOR}" ]] || HERMES_DEFAULT_UPSTREAM_SELECTOR="$__env_HERMES_DEFAULT_UPSTREAM_SELECTOR"
+[[ -z "${__env_HERMES_UPSTREAM_MAIN_SELECTOR}" ]] || HERMES_UPSTREAM_MAIN_SELECTOR="$__env_HERMES_UPSTREAM_MAIN_SELECTOR"
+[[ -z "${__env_HERMES_RELEASE_TAG_PREFIX}" ]] || HERMES_RELEASE_TAG_PREFIX="$__env_HERMES_RELEASE_TAG_PREFIX"
 [[ -z "${__env_HERMES_BASE_ROOT}" ]] || HERMES_BASE_ROOT="$__env_HERMES_BASE_ROOT"
-unset __env_HERMES_IMAGE_NAME __env_HERMES_PROJECT_PREFIX __env_HERMES_REPO_URL __env_HERMES_GITHUB_API_BASE __env_HERMES_UBUNTU_LTS_VERSION __env_HERMES_NODE_LTS_VERSION __env_HERMES_BASE_ROOT
-
-HERMES_IMAGE_NAME="${HERMES_IMAGE_NAME:-hermes-agent-local}"
-HERMES_PROJECT_PREFIX="${HERMES_PROJECT_PREFIX:-hermes-agent}"
-HERMES_REPO_URL="${HERMES_REPO_URL:-https://github.com/NousResearch/hermes-agent.git}"
-HERMES_REF="${HERMES_REF:-latest}"
-HERMES_GITHUB_API_BASE="${HERMES_GITHUB_API_BASE:-https://api.github.com}"
-HERMES_UBUNTU_LTS_VERSION="${HERMES_UBUNTU_LTS_VERSION:-24.04}"
-HERMES_NODE_LTS_VERSION="${HERMES_NODE_LTS_VERSION:-24}"
-HERMES_BASE_ROOT="${HERMES_BASE_ROOT:-$HOME/Documents/Ezirius/.applications-data/.containers-artificial-intelligence}"
+[[ -z "${__env_HERMES_WORKSPACE_HOME_DIRNAME}" ]] || HERMES_WORKSPACE_HOME_DIRNAME="$__env_HERMES_WORKSPACE_HOME_DIRNAME"
+[[ -z "${__env_HERMES_WORKSPACE_DIRNAME}" ]] || HERMES_WORKSPACE_DIRNAME="$__env_HERMES_WORKSPACE_DIRNAME"
+[[ -z "${__env_HERMES_CONTAINER_RUNTIME_HOME}" ]] || HERMES_CONTAINER_RUNTIME_HOME="$__env_HERMES_CONTAINER_RUNTIME_HOME"
+[[ -z "${__env_HERMES_CONTAINER_WORKSPACE_DIR}" ]] || HERMES_CONTAINER_WORKSPACE_DIR="$__env_HERMES_CONTAINER_WORKSPACE_DIR"
+[[ -z "${__env_HERMES_CONTAINER_RESTART_POLICY}" ]] || HERMES_CONTAINER_RESTART_POLICY="$__env_HERMES_CONTAINER_RESTART_POLICY"
+[[ -z "${__env_HERMES_PODMAN_TTY_WRAPPER}" ]] || HERMES_PODMAN_TTY_WRAPPER="$__env_HERMES_PODMAN_TTY_WRAPPER"
+unset __env_HERMES_IMAGE_NAME __env_HERMES_PROJECT_PREFIX __env_HERMES_LABEL_NAMESPACE __env_HERMES_LABEL_WORKSPACE __env_HERMES_LABEL_LANE __env_HERMES_LABEL_UPSTREAM __env_HERMES_LABEL_WRAPPER __env_HERMES_LABEL_COMMITSTAMP __env_HERMES_REPO_URL __env_HERMES_GITHUB_API_BASE __env_HERMES_UBUNTU_LTS_VERSION __env_HERMES_NODE_LTS_VERSION __env_HERMES_LANE_PRODUCTION __env_HERMES_LANE_TEST __env_HERMES_DEFAULT_UPSTREAM_SELECTOR __env_HERMES_UPSTREAM_MAIN_SELECTOR __env_HERMES_RELEASE_TAG_PREFIX __env_HERMES_BASE_ROOT __env_HERMES_WORKSPACE_HOME_DIRNAME __env_HERMES_WORKSPACE_DIRNAME __env_HERMES_CONTAINER_RUNTIME_HOME __env_HERMES_CONTAINER_WORKSPACE_DIR __env_HERMES_CONTAINER_RESTART_POLICY __env_HERMES_PODMAN_TTY_WRAPPER
 
 fail() {
   echo "Error: $*" >&2
@@ -56,12 +90,108 @@ show_help() {
   exit 0
 }
 
+[[ -n "${HERMES_IMAGE_NAME:-}" ]] || fail "missing HERMES_IMAGE_NAME in config/shared/hermes.conf"
+[[ -n "${HERMES_PROJECT_PREFIX:-}" ]] || fail "missing HERMES_PROJECT_PREFIX in config/shared/hermes.conf"
+[[ -n "${HERMES_LABEL_NAMESPACE:-}" ]] || fail "missing HERMES_LABEL_NAMESPACE in config/shared/hermes.conf"
+[[ -n "${HERMES_LABEL_WORKSPACE:-}" ]] || fail "missing HERMES_LABEL_WORKSPACE in config/shared/hermes.conf"
+[[ -n "${HERMES_LABEL_LANE:-}" ]] || fail "missing HERMES_LABEL_LANE in config/shared/hermes.conf"
+[[ -n "${HERMES_LABEL_UPSTREAM:-}" ]] || fail "missing HERMES_LABEL_UPSTREAM in config/shared/hermes.conf"
+[[ -n "${HERMES_LABEL_WRAPPER:-}" ]] || fail "missing HERMES_LABEL_WRAPPER in config/shared/hermes.conf"
+[[ -n "${HERMES_LABEL_COMMITSTAMP:-}" ]] || fail "missing HERMES_LABEL_COMMITSTAMP in config/shared/hermes.conf"
+[[ -n "${HERMES_REPO_URL:-}" ]] || fail "missing HERMES_REPO_URL in config/shared/hermes.conf"
+[[ -n "${HERMES_GITHUB_API_BASE:-}" ]] || fail "missing HERMES_GITHUB_API_BASE in config/shared/hermes.conf"
+[[ -n "${HERMES_UBUNTU_LTS_VERSION:-}" ]] || fail "missing HERMES_UBUNTU_LTS_VERSION in config/shared/tool-versions.conf"
+[[ -n "${HERMES_NODE_LTS_VERSION:-}" ]] || fail "missing HERMES_NODE_LTS_VERSION in config/shared/tool-versions.conf"
+[[ -n "${HERMES_LANE_PRODUCTION:-}" ]] || fail "missing HERMES_LANE_PRODUCTION in config/shared/hermes.conf"
+[[ -n "${HERMES_LANE_TEST:-}" ]] || fail "missing HERMES_LANE_TEST in config/shared/hermes.conf"
+[[ -n "${HERMES_DEFAULT_UPSTREAM_SELECTOR:-}" ]] || fail "missing HERMES_DEFAULT_UPSTREAM_SELECTOR in config/shared/hermes.conf"
+[[ -n "${HERMES_UPSTREAM_MAIN_SELECTOR:-}" ]] || fail "missing HERMES_UPSTREAM_MAIN_SELECTOR in config/shared/hermes.conf"
+[[ -n "${HERMES_RELEASE_TAG_PREFIX:-}" ]] || fail "missing HERMES_RELEASE_TAG_PREFIX in config/shared/hermes.conf"
+[[ -n "${HERMES_BASE_ROOT:-}" ]] || fail "missing HERMES_BASE_ROOT in config/shared/hermes.conf"
+[[ -n "${HERMES_WORKSPACE_HOME_DIRNAME:-}" ]] || fail "missing HERMES_WORKSPACE_HOME_DIRNAME in config/shared/hermes.conf"
+[[ -n "${HERMES_WORKSPACE_DIRNAME:-}" ]] || fail "missing HERMES_WORKSPACE_DIRNAME in config/shared/hermes.conf"
+[[ -n "${HERMES_CONTAINER_RUNTIME_HOME:-}" ]] || fail "missing HERMES_CONTAINER_RUNTIME_HOME in config/shared/hermes.conf"
+[[ -n "${HERMES_CONTAINER_WORKSPACE_DIR:-}" ]] || fail "missing HERMES_CONTAINER_WORKSPACE_DIR in config/shared/hermes.conf"
+[[ -n "${HERMES_CONTAINER_RESTART_POLICY:-}" ]] || fail "missing HERMES_CONTAINER_RESTART_POLICY in config/shared/hermes.conf"
+case "${HERMES_PODMAN_TTY_WRAPPER:-}" in
+  auto|none|script) ;;
+  *) fail "unsupported HERMES_PODMAN_TTY_WRAPPER value in config/shared/hermes.conf: ${HERMES_PODMAN_TTY_WRAPPER:-}" ;;
+esac
+
+HERMES_REF="${HERMES_REF:-$HERMES_DEFAULT_UPSTREAM_SELECTOR}"
+
+update_config_assignment() {
+  local config_path="$1"
+  local key="$2"
+  local value="$3"
+
+  require_python3
+  python3 - "$config_path" "$key" "$value" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+key = sys.argv[2]
+value = sys.argv[3]
+text = path.read_text(encoding='utf-8')
+old = None
+for line in text.splitlines():
+    if line.startswith(f'{key}='):
+        old = line
+        break
+if old is None:
+    raise SystemExit(f'missing {key} in {path}')
+path.write_text(text.replace(old, f'{key}="{value}"', 1), encoding='utf-8')
+PY
+}
+
+tool_versions_config_path() {
+  [[ -n "${ROOT:-}" ]] || fail "ROOT must be set before calling tool_versions_config_path"
+  printf '%s' "$ROOT/config/shared/tool-versions.conf"
+}
+
+hermes_upstream_ref_label_key() {
+  printf '%s.upstream_ref' "$HERMES_LABEL_NAMESPACE"
+}
+
+hermes_build_fingerprint_label_key() {
+  printf '%s.build_fingerprint' "$HERMES_LABEL_NAMESPACE"
+}
+
+container_restart_policy() {
+  printf '%s' "$HERMES_CONTAINER_RESTART_POLICY"
+}
+
 require_podman() {
   command -v podman >/dev/null 2>&1 || fail "podman is required"
 }
 
 require_python3() {
   command -v python3 >/dev/null 2>&1 || fail "python3 is required"
+}
+
+lane_usage_text() {
+  printf '<%s|%s>' "$HERMES_LANE_PRODUCTION" "$HERMES_LANE_TEST"
+}
+
+is_lane() {
+  local lane="$1"
+  [[ "$lane" == "$HERMES_LANE_PRODUCTION" || "$lane" == "$HERMES_LANE_TEST" ]]
+}
+
+validate_lane() {
+  local lane="$1"
+  is_lane "$lane" || fail "lane must be one of $(lane_usage_text)"
+}
+
+upstream_selector_usage_text() {
+  printf "'%s', '%s', or an exact stable release tag" "$HERMES_UPSTREAM_MAIN_SELECTOR" "$HERMES_DEFAULT_UPSTREAM_SELECTOR"
+}
+
+validate_upstream_selector() {
+  local selector="$1"
+  [[ -n "$selector" ]] || fail "upstream selector must not be empty"
+  [[ "$selector" == "$HERMES_UPSTREAM_MAIN_SELECTOR" || "$selector" == "$HERMES_DEFAULT_UPSTREAM_SELECTOR" || "$selector" =~ ^${HERMES_RELEASE_TAG_PREFIX}?[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "upstream selector must be $(upstream_selector_usage_text)"
 }
 
 use_interactive_tty() {
@@ -168,7 +298,7 @@ import pathlib
 import sys
 
 root = pathlib.Path(sys.argv[1])
-tracked_dirs = [root / "config/containers", root / "config/patches"]
+tracked_dirs = [root / "config/shared", root / "config/containers", root / "config/patches"]
 paths = []
 for tracked_dir in tracked_dirs:
     if not tracked_dir.exists():
@@ -200,9 +330,29 @@ print(digest.hexdigest())
 PY
 }
 
+wrapper_build_commitstamp() {
+  local workdir="${1:-$(current_wrapper_workdir)}"
+  local fingerprint="${2:-$(local_build_fingerprint)}"
+  local head_stamp
+
+  if [[ -n "${HERMES_COMMITSTAMP_OVERRIDE:-}" ]]; then
+    printf '%s' "$HERMES_COMMITSTAMP_OVERRIDE"
+    return 0
+  fi
+
+  if ! git_has_meaningful_worktree_changes git -C "$workdir"; then
+    git_commit_stamp "$workdir"
+    return 0
+  fi
+
+  head_stamp="$(git -C "$workdir" show -s --format=%cd --date=format:%Y%m%d-%H%M%S HEAD 2>/dev/null || true)"
+  [[ -n "$head_stamp" ]] || fail "could not derive wrapper build timestamp from $workdir"
+  printf '%s-dirty%s' "$head_stamp" "${fingerprint:0:8}"
+}
+
 current_image_build_fingerprint() {
   local image_ref="${1:-$HERMES_IMAGE}"
-  image_label hermes.wrapper_fingerprint "$image_ref"
+  image_label "$(hermes_build_fingerprint_label_key)" "$image_ref"
 }
 
 normalize_path() {
@@ -238,6 +388,57 @@ require_workspace_name() {
   [[ "$name" != "." ]] || fail "workspace name must not be '.'"
   [[ "$name" != ".." ]] || fail "workspace name must not be '..'"
   [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || fail "workspace name may only contain letters, numbers, dots, underscores, and hyphens"
+}
+
+workspace_base_root() {
+  normalize_absolute_path "$(normalize_path "$HERMES_BASE_ROOT")"
+}
+
+workspace_names_from_base_root() {
+  local base_root candidate workspace_name
+  local -a workspace_names=()
+
+  base_root="$(workspace_base_root)"
+  [[ -d "$base_root" ]] || return 0
+
+  shopt -s nullglob
+  for candidate in "$base_root"/*; do
+    [[ -d "$candidate" ]] || continue
+    workspace_name="${candidate##*/}"
+    if [[ "$workspace_name" =~ ^[A-Za-z0-9._-]+$ ]]; then
+      workspace_names+=("$workspace_name")
+    fi
+  done
+  shopt -u nullglob
+
+  [[ ${#workspace_names[@]} -gt 0 ]] || return 0
+  printf '%s\n' "${workspace_names[@]}" | sort
+}
+
+select_workspace_name() {
+  local workspace_names workspace_name
+  local -a options=()
+
+  workspace_names="$(workspace_names_from_base_root)"
+  [[ -n "$workspace_names" ]] || fail "no workspaces found under $(workspace_base_root)"
+
+  while IFS= read -r workspace_name; do
+    [[ -n "$workspace_name" ]] || continue
+    options+=("$workspace_name")
+  done <<<"$workspace_names"
+
+  printf '%s' "$(prompt_select_option "Select a workspace from $(workspace_base_root)" "${options[@]}")"
+}
+
+resolve_workspace_argument() {
+  local workspace_name="${1-}"
+  if [[ -n "$workspace_name" && "$workspace_name" != "--" ]]; then
+    require_workspace_name "$workspace_name"
+    printf '%s' "$workspace_name"
+    return 0
+  fi
+
+  select_workspace_name
 }
 
 is_ignorable_host_untracked_path() {
@@ -393,6 +594,7 @@ fallback_ref_for_workdir() {
 current_wrapper_context() {
   local workdir="${1:-$(current_wrapper_workdir)}"
   local basename_context
+  local branch_name
 
   if [[ -n "${HERMES_WRAPPER_CONTEXT_OVERRIDE:-}" ]]; then
     printf '%s' "$HERMES_WRAPPER_CONTEXT_OVERRIDE"
@@ -400,8 +602,11 @@ current_wrapper_context() {
   fi
 
   if git_is_primary_worktree "$workdir"; then
-    printf '%s' "main"
-    return 0
+    branch_name="$(git_branch_name "$workdir" 2>/dev/null || true)"
+    if [[ -n "$branch_name" ]]; then
+      printf '%s' "$branch_name"
+      return 0
+    fi
   fi
 
   basename_context="$(basename "$workdir")"
@@ -444,10 +649,10 @@ resolve_workspace() {
   WORKSPACE_INPUT="$input"
   workspace_base_root="$(normalize_path "$HERMES_BASE_ROOT")"
   WORKSPACE_ROOT="$(normalize_absolute_path "$workspace_base_root/$WORKSPACE_NAME")"
-  HERMES_HOME_DIR="$WORKSPACE_ROOT/hermes-home"
+  HERMES_HOME_DIR="$WORKSPACE_ROOT/$HERMES_WORKSPACE_HOME_DIRNAME"
   HERMES_ENV_FILE="$HERMES_HOME_DIR/.env"
   HERMES_CONFIG_FILE="$HERMES_HOME_DIR/config.yaml"
-  HERMES_WORKSPACE_DIR="$WORKSPACE_ROOT/hermes-workspace"
+  HERMES_WORKSPACE_DIR="$WORKSPACE_ROOT/$HERMES_WORKSPACE_DIRNAME"
 }
 
 resolve_build_target() {
@@ -457,19 +662,9 @@ resolve_build_target() {
   local wrapper_context="${4:-}"
   local commitstamp="${5:-}"
 
-  if [[ "$lane" != "production" && "$lane" != "test" ]]; then
-    fail "lane must be 'production' or 'test', got: $lane"
-  fi
+  validate_lane "$lane"
 
-  if [[ "$ref" == "latest" || "$ref" == "main" ]]; then
-    : # valid
-  elif [[ "$ref" =~ ^[v]?[0-9]+[.][0-9]+[.][0-9]+ ]]; then
-    : # semver-style version
-  elif [[ "$ref" =~ ^[a-zA-Z0-9._-]+$ ]]; then
-    : # generic tag-like ref
-  else
-    fail "ref must be 'latest', 'main', or a version string (e.g. 0.7.0, v0.21.0), got: $ref"
-  fi
+  validate_upstream_selector "$ref"
 
   local version_tag
   version_tag="$(resolve_hermes_ref "$ref")"
@@ -481,10 +676,10 @@ resolve_build_target() {
   WORKSPACE_NAME="$workspace"
   WORKSPACE_INPUT="$workspace"
   WORKSPACE_ROOT="$(normalize_absolute_path "$workspace_base_root/$workspace")"
-  HERMES_HOME_DIR="$WORKSPACE_ROOT/hermes-home"
+  HERMES_HOME_DIR="$WORKSPACE_ROOT/$HERMES_WORKSPACE_HOME_DIRNAME"
   HERMES_ENV_FILE="$HERMES_HOME_DIR/.env"
   HERMES_CONFIG_FILE="$HERMES_HOME_DIR/config.yaml"
-  HERMES_WORKSPACE_DIR="$WORKSPACE_ROOT/hermes-workspace"
+  HERMES_WORKSPACE_DIR="$WORKSPACE_ROOT/$HERMES_WORKSPACE_DIRNAME"
 
   HERMES_UPSTREAM_REF="$version_tag"
   HERMES_WRAPPER_CONTEXT="$wrapper_context"
@@ -508,7 +703,7 @@ ensure_workspace_dirs() {
     "$HERMES_HOME_DIR/cache/images" \
     "$HERMES_HOME_DIR/cache/audio" \
     "$HERMES_HOME_DIR/platforms/whatsapp/session" \
-    "$WORKSPACE_ROOT/hermes-workspace"
+    "$HERMES_WORKSPACE_DIR"
 }
 
 move_path_contents() {
@@ -651,13 +846,15 @@ resolve_hermes_selection() {
   local requested_ref="${1:-${HERMES_REF:-latest}}"
   local cached label value
 
-  if [[ "$requested_ref" == "main" ]]; then
-    printf 'main\tmain\n'
+  validate_upstream_selector "$requested_ref"
+
+  if [[ "$requested_ref" == "$HERMES_UPSTREAM_MAIN_SELECTOR" ]]; then
+    printf '%s\t%s\n' "$HERMES_UPSTREAM_MAIN_SELECTOR" "$HERMES_UPSTREAM_MAIN_SELECTOR"
     return 0
   fi
 
   cached="$(release_option_cache)"
-  if [[ "$requested_ref" == "latest" ]]; then
+  if [[ "$requested_ref" == "$HERMES_DEFAULT_UPSTREAM_SELECTOR" ]]; then
     while IFS=$'\t' read -r label value; do
       [[ -n "$label" && -n "$value" ]] || continue
       printf '%s\t%s\n' "$label" "$value"
@@ -678,7 +875,18 @@ EOF
 $cached
 EOF
 
-  printf '%s\t%s\n' "$requested_ref" "$requested_ref"
+  case "$requested_ref" in
+    ${HERMES_RELEASE_TAG_PREFIX}[0-9]*.[0-9]*.[0-9]*)
+      printf '%s\t%s\n' "${requested_ref#${HERMES_RELEASE_TAG_PREFIX}}" "$requested_ref"
+      return 0
+      ;;
+    [0-9]*.[0-9]*.[0-9]*)
+      printf '%s\t%s%s\n' "$requested_ref" "$HERMES_RELEASE_TAG_PREFIX" "$requested_ref"
+      return 0
+      ;;
+  esac
+
+  fail "failed to resolve upstream selector: $requested_ref"
 }
 
 resolve_hermes_ref() {
@@ -775,11 +983,12 @@ list_upstream_release_tags() {
   local repo_slug
   require_python3
   repo_slug="$(github_repo_slug "$HERMES_REPO_URL")"
-  HERMES_REPO_SLUG="$repo_slug" python3 - <<'PY'
-import json, os, urllib.error, urllib.request
+  HERMES_REPO_SLUG="$repo_slug" HERMES_GITHUB_API_BASE="$HERMES_GITHUB_API_BASE" HERMES_RELEASE_TAG_PREFIX="$HERMES_RELEASE_TAG_PREFIX" python3 - <<'PY'
+import json, os, re, urllib.error, urllib.request
 base = os.environ.get("HERMES_GITHUB_API_BASE", "https://api.github.com").rstrip("/")
 repo_slug = os.environ["HERMES_REPO_SLUG"].strip("/")
-url = f"{base}/repos/{repo_slug}/releases"
+prefix = os.environ.get("HERMES_RELEASE_TAG_PREFIX", "v")
+url = f"{base}/repos/{repo_slug}/releases?per_page=100"
 headers = {"Accept": "application/vnd.github+json", "User-Agent": "hermes-agent-container/1.0"}
 req = urllib.request.Request(url, headers=headers)
 try:
@@ -789,10 +998,21 @@ except urllib.error.HTTPError as exc:
     raise SystemExit(f"failed to list upstream Hermes releases: HTTP {exc.code}")
 except urllib.error.URLError as exc:
     raise SystemExit(f"failed to list upstream Hermes releases: {exc.reason}")
+except Exception as exc:
+    raise SystemExit(f"failed to list upstream Hermes releases: {exc}")
+stable_releases = []
 for release in releases:
-    tag = release.get("tag_name")
-    if tag:
-        print(tag)
+    if release.get("draft") or release.get("prerelease"):
+        continue
+    tag = (release.get("tag_name") or "").strip()
+    if not tag:
+        continue
+    display = tag[len(prefix):] if prefix and tag.startswith(prefix) else tag
+    if not re.fullmatch(r"\d+\.\d+\.\d+", display):
+        continue
+    stable_releases.append((tuple(int(part) for part in display.split('.')), tag))
+for _, tag in sorted(stable_releases, reverse=True):
+    print(tag)
 PY
 }
 
@@ -800,11 +1020,12 @@ list_upstream_release_options() {
   local repo_slug
   require_python3
   repo_slug="$(github_repo_slug "$HERMES_REPO_URL")"
-  HERMES_REPO_SLUG="$repo_slug" python3 - <<'PY'
+  HERMES_REPO_SLUG="$repo_slug" HERMES_GITHUB_API_BASE="$HERMES_GITHUB_API_BASE" HERMES_RELEASE_TAG_PREFIX="$HERMES_RELEASE_TAG_PREFIX" python3 - <<'PY'
 import json, os, re, urllib.error, urllib.request
 base = os.environ.get("HERMES_GITHUB_API_BASE", "https://api.github.com").rstrip("/")
 repo_slug = os.environ["HERMES_REPO_SLUG"].strip("/")
-url = f"{base}/repos/{repo_slug}/releases"
+prefix = os.environ.get("HERMES_RELEASE_TAG_PREFIX", "v")
+url = f"{base}/repos/{repo_slug}/releases?per_page=100"
 headers = {"Accept": "application/vnd.github+json", "User-Agent": "hermes-agent-container/1.0"}
 req = urllib.request.Request(url, headers=headers)
 try:
@@ -814,18 +1035,28 @@ except urllib.error.HTTPError as exc:
     raise SystemExit(f"failed to list upstream Hermes releases: HTTP {exc.code}")
 except urllib.error.URLError as exc:
     raise SystemExit(f"failed to list upstream Hermes releases: {exc.reason}")
+except Exception as exc:
+    raise SystemExit(f"failed to list upstream Hermes releases: {exc}")
 
+stable_releases = []
 for release in releases:
+    if release.get("draft") or release.get("prerelease"):
+        continue
     tag = (release.get("tag_name") or "").strip()
     if not tag:
         continue
+    if prefix and tag.startswith(prefix):
+        display = tag[len(prefix):]
+    else:
+        display = tag
+    if not re.fullmatch(r"\d+\.\d+\.\d+", display):
+        continue
     name = (release.get("name") or "").strip()
-    display = tag
     match = re.search(r"v?(\d+\.\d+\.\d+)", name)
     if match:
         display = match.group(1)
-    elif name:
-        display = name
+    stable_releases.append((tuple(int(part) for part in display.split('.')), display, tag))
+for _, display, tag in sorted(stable_releases, reverse=True):
     print(f"{display}\t{tag}")
 PY
 }
@@ -917,7 +1148,11 @@ project_image_refs() {
 }
 
 project_container_names() {
-  podman ps -a --format '{{.Names}}' 2>/dev/null | grep -E "^${HERMES_PROJECT_PREFIX}-" || true
+  local name
+  podman ps -a --format '{{.Names}}' 2>/dev/null | while IFS= read -r name; do
+    [[ "$name" == "$HERMES_PROJECT_PREFIX-"* ]] || continue
+    printf '%s\n' "$name"
+  done
 }
 
 image_metadata() {
@@ -927,19 +1162,19 @@ image_metadata() {
 
   normalized="$(normalize_image_ref "$image_ref")"
   tag="${normalized#*:}"
-  if [[ "$tag" =~ ^(production|test)-(.+)-([^-]+)-([0-9]{8}-[0-9]{6}-[A-Za-z0-9]+)$ ]]; then
+  if [[ "$tag" =~ ^(${HERMES_LANE_PRODUCTION}|${HERMES_LANE_TEST})-(${HERMES_UPSTREAM_MAIN_SELECTOR}|[0-9]+\.[0-9]+\.[0-9]+)-(.+)-([0-9]{8}-[0-9]{6}-[A-Za-z0-9]+)$ ]]; then
     lane="${BASH_REMATCH[1]}"
     upstream="${BASH_REMATCH[2]}"
     wrapper="${BASH_REMATCH[3]}"
     commitstamp="${BASH_REMATCH[4]}"
   else
-    lane="$(image_label hermes.lane "$image_ref")"
-    upstream="$(image_label hermes.ref "$image_ref")"
-    wrapper="$(image_label hermes.wrapper_context "$image_ref")"
-    commitstamp="$(image_label hermes.commitstamp "$image_ref")"
+    lane="$(image_label "$HERMES_LABEL_LANE" "$image_ref")"
+    upstream="$(image_label "$HERMES_LABEL_UPSTREAM" "$image_ref")"
+    wrapper="$(image_label "$HERMES_LABEL_WRAPPER" "$image_ref")"
+    commitstamp="$(image_label "$HERMES_LABEL_COMMITSTAMP" "$image_ref")"
   fi
 
-  if [[ "$lane" != "production" && "$lane" != "test" ]]; then
+  if ! is_lane "$lane"; then
     return 1
   fi
 
@@ -956,7 +1191,7 @@ container_metadata() {
   local lane upstream wrapper commitstamp status
   local parsed
 
-  raw="$(podman inspect -f '{{index .Config.Labels "hermes.lane"}}|{{index .Config.Labels "hermes.ref"}}|{{index .Config.Labels "hermes.wrapper_context"}}|{{index .Config.Labels "hermes.commitstamp"}}|{{.State.Running}}' "$container_name" 2>/dev/null || true)"
+  raw="$(podman inspect -f "{{index .Config.Labels \"$HERMES_LABEL_LANE\"}}|{{index .Config.Labels \"$HERMES_LABEL_UPSTREAM\"}}|{{index .Config.Labels \"$HERMES_LABEL_WRAPPER\"}}|{{index .Config.Labels \"$HERMES_LABEL_COMMITSTAMP\"}}|{{.State.Running}}" "$container_name" 2>/dev/null || true)"
   lane="${raw%%|*}"
   raw="${raw#*|}"
   upstream="${raw%%|*}"
@@ -967,15 +1202,16 @@ container_metadata() {
   status="${raw##*|}"
 
   if [[ -z "$lane" || -z "$upstream" || -z "$wrapper" ]]; then
-    parsed="$(python3 - "$HERMES_PROJECT_PREFIX" "$container_name" <<'PY'
+    parsed="$(python3 - "$HERMES_PROJECT_PREFIX" "$HERMES_LANE_PRODUCTION" "$HERMES_LANE_TEST" "$container_name" <<'PY'
 import sys
 prefix = sys.argv[1]
-name = sys.argv[2]
+lanes = sys.argv[2:4]
+name = sys.argv[4]
 base = f"{prefix}-"
 if not name.startswith(base):
     raise SystemExit(1)
 rest = name[len(base):]
-for lane in ("production", "test"):
+for lane in lanes:
     marker = f"-{lane}-"
     idx = rest.find(marker)
     if idx == -1:
@@ -997,7 +1233,7 @@ PY
   fi
 
   [[ "$status" == "true" ]] && status="running" || status="stopped"
-  if [[ "$lane" != "production" && "$lane" != "test" ]]; then
+  if ! is_lane "$lane"; then
     return 1
   fi
   [[ -n "$upstream" ]] || return 1
@@ -1009,21 +1245,22 @@ container_workspace() {
   local container_name="$1"
   local workspace
 
-  workspace="$(podman inspect -f '{{index .Config.Labels "hermes.workspace"}}' "$container_name" 2>/dev/null || true)"
+  workspace="$(podman inspect -f "{{index .Config.Labels \"$HERMES_LABEL_WORKSPACE\"}}" "$container_name" 2>/dev/null || true)"
   if [[ -n "$workspace" ]]; then
     printf '%s' "$workspace"
     return 0
   fi
 
-  python3 - "$HERMES_PROJECT_PREFIX" "$container_name" <<'PY'
+  python3 - "$HERMES_PROJECT_PREFIX" "$HERMES_LANE_PRODUCTION" "$HERMES_LANE_TEST" "$container_name" <<'PY'
 import sys
 prefix = sys.argv[1]
-name = sys.argv[2]
+lanes = sys.argv[2:4]
+name = sys.argv[4]
 base = f"{prefix}-"
 if not name.startswith(base):
     raise SystemExit(1)
 rest = name[len(base):]
-for lane in ("production", "test"):
+for lane in lanes:
     marker = f"-{lane}-"
     idx = rest.find(marker)
     if idx != -1:
@@ -1072,7 +1309,7 @@ image_usage_status() {
 
 sort_targets() {
   require_python3
-  python3 -c 'import sys; rows=[line.rstrip("\n").split("\t") for line in sys.stdin if line.strip()]; lane_index=lambda row: 2 if len(row) >= 7 else 1; commit_index=lambda row: 5 if len(row) >= 7 else 4; rows=sorted(rows, key=lambda row: (0 if row[lane_index(row)] == "production" else 1, "".join(chr(255 - ord(c)) for c in (row[commit_index(row)] if len(row) > commit_index(row) else "")))); [print("\t".join(row)) for row in rows]'
+  HERMES_LANE_PRODUCTION="$HERMES_LANE_PRODUCTION" python3 -c 'import os, sys; prod=os.environ["HERMES_LANE_PRODUCTION"]; rows=[line.rstrip("\n").split("\t") for line in sys.stdin if line.strip()]; lane_index=lambda row: 2 if len(row) >= 7 else 1; commit_index=lambda row: 5 if len(row) >= 7 else 4; rows=sorted(rows, key=lambda row: (0 if row[lane_index(row)] == prod else 1, "".join(chr(255 - ord(c)) for c in (row[commit_index(row)] if len(row) > commit_index(row) else "")))); [print("\t".join(row)) for row in rows]'
 }
 
 workspace_image_targets() {
@@ -1223,14 +1460,26 @@ resolve_start_target() {
   local commitstamp="${5:-}"
   local resolved_upstream
   local matching_row
+  local existing_container_name
+  local existing_metadata
 
   [[ -n "$wrapper_context" ]] || wrapper_context="$(current_wrapper_context)"
   resolved_upstream="$(resolve_hermes_ref "$upstream")"
 
   if [[ -z "$commitstamp" ]]; then
     matching_row="$(latest_matching_image_target "$lane" "$resolved_upstream" "$wrapper_context" 2>/dev/null || true)"
-    [[ -n "$matching_row" ]] || fail "no matching project image exists for ${lane}/${resolved_upstream}/${wrapper_context}; run hermes-build first"
-    IFS=$'\t' read -r _ _ _ _ commitstamp _ <<< "$matching_row"
+    if [[ -n "$matching_row" ]]; then
+      IFS=$'\t' read -r _ _ _ _ commitstamp _ <<< "$matching_row"
+    else
+      existing_container_name="$HERMES_PROJECT_PREFIX-$workspace-$lane-$resolved_upstream-$wrapper_context"
+      if container_exists "$existing_container_name"; then
+        existing_metadata="$(container_metadata "$existing_container_name" 2>/dev/null || true)"
+      else
+        existing_metadata=""
+      fi
+      [[ -n "$existing_metadata" ]] || fail "no matching project image exists for ${lane}/${resolved_upstream}/${wrapper_context}; run hermes-build first"
+      IFS=$'\t' read -r _ _ _ _ commitstamp _ <<< "$existing_metadata"
+    fi
   fi
 
   resolve_build_target "$workspace" "$lane" "$resolved_upstream" "$wrapper_context" "$commitstamp"
@@ -1366,6 +1615,31 @@ if not lts_versions:
     raise SystemExit("could not determine latest Node LTS version")
 print(str(max(lts_versions)))
 PY
+}
+
+resolve_latest_pinned_version_or_current() {
+  local label="$1"
+  local current_value="$2"
+  local resolver="$3"
+  local latest_value
+  local err_file
+
+  err_file="$(mktemp)"
+  if latest_value="$($resolver 2>"$err_file")"; then
+    rm -f "$err_file"
+    printf '%s' "$latest_value"
+    return 0
+  fi
+
+printf 'Warning: could not check for a newer %s release; continuing with pinned version %s\n' "$label" "$current_value" >&2
+  if [[ -s "$err_file" ]]; then
+    while IFS= read -r line; do
+      [[ -n "$line" ]] || continue
+      printf 'Warning: %s\n' "$line" >&2
+    done < "$err_file"
+  fi
+  rm -f "$err_file"
+  printf '%s' "$current_value"
 }
 format_target_table() {
   local rows=("$@") row lane_w=10 upstream_w=12 wrapper_w=34 commit_w=24 status_w=10

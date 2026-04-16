@@ -3,3 +3,4 @@
 __pycache__/
 config/patches/__pycache__/
 *.pyc
+hermes-agent-container-worktrees/
