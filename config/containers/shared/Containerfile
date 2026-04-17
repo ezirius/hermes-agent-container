@@ -1,0 +1,60 @@
+# This image consumes shared config via build args and keeps the runtime contract in env vars.
+FROM ubuntu:24.04
+
+# Build args mirror the shared config so the image shape stays config-driven.
+ARG HERMES_AGENT_UID
+ARG HERMES_AGENT_GID
+ARG HERMES_AGENT_RELEASE_TAG
+ARG HERMES_AGENT_DASHBOARD_PORT
+ARG HERMES_AGENT_CONTAINER_HOME
+ARG HERMES_AGENT_CONTAINER_WORKSPACE
+
+# These env vars define the runtime locations Hermes expects after the host mounts are attached.
+ENV DEBIAN_FRONTEND=noninteractive \
+    PATH="/opt/hermes-venv/bin:${PATH}" \
+    HOME=${HERMES_AGENT_CONTAINER_HOME} \
+    HERMES_AGENT_DASHBOARD_PORT=${HERMES_AGENT_DASHBOARD_PORT} \
+    HERMES_HOME=${HERMES_AGENT_CONTAINER_HOME}/.hermes \
+    HERMES_WORKSPACE=${HERMES_AGENT_CONTAINER_WORKSPACE}
+
+# Install only the base packages needed to run Hermes and keep PID 1 well-behaved.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    ca-certificates \
+    curl \
+    ffmpeg \
+    git \
+    python3 \
+    python3-pip \
+    python3-venv \
+    ripgrep \
+    tar \
+    tini \
+    && rm -rf /var/lib/apt/lists/*
+
+# The container user and writable directories must match the host-mounted paths from config.
+RUN groupadd --gid "${HERMES_AGENT_GID}" hermes-agent \
+    && useradd --uid "${HERMES_AGENT_UID}" --gid "${HERMES_AGENT_GID}" --create-home --home-dir "${HERMES_AGENT_CONTAINER_HOME}" --shell /bin/bash hermes-agent \
+    && mkdir -p "${HERMES_AGENT_CONTAINER_HOME}/.hermes" "${HERMES_AGENT_CONTAINER_WORKSPACE}" \
+    && chown -R hermes-agent:hermes-agent "${HERMES_AGENT_CONTAINER_HOME}" "${HERMES_AGENT_CONTAINER_WORKSPACE}"
+
+# Hermes is installed into an isolated venv so the runtime command path stays predictable.
+RUN python3 -m venv /opt/hermes-venv \
+    && /opt/hermes-venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel uv \
+    && mkdir -p /opt/hermes-src \
+    && curl -fsSL "https://github.com/NousResearch/hermes-agent/archive/refs/tags/${HERMES_AGENT_RELEASE_TAG}.tar.gz" -o /tmp/hermes-agent.tar.gz \
+    && tar -xzf /tmp/hermes-agent.tar.gz --strip-components=1 -C /opt/hermes-src \
+    && /opt/hermes-venv/bin/uv pip install /opt/hermes-src[web] \
+    && rm -rf /opt/hermes-src /tmp/hermes-agent.tar.gz
+
+# WORKDIR must follow the shared config so host workspace mounts land at the active shell location.
+USER hermes-agent
+WORKDIR ${HERMES_AGENT_CONTAINER_WORKSPACE}
+
+# Expose the same dashboard port the host run script publishes.
+EXPOSE ${HERMES_AGENT_DASHBOARD_PORT}
+
+# Tini remains PID 1 so interactive exec sessions and dashboard shutdown behave cleanly.
+ENTRYPOINT ["/usr/bin/tini", "--"]
+# The dashboard binds to the configured port and stays headless because the host opens the browser.
+CMD ["bash", "-lc", "exec hermes dashboard --host 0.0.0.0 --port \"$HERMES_AGENT_DASHBOARD_PORT\" --no-open"]

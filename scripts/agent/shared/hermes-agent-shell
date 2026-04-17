@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# This script opens a shell inside a running workspace container.
+
+# This finds the repo root so the script can reach shared helpers.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+source "$ROOT/lib/shell/shared/common.sh"
+
+# This checks the simple entry rules and loads the saved workspace list.
+hermes_require_no_args "$@"
+hermes_load_workspaces
+
+# This chooses one workspace and looks for its running container.
+workspace="$(hermes_pick_workspace)"
+container_name="$(hermes_running_container "$workspace")"
+
+# This gives a clear message when the chosen workspace is not running yet.
+if [[ -z "$container_name" ]]; then
+  printf 'No running Hermes Agent container found for %s. Run scripts/agent/shared/hermes-agent-run first.\n' "$workspace" >&2
+  exit 1
+fi
+
+# This opens the configured shell command inside the running container.
+hermes_exec_podman_interactive_command exec "$container_name" "$HERMES_AGENT_SHELL_COMMAND"

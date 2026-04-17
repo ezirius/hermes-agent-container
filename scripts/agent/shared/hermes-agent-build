@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# This script builds a fresh Hermes Agent image from the saved repo settings.
+
+# This finds the repo root so the script can reach shared helpers and config.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+source "$ROOT/lib/shell/shared/common.sh"
+
+# This keeps the build entrypoint simple and predictable.
+if [[ $# -ne 0 ]]; then
+  printf 'This script takes no arguments.\n' >&2
+  exit 1
+fi
+
+# This stops the build if the checkout is not fully committed and clean.
+hermes_require_clean_committed_checkout "$ROOT"
+
+# This makes a unique image name so each successful build can be found later.
+printf -v build_suffix '%03d' "$(( $$ % 1000 ))"
+timestamp="$(/bin/date +"%Y%m%d-%H%M%S")-$build_suffix"
+image_name="$HERMES_AGENT_IMAGE_BASENAME-$HERMES_AGENT_VERSION-$timestamp"
+
+# This sends every build setting through from config so the script stays free of hidden defaults.
+podman build \
+  --build-arg HERMES_AGENT_UID="$HERMES_AGENT_UID" \
+  --build-arg HERMES_AGENT_GID="$HERMES_AGENT_GID" \
+  --build-arg HERMES_AGENT_RELEASE_TAG="$HERMES_AGENT_RELEASE_TAG" \
+  --build-arg HERMES_AGENT_DASHBOARD_PORT="$HERMES_AGENT_DASHBOARD_PORT" \
+  --build-arg HERMES_AGENT_CONTAINER_HOME="$HERMES_AGENT_CONTAINER_HOME" \
+  --build-arg HERMES_AGENT_CONTAINER_WORKSPACE="$HERMES_AGENT_CONTAINER_WORKSPACE" \
+  -f "$ROOT/config/containers/shared/Containerfile" \
+  -t "$image_name" \
+  "$ROOT"
