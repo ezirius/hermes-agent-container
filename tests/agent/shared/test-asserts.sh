@@ -42,3 +42,14 @@ assert_file_contains() {
     fail "$message: missing [$needle] in $file_path"
   fi
 }
+
+# This checks that a file does not contain text we should never have written.
+assert_file_not_contains() {
+  local needle="$1"
+  local file_path="$2"
+  local message="$3"
+
+  if grep -Fq -- "$needle" "$file_path"; then
+    fail "$message: unexpected [$needle] in $file_path"
+  fi
+}

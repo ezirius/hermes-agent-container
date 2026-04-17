@@ -60,7 +60,7 @@ grep -q '^# This image consumes shared config via build args and keeps the runti
 grep -q '^# This file holds the shared shell helpers used by the wrapper scripts\.$' "$ROOT/lib/shell/shared/common.sh"
 grep -q '^# This script builds a fresh Hermes Agent image from the saved repo settings\.$' "$ROOT/scripts/agent/shared/hermes-agent-build"
 grep -q '^# This script starts one saved workspace container and opens Hermes inside it\.$' "$ROOT/scripts/agent/shared/hermes-agent-run"
-grep -q '^# This script opens a shell inside a running workspace container\.$' "$ROOT/scripts/agent/shared/hermes-agent-shell"
+grep -q '^# This script opens bash by default, or runs a Hermes command inside a running workspace container\.$' "$ROOT/scripts/agent/shared/hermes-agent-shell"
 
 # This makes sure scripts and helpers do not quietly hard-code workspace-specific settings.
 if grep -R -E 'HERMES_AGENT_PORT_OFFSET_|\bezirius\b|\bnala\b|hermes-agent-workspace' "$ROOT/scripts/agent/shared" "$ROOT/lib/shell/shared" >/dev/null; then

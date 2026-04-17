@@ -2,19 +2,34 @@
 
 set -euo pipefail
 
-# This script opens a shell inside a running workspace container.
+# This script opens bash by default, or runs a Hermes command inside a running workspace container.
 
 # This finds the repo root so the script can reach shared helpers.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 source "$ROOT/lib/shell/shared/common.sh"
 
-# This checks the simple entry rules and loads the saved workspace list.
-hermes_require_no_args "$@"
+# This loads the saved workspace list before the script picks or validates a workspace.
 hermes_load_workspaces
 
-# This chooses one workspace and looks for its running container.
-workspace="$(hermes_pick_workspace)"
+# This chooses the workspace from the argument when present, otherwise from the picker.
+if [[ $# -eq 0 ]]; then
+  workspace="$(hermes_pick_workspace)"
+  command=("$HERMES_AGENT_SHELL_COMMAND")
+else
+  workspace="$1"
+  hermes_validate_workspace_name "$workspace"
+  hermes_workspace_offset "$workspace" >/dev/null
+  shift
+
+  if [[ $# -eq 0 ]]; then
+    command=("$HERMES_AGENT_SHELL_COMMAND")
+  else
+    command=("$HERMES_AGENT_CHAT_COMMAND" "$@")
+  fi
+fi
+
+# This looks for the chosen workspace container after the command mode is decided.
 container_name="$(hermes_running_container "$workspace")"
 
 # This gives a clear message when the chosen workspace is not running yet.
@@ -23,5 +38,5 @@ if [[ -z "$container_name" ]]; then
   exit 1
 fi
 
-# This opens the configured shell command inside the running container.
-hermes_exec_podman_interactive_command exec "$container_name" "$HERMES_AGENT_SHELL_COMMAND"
+# This opens bash by default, or runs `hermes ...` when extra command words were given.
+hermes_exec_podman_interactive_command exec "$container_name" "${command[@]}"

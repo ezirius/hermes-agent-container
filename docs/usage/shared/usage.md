@@ -10,6 +10,22 @@ The shared scripts are intended to work on both macOS and Linux hosts.
 - Start a configured workspace: `scripts/agent/shared/hermes-agent-run`
 - Open a shell in a running workspace container: `scripts/agent/shared/hermes-agent-shell`
 
+Command forms:
+
+- `scripts/agent/shared/hermes-agent-run`
+  - no args: show the workspace picker
+  - one arg: use that workspace directly
+- `scripts/agent/shared/hermes-agent-shell`
+  - no args: show the workspace picker, then open `bash`
+  - one arg: use that workspace directly, then open `bash`
+  - extra args after the workspace: run `hermes <args...>` inside that workspace
+
+Examples:
+
+- `scripts/agent/shared/hermes-agent-run ezirius`
+- `scripts/agent/shared/hermes-agent-shell ezirius`
+- `scripts/agent/shared/hermes-agent-shell ezirius auth list`
+
 ## Host Behavior
 
 The dashboard is opened on the host after the container starts.

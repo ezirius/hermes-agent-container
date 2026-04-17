@@ -56,6 +56,29 @@ case "$1" in
       elif [[ "${HERMES_TEST_STALE_MODE:-present}" == "same-name" ]]; then
         printf 'hermes-agent-alpha-0.10.0-20260417-120000-123\n'
       fi
+    elif [[ "${HERMES_TEST_RUNNING_MODE:-running}" == "dies-before-exec" ]]; then
+      if [[ -f "${HERMES_TEST_PODMAN_LOG}.ran" && ! -f "${HERMES_TEST_PODMAN_LOG}.running-once" ]]; then
+        : >"${HERMES_TEST_PODMAN_LOG}.running-once"
+        case "$*" in
+          *beta*)
+            printf 'hermes-agent-beta-0.10.0-20260417-120000-123\n'
+            ;;
+          *)
+            printf 'hermes-agent-alpha-0.10.0-20260417-120000-123\n'
+            ;;
+        esac
+      fi
+    elif [[ "${HERMES_TEST_RUNNING_MODE:-running}" == "dies-after-open" ]]; then
+      if [[ ! -f "${HERMES_TEST_OPEN_LOG}.opened" ]]; then
+        case "$*" in
+          *beta*)
+            printf 'hermes-agent-beta-0.10.0-20260417-120000-123\n'
+            ;;
+          *)
+            printf 'hermes-agent-alpha-0.10.0-20260417-120000-123\n'
+            ;;
+        esac
+      fi
     elif [[ "${HERMES_TEST_RUNNING_MODE:-running}" == "stopped" && -f "${HERMES_TEST_PODMAN_LOG}.started" ]]; then
       case "$*" in
         *beta*)
@@ -82,6 +105,7 @@ case "$1" in
     if [[ "${HERMES_TEST_RUN_FAIL:-0}" == "1" ]]; then
       exit 1
     fi
+    : >"${HERMES_TEST_PODMAN_LOG}.ran"
     printf 'new-container\n'
     ;;
   start)
@@ -102,6 +126,7 @@ set -euo pipefail
 if [[ "${HERMES_TEST_OPEN_FAIL:-0}" == "1" ]]; then
   exit 1
 fi
+: >"${HERMES_TEST_OPEN_LOG}.opened"
 printf '%s\n' "$*" >>"$HERMES_TEST_OPEN_LOG"
 EOF
 
@@ -111,6 +136,7 @@ set -euo pipefail
 if [[ "${HERMES_TEST_XDG_OPEN_FAIL:-0}" == "1" ]]; then
   exit 1
 fi
+: >"${HERMES_TEST_OPEN_LOG}.opened"
 printf '%s\n' "$*" >>"$HERMES_TEST_OPEN_LOG"
 EOF
 
@@ -139,11 +165,13 @@ EOF
 PODMAN_LOG="$TMP_DIR/podman.log"
 OPEN_LOG="$TMP_DIR/open.log"
 RUN_STDOUT="$TMP_DIR/run.stdout"
+RUN_STDERR="$TMP_DIR/run.stderr"
 
 # This is the normal happy path for choosing beta and starting its workspace container.
-printf '2\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" >"$RUN_STDOUT"
+printf '2\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" >"$RUN_STDOUT" 2>"$RUN_STDERR"
 
 # These checks prove the script used the saved workspace offset, mounts, and dashboard URL.
+assert_file_contains 'Selection:' "$RUN_STDERR" 'run should show an explicit selection prompt'
 assert_file_contains '--filter name=^hermes-agent-beta-' "$PODMAN_LOG" 'run should clean matching workspace containers'
 assert_file_contains '-p 9434:9234' "$PODMAN_LOG" 'run should derive host port from config offset'
 assert_file_contains "$TMP_DIR/base/beta/hermes-agent-home:/home/hermes-agent" "$PODMAN_LOG" 'run should derive host home from shared base path'
@@ -155,10 +183,25 @@ assert_file_contains 'exec -i hermes-agent-beta-0.10.0-20260417-120000-123 herme
 # This checks that localhost-prefixed local images are normalized before use.
 : >"$PODMAN_LOG"
 : >"$OPEN_LOG"
-printf '1\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_IMAGE_MODE='localhost' bash "$ROOT/scripts/agent/shared/hermes-agent-run" >"$RUN_STDOUT"
+printf '1\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_IMAGE_MODE='localhost' bash "$ROOT/scripts/agent/shared/hermes-agent-run" >"$RUN_STDOUT" 2>"$RUN_STDERR"
 
 assert_file_contains 'run -d --name hermes-agent-alpha-0.10.0-20260417-120000-123' "$PODMAN_LOG" 'run should normalize localhost-prefixed local images before naming the container'
 assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes' "$PODMAN_LOG" 'run should attach using the normalized container name'
+
+# This checks that one workspace argument skips the picker and still runs correctly.
+: >"$PODMAN_LOG"
+: >"$OPEN_LOG"
+PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" alpha >"$RUN_STDOUT" 2>"$RUN_STDERR"
+
+assert_file_contains 'run -d --name hermes-agent-alpha-0.10.0-20260417-120000-123' "$PODMAN_LOG" 'run should accept a workspace argument and skip the picker'
+assert_file_not_contains 'Selection:' "$RUN_STDERR" 'run should not show the picker when a workspace argument is provided'
+
+# This checks that extra arguments are rejected with a clear usage message.
+if PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" alpha extra >/dev/null 2>"$TMP_DIR/run-args.stderr"; then
+  fail 'run should reject more than one argument'
+fi
+
+assert_file_contains 'This script takes zero or one argument: [workspace].' "$TMP_DIR/run-args.stderr" 'run should explain its accepted argument count'
 
 # This checks that a broken opener does not stop the CLI from attaching.
 : >"$PODMAN_LOG"
@@ -211,6 +254,29 @@ fi
 
 assert_file_not_contains 'rm -f stale-1' "$PODMAN_LOG" 'run should not remove old containers when the replacement exits before the running check passes'
 assert_file_not_contains 'rm -f stale-2' "$PODMAN_LOG" 'run should keep other old containers when the replacement exits before the running check passes'
+
+# This checks that the wrapper fails cleanly if the container dies after startup but before exec.
+: >"$PODMAN_LOG"
+: >"$OPEN_LOG"
+rm -f "${PODMAN_LOG}.ran"
+rm -f "${PODMAN_LOG}.running-once"
+if printf '1\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_RUNNING_MODE='dies-before-exec' bash "$ROOT/scripts/agent/shared/hermes-agent-run" >"$RUN_STDOUT" 2>"$TMP_DIR/dies-before-exec.stderr"; then
+  fail 'run should fail when the container stops after the initial running check'
+fi
+
+assert_file_contains 'Hermes Agent container stopped before attach: hermes-agent-alpha-0.10.0-20260417-120000-123' "$TMP_DIR/dies-before-exec.stderr" 'run should explain when the container dies after startup but before exec'
+assert_file_not_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes' "$PODMAN_LOG" 'run should not try to exec into a container that has already stopped'
+
+# This checks that the wrapper still fails cleanly if the container dies after the dashboard open step.
+: >"$PODMAN_LOG"
+: >"$OPEN_LOG"
+rm -f "${OPEN_LOG}.opened"
+if printf '1\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_RUNNING_MODE='dies-after-open' bash "$ROOT/scripts/agent/shared/hermes-agent-run" >"$RUN_STDOUT" 2>"$TMP_DIR/dies-after-open.stderr"; then
+  fail 'run should fail when the container stops after the dashboard open step'
+fi
+
+assert_file_contains 'Hermes Agent container stopped before attach: hermes-agent-alpha-0.10.0-20260417-120000-123' "$TMP_DIR/dies-after-open.stderr" 'run should explain when the container dies after the dashboard open step'
+assert_file_not_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes' "$PODMAN_LOG" 'run should not try to exec into a container that stops during dashboard open handling'
 
 # This checks that an exact matching container is reused instead of recreated.
 : >"$PODMAN_LOG"

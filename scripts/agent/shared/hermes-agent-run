@@ -9,9 +9,14 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 source "$ROOT/lib/shell/shared/common.sh"
 
-# This checks the simple entry rules and loads the saved workspace list.
-hermes_require_no_args "$@"
+# This loads the saved workspace list before the script picks or validates a workspace.
 hermes_load_workspaces
+
+# This command either uses the picker or accepts one direct workspace name.
+if [[ $# -gt 1 ]]; then
+  printf 'This script takes zero or one argument: [workspace].\n' >&2
+  exit 1
+fi
 
 # This finds the newest local image the run script is allowed to use.
 image_name="$(hermes_latest_image)"
@@ -21,8 +26,15 @@ if [[ -z "$image_name" ]]; then
   exit 1
 fi
 
-# This chooses the workspace and builds the host paths and names around it.
-workspace="$(hermes_pick_workspace)"
+# This chooses the workspace from the argument when present, otherwise from the picker.
+if [[ $# -eq 1 ]]; then
+  workspace="$1"
+  hermes_validate_workspace_name "$workspace"
+else
+  workspace="$(hermes_pick_workspace)"
+fi
+
+# This builds the host paths and names around the selected workspace.
 port_offset="$(hermes_workspace_offset "$workspace")"
 host_home="$HERMES_AGENT_BASE_PATH/$workspace/$HERMES_AGENT_HOST_HOME_DIRNAME"
 host_workspace="$HERMES_AGENT_BASE_PATH/$workspace/$HERMES_AGENT_HOST_WORKSPACE_DIRNAME"
@@ -82,4 +94,11 @@ fi
 # This waits a moment, opens the dashboard on the host, and then attaches to Hermes.
 sleep 2
 hermes_open_dashboard "$dashboard_url"
+
+# This checks one last time before attach so we do not exec into a container that already stopped.
+if ! hermes_container_is_running "$container_name"; then
+  printf 'Hermes Agent container stopped before attach: %s\n' "$container_name" >&2
+  exit 1
+fi
+
 hermes_exec_podman_interactive_command exec "$container_name" "$HERMES_AGENT_CHAT_COMMAND"

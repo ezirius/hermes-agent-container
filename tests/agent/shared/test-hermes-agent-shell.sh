@@ -38,7 +38,14 @@ case "$1" in
   ps)
     case "${HERMES_TEST_CONTAINER_MODE:-present}" in
       present)
-        printf 'hermes-agent-beta-0.10.0-20260417-120000-123\n'
+        case "$*" in
+          *beta*)
+            printf 'hermes-agent-beta-0.10.0-20260417-120000-123\n'
+            ;;
+          *)
+            printf 'hermes-agent-alpha-0.10.0-20260417-120000-123\n'
+            ;;
+        esac
         ;;
       multiple)
         printf 'hermes-agent-beta-0.10.0-20260417-120000-123\n'
@@ -74,13 +81,35 @@ HERMES_AGENT_HOST_WORKSPACE_DIRNAME="hermes-agent-general"
 EOF
 
 PODMAN_LOG="$TMP_DIR/podman.log"
+SHELL_STDERR="$TMP_DIR/shell.stderr"
 
 # This is the normal case where beta has one running container.
-printf 'beta\n' | PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" >/dev/null
+printf 'beta\n' | PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" >/dev/null 2>"$SHELL_STDERR"
 
 # These checks prove the shell command looked up the right container and attached to it.
+assert_file_contains 'Selection:' "$SHELL_STDERR" 'shell should show an explicit selection prompt'
 assert_file_contains '--filter name=^hermes-agent-beta-' "$PODMAN_LOG" 'shell should filter running containers by chosen workspace'
 assert_file_contains 'exec -i hermes-agent-beta-0.10.0-20260417-120000-123 bash' "$PODMAN_LOG" 'shell should exec configured shell command'
+
+# This checks that one workspace argument skips the picker and still opens bash.
+: >"$PODMAN_LOG"
+PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha >/dev/null 2>"$SHELL_STDERR"
+
+assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 bash' "$PODMAN_LOG" 'shell should accept a workspace argument and still open bash'
+assert_file_not_contains 'Selection:' "$SHELL_STDERR" 'shell should not show the picker when a workspace argument is provided'
+
+# This checks that extra arguments run through hermes inside the chosen workspace.
+: >"$PODMAN_LOG"
+PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha auth list >/dev/null 2>"$SHELL_STDERR"
+
+assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes auth list' "$PODMAN_LOG" 'shell should run hermes with forwarded arguments after the workspace name'
+
+# This checks that a typed workspace still has to be one of the configured ones.
+if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" gamma >/dev/null 2>"$TMP_DIR/unconfigured.stderr"; then
+  fail 'shell should reject an unconfigured workspace argument'
+fi
+
+assert_file_contains 'Workspace gamma is not configured.' "$TMP_DIR/unconfigured.stderr" 'shell should reject unconfigured workspace arguments before looking up containers'
 
 # This checks that the newest running container wins when more than one matches.
 : >"$PODMAN_LOG"

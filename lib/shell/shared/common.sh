@@ -273,6 +273,7 @@ hermes_pick_workspace() {
   for index in "${!HERMES_AGENT_WORKSPACE_NAMES[@]}"; do
     printf '%d) %s\n' "$((index + 1))" "${HERMES_AGENT_WORKSPACE_NAMES[$index]}" >&2
   done
+  printf 'Selection: ' >&2
 
   read -r selection
 
