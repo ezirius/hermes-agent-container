@@ -53,6 +53,12 @@ config/containers/shared/Containerfile
 - Architecture notes: `docs/usage/shared/architecture.md`
 - Repository authoring rules: `AGENTS.md`
 
+## Security Note
+
+The wrapper currently starts `hermes dashboard` with `--host 0.0.0.0 --insecure` so the published Podman port can reach the containerized dashboard. The published host port is bound to `127.0.0.1` to keep that surface local by default. This is still an explicit local-development tradeoff, not a hardened deployment mode.
+
+If a matching workspace container dies before attach, the wrapper removes it and recreates it once before failing. When startup still fails, the wrapper prints a short container state summary and recent container logs so the cause is visible immediately.
+
 ## Tests
 
 Run the shell suite sequentially because tests temporarily rewrite the shared config file:

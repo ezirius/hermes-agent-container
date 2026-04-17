@@ -46,6 +46,25 @@ container_name="$HERMES_AGENT_IMAGE_BASENAME-$workspace-$image_suffix"
 dashboard_url="http://127.0.0.1:$host_port"
 reuse_existing=0
 matching_running_container=""
+recreated_exact_match_container=0
+
+# This checks whether an existing container already publishes the dashboard on host loopback only.
+dashboard_port_is_loopback_only() {
+  local published
+
+  published="$(podman port "$container_name" "$HERMES_AGENT_DASHBOARD_PORT/tcp" 2>/dev/null || true)"
+  [[ "$published" == 127.0.0.1:* ]]
+}
+
+# This creates the workspace container with the current image, mounts, and dashboard publish contract.
+create_workspace_container() {
+  podman run -d \
+    --name "$container_name" \
+    -p "127.0.0.1:$host_port:$HERMES_AGENT_DASHBOARD_PORT" \
+    -v "$host_home:$HERMES_AGENT_CONTAINER_HOME" \
+    -v "$host_workspace:$HERMES_AGENT_CONTAINER_WORKSPACE" \
+    "$image_name"
+}
 
 # This makes sure the host folders exist before the container is started.
 mkdir -p "$host_home" "$host_workspace"
@@ -62,43 +81,66 @@ done <<< "$old_containers"
 # This checks whether that exact matching container is already running.
 matching_running_container="$(podman ps --format '{{.Names}}' --filter "name=$(hermes_container_name_regex "$container_name")" | head -n 1)"
 
+# This forces a replacement when an older exact-match container still exposes the dashboard beyond host loopback.
+if [[ "$reuse_existing" == "1" ]] && ! dashboard_port_is_loopback_only; then
+  podman rm -f "$container_name" >/dev/null 2>&1 || true
+  reuse_existing=0
+  matching_running_container=""
+fi
+
 # This creates a new container when needed, or reuses the right old one when it already exists.
 if [[ "$reuse_existing" != "1" ]]; then
-  podman run -d \
-    --name "$container_name" \
-    -p "$host_port:$HERMES_AGENT_DASHBOARD_PORT" \
-    -v "$host_home:$HERMES_AGENT_CONTAINER_HOME" \
-    -v "$host_workspace:$HERMES_AGENT_CONTAINER_WORKSPACE" \
-    "$image_name"
+  create_workspace_container
 
 elif [[ "$matching_running_container" != "$container_name" ]]; then
   # This starts the matching stopped container instead of making a duplicate one.
   podman start "$container_name" >/dev/null
 fi
 
-# This waits a little so the script only attaches after the container is really running.
-if ! hermes_wait_for_running_container "$container_name"; then
-  printf 'Hermes Agent container failed to stay running: %s\n' "$container_name" >&2
-  exit 1
-fi
+while true; do
+  # This waits a little so the script only attaches after the container is really running.
+  if ! hermes_wait_for_running_container "$container_name"; then
+    if [[ "$reuse_existing" == "1" && "$recreated_exact_match_container" != "1" ]]; then
+      podman rm -f "$container_name" >/dev/null 2>&1 || true
+      create_workspace_container
+      reuse_existing=0
+      recreated_exact_match_container=1
+      continue
+    fi
 
-# This removes older workspace containers only after the replacement proved it stayed up.
-if [[ "$reuse_existing" != "1" ]]; then
-  while IFS= read -r old_container; do
-    [[ -n "$old_container" ]] || continue
-    [[ "$old_container" == "$container_name" ]] && continue
-    podman rm -f "$old_container" >/dev/null 2>&1 || true
-  done <<< "$old_containers"
-fi
+    printf 'Hermes Agent container failed to stay running: %s\n' "$container_name" >&2
+    hermes_print_container_startup_diagnostics "$container_name"
+    exit 1
+  fi
 
-# This waits a moment, opens the dashboard on the host, and then attaches to Hermes.
-sleep 2
-hermes_open_dashboard "$dashboard_url"
+  # This removes older workspace containers only after the replacement proved it stayed up.
+  if [[ "$reuse_existing" != "1" ]]; then
+    while IFS= read -r old_container; do
+      [[ -n "$old_container" ]] || continue
+      [[ "$old_container" == "$container_name" ]] && continue
+      podman rm -f "$old_container" >/dev/null 2>&1 || true
+    done <<< "$old_containers"
+  fi
 
-# This checks one last time before attach so we do not exec into a container that already stopped.
-if ! hermes_container_is_running "$container_name"; then
-  printf 'Hermes Agent container stopped before attach: %s\n' "$container_name" >&2
-  exit 1
-fi
+  # This opens the dashboard, then confirms the container stays up across the pre-attach window.
+  hermes_open_dashboard "$dashboard_url"
+
+  # This recreates a poisoned exact-match container once before giving up on attach.
+  if ! hermes_wait_for_stable_running_container "$container_name"; then
+    if [[ "$reuse_existing" == "1" && "$recreated_exact_match_container" != "1" ]]; then
+      podman rm -f "$container_name" >/dev/null 2>&1 || true
+      create_workspace_container
+      reuse_existing=0
+      recreated_exact_match_container=1
+      continue
+    fi
+
+    printf 'Hermes Agent container stopped before attach: %s\n' "$container_name" >&2
+    hermes_print_container_startup_diagnostics "$container_name"
+    exit 1
+  fi
+
+  break
+done
 
 hermes_exec_podman_interactive_command exec "$container_name" "$HERMES_AGENT_CHAT_COMMAND"

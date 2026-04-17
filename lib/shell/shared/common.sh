@@ -383,6 +383,70 @@ hermes_wait_for_running_container() {
   return 1
 }
 
+# This confirms a running container stays up across the short pre-attach window.
+hermes_wait_for_stable_running_container() {
+  local container_name="$1"
+  local attempt
+
+  for attempt in 1 2; do
+    if ! hermes_container_is_running "$container_name"; then
+      return 1
+    fi
+    sleep 1
+  done
+
+  hermes_container_is_running "$container_name"
+}
+
+# This gathers a short state summary without failing the wrapper when diagnostics break.
+hermes_container_state_summary() {
+  local container_name="$1"
+  local summary
+
+  if summary="$(podman inspect --format 'status={{.State.Status}} running={{.State.Running}} exit_code={{.State.ExitCode}}' "$container_name" 2>/dev/null)"; then
+    if [[ -n "$summary" ]]; then
+      printf '%s\n' "$summary"
+      return 0
+    fi
+  fi
+
+  printf 'unavailable\n'
+}
+
+# This reads recent container logs without failing the wrapper when Podman cannot provide them.
+hermes_container_recent_logs() {
+  local container_name="$1"
+  local logs
+
+  if logs="$(podman logs --tail 20 "$container_name" 2>/dev/null)"; then
+    if [[ -n "$logs" ]]; then
+      printf '%s\n' "$logs"
+      return 0
+    fi
+
+    printf '(no recent logs)\n'
+    return 0
+  fi
+
+  return 1
+}
+
+# This prints a compact diagnostic block for startup failures.
+hermes_print_container_startup_diagnostics() {
+  local container_name="$1"
+
+  printf 'Container state: %s\n' "$(hermes_container_state_summary "$container_name")" >&2
+
+  local recent_logs
+  if ! recent_logs="$(hermes_container_recent_logs "$container_name")"; then
+    printf 'Recent container logs: unavailable\n' >&2
+    return 0
+  fi
+
+  printf 'Recent container logs:\n' >&2
+  printf '%s\n' "$recent_logs" >&2
+}
+
 # This chooses which host command should open the dashboard URL.
 hermes_resolve_open_command() {
   local configured="${HERMES_AGENT_OPEN_COMMAND:-auto}"
