@@ -20,6 +20,7 @@ bash -n \
   "$ROOT/tests/shared/test-args.sh" \
   "$ROOT/tests/shared/test-ref-resolution.sh" \
   "$ROOT/tests/shared/test-runtime.sh" \
+  "$ROOT/tests/shared/test-build-smoke.sh" \
   "$ROOT/tests/shared/test-entrypoint.sh" \
   "$ROOT/tests/shared/test-patches.sh"
 
@@ -36,6 +37,7 @@ bash "$ROOT/tests/shared/test-common.sh"
 bash "$ROOT/tests/shared/test-args.sh"
 bash "$ROOT/tests/shared/test-ref-resolution.sh"
 bash "$ROOT/tests/shared/test-runtime.sh"
+bash "$ROOT/tests/shared/test-build-smoke.sh"
 bash "$ROOT/tests/shared/test-entrypoint.sh"
 bash "$ROOT/tests/shared/test-patches.sh"
 

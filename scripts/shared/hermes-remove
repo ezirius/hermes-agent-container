@@ -25,6 +25,100 @@ MODE="$1"
 require_podman
 SELECTION="$(pick_remove_target "$MODE")"
 
+newest_remove_keep_values() {
+  local mode="$1"
+  shift
+  local rows=("$@")
+  local keep_values=""
+  local row value lane upstream wrapper commitstamp workspace image_id name workspace_key family_key
+  local associated_workspaces
+  declare -A best_commit_by_key=()
+  declare -A best_value_by_key=()
+  declare -A family_workspace_map=()
+  local has_any_workspace_association=0
+
+  if [[ "$mode" == "container" ]]; then
+    for row in "${rows[@]}"; do
+      IFS=$'\t' read -r value _ _ _ commitstamp _ <<< "$row"
+      workspace="$(container_workspace "$value" 2>/dev/null || true)"
+      [[ -n "$workspace" ]] || continue
+      if [[ -z "${best_commit_by_key[$workspace]:-}" || "$commitstamp" > "${best_commit_by_key[$workspace]}" ]]; then
+        best_commit_by_key[$workspace]="$commitstamp"
+        best_value_by_key[$workspace]="$value"
+      fi
+    done
+  else
+    for row in "${rows[@]}"; do
+      IFS=$'\t' read -r value lane upstream wrapper commitstamp _ <<< "$row"
+      image_id="$(image_id "$value" 2>/dev/null || true)"
+      [[ -n "$image_id" ]] || continue
+      family_key="$lane"$'\t'"$upstream"$'\t'"$wrapper"
+      while IFS= read -r name; do
+        [[ -n "$name" ]] || continue
+        if [[ "$(container_image_id "$name" 2>/dev/null || true)" != "$image_id" ]]; then
+          continue
+        fi
+        workspace="$(container_workspace "$name" 2>/dev/null || true)"
+        [[ -n "$workspace" ]] || continue
+        has_any_workspace_association=1
+        contains_line "${family_workspace_map[$family_key]:-}" "$workspace" || family_workspace_map[$family_key]+="$workspace"$'\n'
+      done < <(project_container_names)
+    done
+
+    for row in "${rows[@]}"; do
+      IFS=$'\t' read -r value lane upstream wrapper commitstamp _ <<< "$row"
+      image_id="$(image_id "$value" 2>/dev/null || true)"
+      [[ -n "$image_id" ]] || continue
+      associated_workspaces=""
+      family_key="$lane"$'\t'"$upstream"$'\t'"$wrapper"
+      while IFS= read -r name; do
+        [[ -n "$name" ]] || continue
+        if [[ "$(container_image_id "$name" 2>/dev/null || true)" != "$image_id" ]]; then
+          continue
+        fi
+        workspace="$(container_workspace "$name" 2>/dev/null || true)"
+        [[ -n "$workspace" ]] || continue
+        contains_line "$associated_workspaces" "$workspace" || associated_workspaces+="$workspace"$'\n'
+      done < <(project_container_names)
+
+      if [[ -z "$associated_workspaces" ]]; then
+        associated_workspaces="${family_workspace_map[$family_key]:-}"
+      fi
+
+      if [[ -z "$associated_workspaces" ]]; then
+        if [[ "$has_any_workspace_association" == "1" ]]; then
+          workspace_key="__unassigned__:$family_key"
+        else
+          workspace_key="__unassigned__"
+        fi
+        if [[ -z "${best_commit_by_key[$workspace_key]:-}" || "$commitstamp" > "${best_commit_by_key[$workspace_key]}" ]]; then
+          best_commit_by_key[$workspace_key]="$commitstamp"
+          best_value_by_key[$workspace_key]="$value"
+        fi
+        continue
+      fi
+
+      while IFS= read -r workspace_key; do
+        [[ -n "$workspace_key" ]] || continue
+        if [[ -z "${best_commit_by_key[$workspace_key]:-}" || "$commitstamp" > "${best_commit_by_key[$workspace_key]}" ]]; then
+          best_commit_by_key[$workspace_key]="$commitstamp"
+          best_value_by_key[$workspace_key]="$value"
+        fi
+      done <<< "$associated_workspaces"
+    done
+  fi
+
+  for workspace_key in "${!best_value_by_key[@]}"; do
+    if [[ -z "$keep_values" ]]; then
+      keep_values="${best_value_by_key[$workspace_key]}"
+    else
+      keep_values+=$'\n'"${best_value_by_key[$workspace_key]}"
+    fi
+  done
+
+  printf '%s' "$keep_values"
+}
+
 if [[ "$SELECTION" == "All" || "$SELECTION" == "All, but newest" ]]; then
   ROWS=()
   while IFS= read -r row; do
@@ -39,40 +133,8 @@ if [[ "$SELECTION" == "All" || "$SELECTION" == "All, but newest" ]]; then
   )
 
   KEEP_VALUES=""
-  KEPT_WORKSPACES=""
   if [[ "$SELECTION" == "All, but newest" ]]; then
-    if [[ "$MODE" == "container" ]]; then
-      for ROW in "${ROWS[@]}"; do
-        IFS=$'\t' read -r VALUE _ _ _ _ _ <<< "$ROW"
-        WORKSPACE="$(container_workspace "$VALUE")"
-        [[ -n "$WORKSPACE" ]] || continue
-        if ! contains_line "$KEPT_WORKSPACES" "$WORKSPACE"; then
-          KEPT_WORKSPACES+="$WORKSPACE"$'\n'
-          KEEP_VALUES+="$VALUE"$'\n'
-        fi
-      done
-    else
-      for ROW in "${ROWS[@]}"; do
-        IFS=$'\t' read -r VALUE _ _ _ _ _ <<< "$ROW"
-        IMAGE_ID="$(image_id "$VALUE" 2>/dev/null || true)"
-        [[ -n "$IMAGE_ID" ]] || continue
-        while IFS= read -r NAME; do
-          [[ -n "$NAME" ]] || continue
-          if [[ "$(container_image_id "$NAME" 2>/dev/null || true)" == "$IMAGE_ID" ]]; then
-            WORKSPACE="$(container_workspace "$NAME")"
-            [[ -n "$WORKSPACE" ]] || continue
-            if ! contains_line "$KEPT_WORKSPACES" "$WORKSPACE"; then
-              KEPT_WORKSPACES+="$WORKSPACE"$'\n'
-              KEEP_VALUES+="$VALUE"$'\n'
-            fi
-          fi
-        done < <(project_container_names)
-      done
-      if [[ -z "$KEEP_VALUES" && ${#ROWS[@]} -gt 0 ]]; then
-        IFS=$'\t' read -r VALUE _ <<< "${ROWS[0]}"
-        KEEP_VALUES="$VALUE"$'\n'
-      fi
-    fi
+    KEEP_VALUES="$(newest_remove_keep_values "$MODE" "${ROWS[@]}")"
   fi
 
   for ROW in "${ROWS[@]}"; do

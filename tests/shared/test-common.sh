@@ -20,9 +20,21 @@ assert_eq() {
 
 export HERMES_BASE_ROOT="$ROOT/.tmp/workspaces"
 rm -rf "$HERMES_BASE_ROOT"
+rm -rf "$ROOT/config/patches/__pycache__"
+assert_eq 'hermes.wrapper' "$HERMES_LABEL_NAMESPACE" 'label namespace loads from shared config'
+assert_eq 'hermes.wrapper.workspace' "$HERMES_LABEL_WORKSPACE" 'workspace label key loads from shared config'
+assert_eq '24.04' "$HERMES_UBUNTU_LTS_VERSION" 'ubuntu pin loads from tool versions config'
+assert_eq '24' "$HERMES_NODE_LTS_VERSION" 'node pin loads from tool versions config'
+assert_eq 'auto' "$HERMES_PODMAN_TTY_WRAPPER" 'podman tty wrapper mode loads from shared config'
 assert_eq "$HOME" "$(normalize_path '~')" 'normalize_path expands bare tilde'
 assert_eq "$HOME/tmp/demo" "$(normalize_path '~/tmp/demo')" 'normalize_path expands home-relative path'
 assert_eq '/tmp/demo' "$(normalize_path '/tmp/demo')" 'normalize_path leaves absolute path unchanged'
+
+mkdir -p "$ROOT/.tmp/workspaces/zeta" "$ROOT/.tmp/workspaces/alpha" "$ROOT/.tmp/workspaces/gamma"
+assert_eq $'alpha\ngamma\nzeta' "$(workspace_names_from_base_root)" 'workspace names are listed in alphabetical order'
+assert_eq 'manual' "$(resolve_workspace_argument manual)" 'explicit workspace values bypass selection'
+assert_eq 'alpha' "$(HERMES_SELECT_INDEX=1 resolve_workspace_argument '')" 'workspace selection chooses the first alphabetical workspace'
+assert_eq 'gamma' "$(HERMES_SELECT_INDEX=2 resolve_workspace_argument '')" 'workspace selection honours the chosen alphabetical index'
 
 resolve_workspace "ezirius"
 assert_eq "ezirius" "$WORKSPACE_NAME" "workspace name resolves"
@@ -38,6 +50,18 @@ test -d "$HERMES_HOME_DIR/cache/images"
 test -d "$HERMES_HOME_DIR/cache/audio"
 test -d "$HERMES_HOME_DIR/platforms/whatsapp/session"
 test -d "$HERMES_WORKSPACE_DIR"
+
+HERMES_WORKSPACE_HOME_DIRNAME="runtime-home"
+HERMES_WORKSPACE_DIRNAME="project-workspace"
+resolve_workspace "custom-layout"
+ensure_workspace_dirs
+assert_eq "$ROOT/.tmp/workspaces/custom-layout/runtime-home" "$HERMES_HOME_DIR" "custom Hermes home dirname resolves under workspace root"
+assert_eq "$ROOT/.tmp/workspaces/custom-layout/project-workspace" "$HERMES_WORKSPACE_DIR" "custom workspace dirname resolves under workspace root"
+test -d "$HERMES_HOME_DIR/sessions"
+test -d "$HERMES_WORKSPACE_DIR"
+HERMES_WORKSPACE_HOME_DIRNAME="hermes-home"
+HERMES_WORKSPACE_DIRNAME="hermes-workspace"
+resolve_workspace "ezirius"
 
 touch "$WORKSPACE_ROOT/auth.json"
 touch "$WORKSPACE_ROOT/.env"
@@ -98,7 +122,7 @@ fi
 grep -Fq "HERMES_PODMAN_TTY_WRAPPER=script requires 'script' to be installed" "$ERR_FILE"
 
 WRAP_TMP="$(mktemp -d)"
-trap 'rm -f "$ERR_FILE"; rm -rf "$WRAP_TMP"' EXIT
+trap 'rm -f "$ERR_FILE"; rm -rf "${WRAP_TMP:-}" "${CONFIG_UPDATE_TMP:-}" "${BROKEN_ROOT:-}" "${GIT_TMP:-}"' EXIT
 cat > "$WRAP_TMP/podman" <<'EOF'
 #!/usr/bin/env bash
 printf 'podman %s\n' "$*" > "$WRAP_TMP/podman-args"
@@ -118,9 +142,43 @@ if bash -lc 'set -euo pipefail; source "$1"; export HERMES_BASE_ROOT="~other/tmp
 fi
 grep -Fq 'unsupported path form: ~other/tmp (use an absolute path or ~/...)' "$ERR_FILE"
 
+CONFIG_UPDATE_TMP="$(mktemp)"
+printf 'HERMES_NODE_LTS_VERSION="24"\n' > "$CONFIG_UPDATE_TMP"
+update_config_assignment "$CONFIG_UPDATE_TMP" HERMES_NODE_LTS_VERSION 25
+grep -Fq 'HERMES_NODE_LTS_VERSION="25"' "$CONFIG_UPDATE_TMP"
+
+if bash -lc 'set -euo pipefail; source "$1"; update_config_assignment "$2" MISSING_KEY value' _ "$ROOT/lib/shell/common.sh" "$CONFIG_UPDATE_TMP" >/dev/null 2> "$ERR_FILE"; then
+  printf 'assertion failed: updating a missing config assignment should fail clearly\n' >&2
+  exit 1
+fi
+grep -Fq 'missing MISSING_KEY in' "$ERR_FILE"
+
+BROKEN_ROOT="$(mktemp -d)"
+mkdir -p "$BROKEN_ROOT/lib/shell" "$BROKEN_ROOT/config/shared"
+cp "$ROOT/lib/shell/common.sh" "$BROKEN_ROOT/lib/shell/common.sh"
+cat > "$BROKEN_ROOT/config/shared/hermes.conf" <<'EOF'
+HERMES_IMAGE_NAME="broken-hermes"
+EOF
+cat > "$BROKEN_ROOT/config/shared/tool-versions.conf" <<'EOF'
+HERMES_UBUNTU_LTS_VERSION="24.04"
+HERMES_NODE_LTS_VERSION="24"
+EOF
+if ROOT="$BROKEN_ROOT" bash -lc 'set -euo pipefail; source "$ROOT/lib/shell/common.sh"' >/dev/null 2> "$ERR_FILE"; then
+  printf 'assertion failed: missing required shared config values should fail clearly\n' >&2
+  exit 1
+fi
+grep -Fq 'missing HERMES_PROJECT_PREFIX in config/shared/hermes.conf' "$ERR_FILE"
+
+if bash -lc 'set -euo pipefail; source "$1"; export HERMES_BASE_ROOT="$2"; resolve_workspace_argument ""' _ "$ROOT/lib/shell/common.sh" "$ROOT/.tmp/no-workspaces" >/dev/null 2> "$ERR_FILE"; then
+  printf 'assertion failed: missing workspaces should fail clearly\n' >&2
+  exit 1
+fi
+grep -Fq 'no workspaces found under' "$ERR_FILE"
+
 assert_eq 'main' "$(HERMES_RELEASE_OPTION_CACHE=$'1.2.3\tv1.2.3' display_upstream_ref main)" 'display_upstream_ref preserves main'
 assert_eq '1.2.3' "$(HERMES_RELEASE_OPTION_CACHE=$'1.2.3\tv1.2.3' display_upstream_ref v1.2.3)" 'display_upstream_ref maps git tag to display label'
 assert_eq 'custom-tag' "$(HERMES_RELEASE_OPTION_CACHE=$'1.2.3\tv1.2.3' display_upstream_ref custom-tag)" 'display_upstream_ref falls back to literal ref'
+assert_eq $'mock-hermes-image:test-main-improve-production-and-testing-20260409-080000-beef123\ttest\tmain\timprove-production-and-testing\t20260409-080000-beef123' "$(image_metadata 'mock-hermes-image:test-main-improve-production-and-testing-20260409-080000-beef123')" 'image metadata parsing preserves hyphenated wrapper contexts'
 assert_eq $'beta\nalpha' "$(bash -lc 'set -euo pipefail; source "$1"; export HERMES_SELECT_INDEX=2,1; prompt_select_option prompt alpha beta; printf "\\n"; prompt_select_option prompt alpha beta' _ "$ROOT/lib/shell/common.sh")" 'prompt_select_option consumes scripted selections in order'
 
 resolve_build_target "ezirius" "test" "main" "feature-worktree" "20260408-153210-ab12cd3"
@@ -177,7 +235,7 @@ import sys
 
 root = pathlib.Path(sys.argv[1])
 paths = []
-for tracked_dir in (root / "config/containers", root / "config/patches"):
+for tracked_dir in (root / "config/shared", root / "config/containers", root / "config/patches"):
     if not tracked_dir.exists():
         continue
     paths.extend(
@@ -210,11 +268,8 @@ FINGERPRINT_AFTER="$(local_build_fingerprint)"
 assert_eq "$FINGERPRINT_BEFORE" "$FINGERPRINT_AFTER" "local build fingerprint ignores generated patch artifacts"
 rm -f "$ROOT/config/patches/__pycache__/ignored-test-artifact.pyc"
 
-if bash -lc 'set -euo pipefail; unset ROOT; source "$1"; local_build_fingerprint' _ "$ROOT/lib/shell/common.sh" >/dev/null 2> "$ERR_FILE"; then
-  printf 'assertion failed: local_build_fingerprint should fail clearly when ROOT is unset\n' >&2
-  exit 1
-fi
-grep -Fq 'ROOT must be set before calling local_build_fingerprint' "$ERR_FILE"
+assert_eq "$EXPECTED_BUILD_FINGERPRINT" "$(bash -lc 'set -euo pipefail; unset ROOT; source "$1"; local_build_fingerprint' _ "$ROOT/lib/shell/common.sh")" 'local build fingerprint derives ROOT automatically when sourced without ROOT preset'
+assert_eq 'latest' "$(bash -lc 'set -euo pipefail; source "$1"; printf "%s" "$HERMES_REF"' _ "$ROOT/lib/shell/common.sh")" 'default Hermes upstream selector comes from shared config'
 
 CONFLICT_TMP="$(mktemp -d)"
 mkdir -p "$CONFLICT_TMP/source" "$CONFLICT_TMP/target"
@@ -234,6 +289,7 @@ git -C "$GIT_TMP" config user.email test@example.com >/dev/null 2>&1
 printf 'tracked\n' > "$GIT_TMP/tracked.txt"
 git -C "$GIT_TMP" add tracked.txt
 git -C "$GIT_TMP" commit -m 'test' >/dev/null 2>&1
+git -C "$GIT_TMP" branch -M main >/dev/null 2>&1
 
 if ! bash -lc 'set -euo pipefail; source "$1"; require_clean_git "$2"' _ "$ROOT/lib/shell/common.sh" "$GIT_TMP" >/dev/null 2> "$ERR_FILE"; then
   printf 'assertion failed: clean git repo should pass require_clean_git\n' >&2
@@ -262,6 +318,13 @@ fi
 grep -Fq 'uncommitted changes detected in' "$ERR_FILE"
 
 git -C "$GIT_TMP" checkout -- tracked.txt >/dev/null 2>&1
+assert_eq "$(git -C "$GIT_TMP" show -s --format='%cd-%h' --date=format:'%Y%m%d-%H%M%S')" "$(wrapper_build_commitstamp "$GIT_TMP" abcdef123456)" 'wrapper build commit stamp matches git commit identity when the worktree is clean'
+
+printf 'changed\n' > "$GIT_TMP/tracked.txt"
+DIRTY_COMMITSTAMP="$(wrapper_build_commitstamp "$GIT_TMP" abcdef123456)"
+assert_contains "$DIRTY_COMMITSTAMP" 'dirtyabcdef1' 'wrapper build commit stamp switches to a dirty identity suffix when the worktree changes during build'
+git -C "$GIT_TMP" checkout -- tracked.txt >/dev/null 2>&1
+
 touch "$GIT_TMP/notes.txt"
 if bash -lc 'set -euo pipefail; source "$1"; require_clean_git "$2"' _ "$ROOT/lib/shell/common.sh" "$GIT_TMP" >/dev/null 2> "$ERR_FILE"; then
   printf 'assertion failed: meaningful untracked files should fail require_clean_git\n' >&2
@@ -275,7 +338,9 @@ mkdir -p "$WORKTREE_ROOT"
 git -C "$GIT_TMP" branch feature-worktree >/dev/null 2>&1
 git -C "$GIT_TMP" worktree add "$WORKTREE_ROOT/worktrees/feature-worktree" feature-worktree >/dev/null 2>&1
 
-assert_eq 'main' "$(current_wrapper_context "$GIT_TMP")" 'current_wrapper_context reports main for the primary checkout'
+git -C "$GIT_TMP" checkout -b feature-primary >/dev/null 2>&1
+assert_eq 'feature-primary' "$(current_wrapper_context "$GIT_TMP")" 'current_wrapper_context reports the real primary-checkout branch name'
+git -C "$GIT_TMP" checkout main >/dev/null 2>&1
 assert_eq 'feature-worktree' "$(current_wrapper_context "$WORKTREE_ROOT/worktrees/feature-worktree")" 'current_wrapper_context reports linked worktree basename'
 assert_eq "$GIT_TMP" "$(fallback_repo_root "$WORKTREE_ROOT/worktrees/feature-worktree")" 'fallback_repo_root resolves the canonical checkout from worktree directory conventions'
 assert_eq 'refs/heads/feature-worktree' "$(fallback_ref_for_workdir "$WORKTREE_ROOT/worktrees/feature-worktree")" 'fallback_ref_for_workdir resolves the linked branch ref'
@@ -318,5 +383,13 @@ project_image_refs_output="$(bash -c '
 assert_eq $'hermes-agent-local:test-main-main-20260409-153210-ab12cd3\nhermes-agent-local:production-1.2.3-main-20260409-153210-ab12cd3' "$project_image_refs_output" "project image refs normalize and dedupe localhost and digest variants"
 
 assert_eq 'main' "$(bash -lc 'source "$1"; image_metadata "localhost/hermes-agent-local:test-main-main-20260409-153210-ab12cd3@sha256:deadbeef" | cut -f4' _ "$ROOT/lib/shell/common.sh")" "image metadata parses normalized immutable tags"
+
+assert_eq $'hermes+agent-demo-production-1.2.3-main' "$(bash -lc 'source "$1"; HERMES_PROJECT_PREFIX="hermes+agent"; podman(){ [[ "$1" == "ps" ]] && printf "%s\n" "hermes+agent-demo-production-1.2.3-main" "hermesagent-demo-production-1.2.3-main"; }; project_container_names' _ "$ROOT/lib/shell/common.sh")" "project container discovery treats configured prefixes literally"
+
+assert_eq 'prod' "$(bash -lc 'source "$1"; HERMES_LANE_PRODUCTION=prod; HERMES_LANE_TEST=qa; image_metadata "hermes-agent-local:prod-1.2.3-main-20260409-153210-ab12cd3" | cut -f2' _ "$ROOT/lib/shell/common.sh")" "image metadata honours configured production lane names"
+
+assert_eq 'demo' "$(bash -lc 'source "$1"; HERMES_PROJECT_PREFIX=hermes-agent; HERMES_LANE_PRODUCTION=prod; HERMES_LANE_TEST=qa; podman(){ case "$1" in inspect) if [[ "$3" == "hermes-agent-demo-prod-1.2.3-main" ]]; then printf "|||20260409-153210-ab12cd3|true"; fi ;; esac; }; container_workspace "hermes-agent-demo-prod-1.2.3-main"' _ "$ROOT/lib/shell/common.sh")" "container workspace fallback honours configured lane names"
+
+rm -rf "$HERMES_BASE_ROOT" "$ROOT/config/patches/__pycache__"
 
 echo "Common helper checks passed"

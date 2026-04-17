@@ -6,23 +6,25 @@ ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$ROOT/lib/shell/common.sh"
 
 if [[ ${1-} == "--help" ]]; then
-  show_help "Usage: $(basename "$0") <workspace-name> [extra podman args...]
+  show_help "Usage: $(basename "$0") [<workspace-name>] [extra podman args...]
+       $(basename "$0") -- [extra podman args...]
 
 Stream container logs for one workspace.
 
 Arguments:
-- <workspace-name>           workspace name
+- <workspace-name>           optional workspace name
 - [extra podman args...]     forwarded to podman logs"
 fi
 
-if [[ $# -lt 1 ]]; then
-  usage_error "$(basename "$0") requires at least 1 argument: <workspace-name> [extra podman args...]"
+if [[ $# -gt 0 && "$1" != "--" ]]; then
+  WORKSPACE="$(resolve_workspace_argument "$1")"
+  shift
+else
+  WORKSPACE="$(resolve_workspace_argument '')"
+  if [[ ${1-} == "--" ]]; then
+    shift
+  fi
 fi
-
-WORKSPACE="$1"
-shift 1
-
-require_workspace_name "$WORKSPACE"
 
 require_podman
 TARGET_ROW="$(pick_workspace_target "$WORKSPACE" container)"

@@ -6,31 +6,50 @@ ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$ROOT/lib/shell/common.sh"
 
 if [[ ${1-} == "--help" ]]; then
-  show_help "Usage: $(basename "$0") <workspace-name> [hermes args...]
-       $(basename "$0") <workspace-name> <lane> <upstream> [hermes args...]
+  show_help "Usage: $(basename "$0") [<workspace-name>] [hermes args...]
+       $(basename "$0") [<workspace-name>] -- [hermes args...]
+       $(basename "$0") [<workspace-name>] $(lane_usage_text) <upstream> [hermes args...]
+       $(basename "$0") [<workspace-name>] $(lane_usage_text) <upstream> -- [hermes args...]
+       $(basename "$0") -- $(lane_usage_text) <upstream> [hermes args...]
 
 Open Hermes by execing into the running container for one workspace.
 
 Arguments:
-- <workspace-name>           workspace name
+- <workspace-name>           optional workspace name
 
 In explicit mode, the deterministic container name is resolved for the current
 wrapper context."
 fi
 
-if [[ $# -lt 1 ]]; then
-  usage_error "$(basename "$0") requires at least 1 argument: <workspace-name> [hermes args...]"
+if [[ $# -gt 0 && "$1" != "--" ]]; then
+  WORKSPACE="$(resolve_workspace_argument "$1")"
+  shift
+else
+  WORKSPACE="$(resolve_workspace_argument '')"
+  if [[ ${1-} == "--" ]]; then
+    shift
+  fi
 fi
 
-WORKSPACE="$1"
-shift 1
+PAYLOAD_ONLY=0
+if [[ ${1-} == "--" ]]; then
+  shift
+  PAYLOAD_ONLY=1
+fi
 
-require_workspace_name "$WORKSPACE"
+require_podman
 
-if [[ $# -ge 2 && ( "$1" == "production" || "$1" == "test" ) ]]; then
+if [[ "$PAYLOAD_ONLY" == "0" && $# == 1 ]] && is_lane "$1"; then
+  usage_error "$(basename "$0") [<workspace-name>] $(lane_usage_text) <upstream> [hermes args...]"
+fi
+
+if [[ "$PAYLOAD_ONLY" == "0" && $# -ge 2 ]] && is_lane "$1"; then
   LANE="$1"
   REF="$2"
   shift 2
+  if [[ ${1-} == "--" ]]; then
+    shift
+  fi
   resolve_build_target "$WORKSPACE" "$LANE" "$REF"
 else
   TARGET_ROW="$(pick_workspace_target "$WORKSPACE" container)"
@@ -40,6 +59,6 @@ fi
 container_exists || fail "container not found: $HERMES_CONTAINER_NAME (run hermes-build and hermes-start first)"
 container_running || fail "container not running: $HERMES_CONTAINER_NAME (run hermes-start first)"
 
-RUN_ARGS=(--workdir /workspace/hermes-workspace "$HERMES_CONTAINER_NAME" hermes)
+RUN_ARGS=(--workdir "$HERMES_CONTAINER_WORKSPACE_DIR" "$HERMES_CONTAINER_NAME" hermes)
 RUN_ARGS+=("$@")
 exec_podman_interactive_command exec "${RUN_ARGS[@]}"

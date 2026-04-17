@@ -6,7 +6,8 @@ ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$ROOT/lib/shell/common.sh"
 
 if [[ ${1-} == "--help" ]]; then
-  show_help "Usage: $(basename "$0") <workspace-name> [hermes args...]
+  show_help "Usage: $(basename "$0") [<workspace-name>] [hermes args...]
+       $(basename "$0") -- [hermes args...]
 
 Start Hermes for one workspace by selecting an existing project target.
 
@@ -15,7 +16,7 @@ immutable image first with hermes-build, then use hermes-bootstrap to start/open
 matching target.
 
 Arguments:
-- <workspace-name>           required workspace name under HERMES_BASE_ROOT
+- <workspace-name>           optional workspace name under HERMES_BASE_ROOT
 
 Common forwarded Hermes args:
 - setup                     run the setup wizard
@@ -26,14 +27,15 @@ Common forwarded Hermes args:
 - chat                      open the interactive chat mode"
 fi
 
-if [[ $# -lt 1 ]]; then
-  usage_error "$(basename "$0") requires at least 1 argument: <workspace-name> [hermes args...]"
+if [[ $# -gt 0 && "$1" != "--" ]]; then
+  WORKSPACE="$(resolve_workspace_argument "$1")"
+  shift
+else
+  WORKSPACE="$(resolve_workspace_argument '')"
+  if [[ ${1-} == "--" ]]; then
+    shift
+  fi
 fi
-
-WORKSPACE="$1"
-shift 1
-
-require_workspace_name "$WORKSPACE"
 
 TARGET_ROW="$(pick_workspace_target "$WORKSPACE" target)"
 IFS=$'\t' read -r _ _ LANE REF WRAPPER COMMITSTAMP _ <<< "$TARGET_ROW"
