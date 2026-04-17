@@ -34,6 +34,9 @@ The dashboard is opened on the host after the container starts.
 - On macOS, the wrapper prefers `open` when it is available.
 - On Linux, the wrapper prefers `xdg-open` when it is available.
 - If no supported opener exists, or the opener fails, the container still starts and the script still attaches to the Hermes CLI.
+- The container starts Hermes with `--host 0.0.0.0 --insecure` so the published host port can reach the dashboard.
+- The wrapper binds the published dashboard port to `127.0.0.1` on the host to keep that insecure dashboard local to the developer machine by default.
+- Risk: Hermes marks this mode insecure because the dashboard exposes API keys and config without robust authentication. Only run this wrapper on a trusted local host and do not re-publish or forward the mapped loopback port to untrusted networks.
 
 ## Host To Container Mappings
 
@@ -63,6 +66,10 @@ The wrapper normalizes both forms before matching the newest local Hermes Agent 
 When `hermes-agent-run` starts a replacement container for a workspace, it does not remove existing workspace containers until the replacement container has started successfully.
 
 If the selected workspace already has a matching container for the newest image, the wrapper reuses it. If that matching container is stopped, the wrapper starts it before attaching to the Hermes CLI.
+
+If an exact matching container dies before attach, the wrapper removes it and recreates it once with the current dashboard publish contract before giving up.
+
+When startup still fails, the wrapper prints a short container state summary plus recent container logs so the failure is actionable without extra Podman commands.
 
 ## Config Rules
 
