@@ -33,10 +33,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # The container user and writable directories must match the host-mounted paths from config.
-RUN groupadd --gid "${HERMES_AGENT_GID}" hermes-agent \
-    && useradd --uid "${HERMES_AGENT_UID}" --gid "${HERMES_AGENT_GID}" --create-home --home-dir "${HERMES_AGENT_CONTAINER_HOME}" --shell /bin/bash hermes-agent \
+# If the requested gid already exists in the base image, reuse that group instead of failing.
+RUN container_group_name="$(getent group "${HERMES_AGENT_GID}" | cut -d: -f1 || true)" \
+    && if [ -z "${container_group_name}" ]; then \
+         groupadd --gid "${HERMES_AGENT_GID}" hermes-agent; \
+         container_group_name="hermes-agent"; \
+       fi \
+    && useradd --uid "${HERMES_AGENT_UID}" --gid "${container_group_name}" --create-home --home-dir "${HERMES_AGENT_CONTAINER_HOME}" --shell /bin/bash hermes-agent \
     && mkdir -p "${HERMES_AGENT_CONTAINER_HOME}/.hermes" "${HERMES_AGENT_CONTAINER_WORKSPACE}" \
-    && chown -R hermes-agent:hermes-agent "${HERMES_AGENT_CONTAINER_HOME}" "${HERMES_AGENT_CONTAINER_WORKSPACE}"
+    && chown -R hermes-agent:"${container_group_name}" "${HERMES_AGENT_CONTAINER_HOME}" "${HERMES_AGENT_CONTAINER_WORKSPACE}"
 
 # Hermes is installed into an isolated venv so the runtime command path stays predictable.
 RUN python3 -m venv /opt/hermes-venv \
