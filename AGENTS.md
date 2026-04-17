@@ -1,6 +1,6 @@
 # AGENTS
 
-This file defines the repository structure and naming rules for agents creating or reorganizing content in this repo.
+This file defines the repository structure, naming rules, and safe-editing rules for agents creating or reorganizing content in this repo.
 
 ## Core Shape
 
@@ -28,9 +28,9 @@ Meaning:
 - A specific host, such as `maldoria`, does not become a directory scope.
 - Host-specific files still live under `shared`, `macos`, or `linux` based on OS applicability.
 
-## Category Meaning
+## Categories
 
-Examples of categories:
+Common categories in this repo are:
 
 - `config`
 - `scripts`
@@ -38,19 +38,23 @@ Examples of categories:
 - `docs`
 - `lib`
 
-## Preferred Subcategories
+## Canonical Subcategories For This Repo
 
 Use the most specific functional family that fits the content.
 
-Current preferred subcategories in this repo:
+Current canonical subcategories in this repo are:
 
 - `config/agent/...`
 - `config/containers/...`
 - `scripts/agent/...`
 - `tests/agent/...`
 - `docs/usage/...`
-- `docs/plans/...`
 - `lib/shell/...`
+
+Future-facing subcategories, only when needed, are:
+
+- `docs/plans/...`
+- `docs/specs/...` if plans and designs are split later
 
 Do not reuse the application name as a generic subcategory when a stronger functional family exists.
 
@@ -107,10 +111,39 @@ docs/plans/shared/20260417-104635-hermes-agent-layout-migration.md
 
 - If future design documents are kept separately from plans, place them in a separate sibling subcategory such as `docs/specs/<scope>/`.
 
+## Required Comment Rules
+
+- Shell-facing files under `scripts`, `lib`, and `tests` must explain themselves with comments.
+- Each file must have a short header comment near the top.
+- Each function must have a short comment directly above it.
+- Each non-trivial block must have a short comment directly above it.
+- Comment tone must be simple, friendly, and professional.
+- Explain purpose and behavior, not obvious syntax.
+- Avoid noisy comments like "set a variable" or childish phrasing.
+
+## Current Canonical Paths
+
+Current stable paths in this repo are:
+
+- `config/agent/shared/hermes-agent-settings-shared.conf`
+- `config/containers/shared/Containerfile`
+- `docs/usage/shared/usage.md`
+- `docs/usage/shared/architecture.md`
+- `lib/shell/shared/common.sh`
+- `scripts/agent/shared/hermes-agent-build`
+- `scripts/agent/shared/hermes-agent-run`
+- `scripts/agent/shared/hermes-agent-shell`
+- `tests/agent/shared/test-asserts.sh`
+- `tests/agent/shared/test-hermes-agent-build.sh`
+- `tests/agent/shared/test-hermes-agent-layout.sh`
+- `tests/agent/shared/test-hermes-agent-run.sh`
+- `tests/agent/shared/test-hermes-agent-shell.sh`
+
 ## Root Files
 
 - Keep `README.md` at the repository root.
 - Keep `AGENTS.md` at the repository root.
+- These are the only expected root documentation files in the current repo layout.
 
 ## Cleanup Rules
 
@@ -118,7 +151,7 @@ docs/plans/shared/20260417-104635-hermes-agent-layout-migration.md
 - Remove old category paths once their contents have been relocated.
 - Update all references, tests, and layout assertions in the same change set as the move.
 
-## Working Rules For This Repo
+## Current Behavioral Rules
 
 - Repo-owned runtime and build settings live in `config/agent/shared/hermes-agent-settings-shared.conf`.
 - Container build configuration lives in `config/containers/shared/Containerfile`.
@@ -126,3 +159,15 @@ docs/plans/shared/20260417-104635-hermes-agent-layout-migration.md
 - User-facing documentation lives in `docs/usage/shared/`.
 - Shell tests live in `tests/agent/shared/`.
 - The shell tests mutate the shared config file during execution, so they must be run sequentially.
+- `scripts/agent/shared/hermes-agent-build` must only build from a clean, committed checkout.
+- Meaningful tracked changes, meaningful untracked files, and executable-bit changes all count as dirty for build safety.
+- Harmless host junk such as `.DS_Store` should not count as a dirty checkout by itself.
+- `scripts/agent/shared/hermes-agent-run` must only remove older workspace containers after the replacement container is proven to be running.
+- Shared interactive Podman exec behavior lives in `lib/shell/shared/common.sh` and must preserve non-TTY stdin behavior as well as interactive-host behavior.
+- `tests/agent/shared/test-hermes-agent-layout.sh` is the layout guard for the normalized repository structure and key headline comments.
+
+## Current Implementation Notes
+
+- Container lookup and stale cleanup are currently version-scoped in the shared shell helpers.
+- Version-bump work should review `lib/shell/shared/common.sh`, `scripts/agent/shared/hermes-agent-run`, and `scripts/agent/shared/hermes-agent-shell` carefully so older workspace containers do not become unmanaged or invisible by accident.
+- Treat these notes as current implementation constraints, not as the ideal long-term design.
