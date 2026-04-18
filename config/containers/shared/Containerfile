@@ -72,6 +72,7 @@ RUN container_group_name="$(getent group "${HERMES_AGENT_GID}" | cut -d: -f1 || 
 # Hermes follows the upstream full install flow with uv, Python 3.11, and an editable repo install.
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && export PATH="${HERMES_AGENT_CONTAINER_HOME}/.local/bin:${PATH}" \
+    && export UV_PYTHON_INSTALL_DIR="/opt/hermes-python" \
     && uv python install 3.11 \
     && uv venv /opt/hermes-venv --python 3.11 \
     && mkdir -p /opt/hermes-src \

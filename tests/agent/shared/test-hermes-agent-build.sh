@@ -15,6 +15,28 @@ TMP_DIR="$(mktemp -d)"
 REAL_SMOKE_IMAGE_NAME=""
 REAL_SMOKE_CONTAINER_NAME=""
 
+# This checks that two required snippets both exist and appear in the expected textual order.
+assert_text_appears_in_order() {
+  local first_text="$1"
+  local second_text="$2"
+  local haystack="$3"
+  local message="$4"
+  local after_first_text=""
+
+  if [[ "$haystack" != *"$first_text"* ]]; then
+    fail "$message: missing [$first_text]"
+  fi
+
+  if [[ "$haystack" != *"$second_text"* ]]; then
+    fail "$message: missing [$second_text]"
+  fi
+
+  after_first_text="${haystack#*"$first_text"}"
+  if [[ "$after_first_text" != *"$second_text"* ]]; then
+    fail "$message: [$first_text] must appear before [$second_text]"
+  fi
+}
+
 # This lists real Hermes Agent image names so the smoke check can find the new build output.
 list_real_smoke_images() {
   local output_path="$1"
@@ -224,6 +246,7 @@ assert_file_contains 'FROM ${HERMES_AGENT_RUNTIME_IMAGE}' "$ROOT/config/containe
 # These checks lock in the frontend packaging contract for the Hermes dashboard assets.
 containerfile_path="$ROOT/config/containers/shared/Containerfile"
 containerfile_text="$(<"$containerfile_path")"
+single_line_uv_run='RUN export PATH="${HERMES_AGENT_CONTAINER_HOME}/.local/bin:${PATH}" && export UV_PYTHON_INSTALL_DIR="/opt/hermes-python" && uv python install 3.11 && uv venv /opt/hermes-venv --python 3.11'
 
 # This keeps both stage image args ahead of the first FROM without caring about comments or spacing between them.
 first_from_match="$(grep -n -m 1 '^[[:space:]]*FROM[[:space:]]' "$containerfile_path" || true)"
@@ -260,6 +283,12 @@ assert_file_contains 'tools/skills_sync.py' "$ROOT/config/containers/shared/Cont
 assert_file_contains 'HOME=${HERMES_AGENT_CONTAINER_HOME}' "$ROOT/config/containers/shared/Containerfile" 'runtime image should set HOME to the configured Hermes container home'
 assert_file_contains 'curl -LsSf https://astral.sh/uv/install.sh | sh' "$ROOT/config/containers/shared/Containerfile" 'runtime image should install uv through the upstream installer'
 assert_file_contains 'export PATH="${HERMES_AGENT_CONTAINER_HOME}/.local/bin:${PATH}"' "$ROOT/config/containers/shared/Containerfile" 'runtime image should use the configured HOME-local bin path after installing uv'
+# This regression proves the ordering check must survive harmless one-line RUN reformatting.
+assert_text_appears_in_order 'UV_PYTHON_INSTALL_DIR="/opt/hermes-python"' 'uv python install 3.11' "$single_line_uv_run" 'uv Python install order regression should pass even when the RUN chain is formatted on one line'
+
+# This keeps the uv-managed Python install path outside the mounted home without pinning the whole RUN block layout.
+assert_text_appears_in_order 'UV_PYTHON_INSTALL_DIR="/opt/hermes-python"' 'uv python install 3.11' "$containerfile_text" 'runtime image should keep uv-managed Python outside the mounted container home before creating the venv'
+
 assert_file_contains 'export VIRTUAL_ENV="/opt/hermes-venv"' "$ROOT/config/containers/shared/Containerfile" 'runtime image should point standalone uv at the created virtualenv before installing Hermes'
 
 if grep -Fq 'uv pip install /opt/hermes-src[web]' "$ROOT/config/containers/shared/Containerfile"; then
