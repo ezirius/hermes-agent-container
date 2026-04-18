@@ -180,7 +180,7 @@ HERMES_AGENT_UID="1000"
 HERMES_AGENT_GID="1000"
 HERMES_AGENT_VERSION="0.10.0"
 HERMES_AGENT_RELEASE_TAG="v2026.4.16"
-HERMES_AGENT_NODE_IMAGE="node:22-bookworm-slim"
+HERMES_AGENT_NODE_IMAGE="node:24-bookworm-slim"
 HERMES_AGENT_RUNTIME_IMAGE="ubuntu:24.04"
 HERMES_AGENT_DASHBOARD_PORT="9234"
 HERMES_AGENT_CHAT_COMMAND="hermes"
@@ -208,7 +208,7 @@ PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG=
 assert_file_contains '--build-arg HERMES_AGENT_DASHBOARD_PORT=9234' "$PODMAN_LOG" 'build should pass dashboard port from config'
 assert_file_contains '--build-arg HERMES_AGENT_RELEASE_TAG=v2026.4.16' "$PODMAN_LOG" 'build should pass release tag from config'
 assert_file_contains '--build-arg HERMES_AGENT_GID=1000' "$PODMAN_LOG" 'build should pass the requested gid through to the image build'
-assert_file_contains '--build-arg HERMES_AGENT_NODE_IMAGE=node:22-bookworm-slim' "$PODMAN_LOG" 'build should pass the configured Node base image to the container build'
+assert_file_contains '--build-arg HERMES_AGENT_NODE_IMAGE=node:24-bookworm-slim' "$PODMAN_LOG" 'build should pass the configured Node base image to the container build'
 assert_file_contains '--build-arg HERMES_AGENT_RUNTIME_IMAGE=ubuntu:24.04' "$PODMAN_LOG" 'build should pass the configured runtime base image to the container build'
 assert_file_contains "-C $ROOT rev-parse --verify HEAD" "$GIT_LOG" 'build should check commit state for the repo root'
 assert_file_contains "-C $ROOT update-index -q --refresh" "$GIT_LOG" 'build should refresh the index before checking cleanliness'
