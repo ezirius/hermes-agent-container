@@ -50,7 +50,7 @@ list_real_smoke_images() {
   done | sort -u >"$output_path"
 }
 
-# This optional smoke case builds the real image and proves the dashboard command stays alive.
+# This optional smoke case builds the real image and proves the setup-safe entrypoint stays alive.
 run_real_image_smoke_check() {
   local before_images="$TMP_DIR/real-images.before"
   local after_images="$TMP_DIR/real-images.after"
@@ -311,9 +311,18 @@ if grep -Fq '/opt/hermes-venv/bin/uv' "$ROOT/config/containers/shared/Containerf
   fail 'runtime image should not assume uv is installed inside the virtualenv'
 fi
 
-assert_file_contains '--host 0.0.0.0' "$ROOT/config/containers/shared/Containerfile" 'dashboard command should bind the container to all interfaces so the published host port can reach it'
-assert_file_contains '--no-open' "$ROOT/config/containers/shared/Containerfile" 'dashboard command should keep browser opening on the host side only'
-assert_file_contains '--insecure' "$ROOT/config/containers/shared/Containerfile" 'dashboard command should opt into Hermes insecure binding explicitly'
+assert_file_contains 'HERMES_BUNDLED_SKILLS=/opt/hermes-src/skills' "$ROOT/config/containers/shared/Containerfile" 'runtime image should publish the preserved upstream skills directory through HERMES_BUNDLED_SKILLS'
+assert_file_contains 'COPY scripts/agent/shared/hermes-agent-entrypoint /usr/local/bin/hermes-agent-entrypoint' "$ROOT/config/containers/shared/Containerfile" 'runtime image should copy the repo entrypoint script into the image'
+assert_file_contains 'chmod +x /usr/local/bin/hermes-agent-entrypoint' "$ROOT/config/containers/shared/Containerfile" 'runtime image should mark the repo entrypoint script executable'
+assert_file_contains 'ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/hermes-agent-entrypoint"]' "$ROOT/config/containers/shared/Containerfile" 'runtime image should launch the repo entrypoint through tini'
+
+if grep -Fq 'COPY skills/' "$ROOT/config/containers/shared/Containerfile"; then
+  fail 'runtime image should not copy the obsolete repo placeholder skills directory into the image'
+fi
+
+if grep -Fq 'CMD ["bash", "-lc", "exec hermes dashboard --host 0.0.0.0 --port \"$HERMES_AGENT_DASHBOARD_PORT\" --no-open --insecure"]' "$ROOT/config/containers/shared/Containerfile"; then
+  fail 'runtime image should not keep the old dashboard-only default command once the entrypoint manages startup'
+fi
 
 # This dirty case should stop the build before Podman is used.
 if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="dirty" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >/dev/null 2>"$TMP_DIR/dirty.stderr"; then

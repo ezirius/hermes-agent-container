@@ -219,6 +219,61 @@ case "$1" in
     printf 'boot line 1\nboot line 2\n'
     ;;
   exec)
+    if [[ "$*" == *'hermes setup'* ]]; then
+      if [[ "${HERMES_TEST_HEALTH_MODE:-healthy}" == "first-run-setup" ]]; then
+        : >"${HERMES_TEST_PODMAN_LOG}.setup-complete"
+      fi
+    fi
+
+    if [[ "$*" == *'config.toml'* && "$*" != *'gateway_state.json'* ]]; then
+      if [[ "${HERMES_TEST_HEALTH_MODE:-healthy}" == "first-run-setup" && ! -f "${HERMES_TEST_PODMAN_LOG}.setup-complete" ]]; then
+        exit 1
+      fi
+
+      exit 0
+    fi
+
+    if [[ "$*" == *'gateway_state.json'* ]]; then
+      probe_log="${HERMES_TEST_PODMAN_LOG}.health-probes"
+      probe_count="$(wc -l <"$probe_log" 2>/dev/null || printf '0')"
+      printf 'probe\n' >>"$probe_log"
+
+      case "${HERMES_TEST_HEALTH_MODE:-healthy}" in
+        first-run-setup)
+          if [[ ! -f "${HERMES_TEST_PODMAN_LOG}.setup-complete" ]]; then
+            exit 1
+          fi
+          ;;
+        delayed-healthy)
+          if (( probe_count < 2 )); then
+            exit 1
+          fi
+          ;;
+        delayed-healthy-after-entrypoint-slack)
+          if (( probe_count < 10 )); then
+            exit 1
+          fi
+          ;;
+        setup-incomplete|services-unhealthy)
+          exit 1
+          ;;
+        setup-incomplete-once|services-unhealthy-once)
+          if [[ ! -f "${HERMES_TEST_PODMAN_LOG}.ran" ]]; then
+            exit 1
+          fi
+          ;;
+      esac
+
+      exit 0
+    fi
+
+    if [[ "${HERMES_TEST_HEALTH_MODE:-healthy}" == "delayed-healthy" ]]; then
+      probe_count="$(wc -l <"${HERMES_TEST_PODMAN_LOG}.health-probes" 2>/dev/null || printf '0')"
+      if (( probe_count < 3 )); then
+        : >"${HERMES_TEST_PODMAN_LOG}.attached-before-healthy"
+      fi
+    fi
+
     if [[ "${HERMES_TEST_EXEC_FAIL:-0}" == "1" ]]; then
       exit 1
     fi
@@ -250,7 +305,16 @@ set -euo pipefail
 if [[ "${HERMES_TEST_OPEN_FAIL:-0}" == "1" ]]; then
   exit 1
 fi
+
+if [[ "${HERMES_TEST_HEALTH_MODE:-healthy}" == "delayed-healthy" ]]; then
+  probe_count="$(wc -l <"${HERMES_TEST_PODMAN_LOG}.health-probes" 2>/dev/null || printf '0')"
+  if (( probe_count < 3 )); then
+    : >"${HERMES_TEST_PODMAN_LOG}.opened-before-healthy"
+  fi
+fi
+
 : >"${HERMES_TEST_OPEN_LOG}.opened"
+printf 'host-open %s\n' "$*" >>"$HERMES_TEST_PODMAN_LOG"
 printf '%s\n' "$*" >>"$HERMES_TEST_OPEN_LOG"
 EOF
 
@@ -260,7 +324,16 @@ set -euo pipefail
 if [[ "${HERMES_TEST_XDG_OPEN_FAIL:-0}" == "1" ]]; then
   exit 1
 fi
+
+if [[ "${HERMES_TEST_HEALTH_MODE:-healthy}" == "delayed-healthy" ]]; then
+  probe_count="$(wc -l <"${HERMES_TEST_PODMAN_LOG}.health-probes" 2>/dev/null || printf '0')"
+  if (( probe_count < 3 )); then
+    : >"${HERMES_TEST_PODMAN_LOG}.opened-before-healthy"
+  fi
+fi
+
 : >"${HERMES_TEST_OPEN_LOG}.opened"
+printf 'host-open %s\n' "$*" >>"$HERMES_TEST_PODMAN_LOG"
 printf '%s\n' "$*" >>"$HERMES_TEST_OPEN_LOG"
 EOF
 
@@ -384,7 +457,7 @@ fi
 assert_file_not_contains 'rm -f stale-1' "$PODMAN_LOG" 'run should not remove old containers when the replacement exits before the running check passes'
 assert_file_not_contains 'rm -f stale-2' "$PODMAN_LOG" 'run should keep other old containers when the replacement exits before the running check passes'
 
-# This checks that the wrapper fails cleanly if the container dies after startup but before exec.
+# This checks that the wrapper fails cleanly if the container dies before it ever becomes healthy.
 : >"$PODMAN_LOG"
 : >"$OPEN_LOG"
 rm -f "${PODMAN_LOG}.ran"
@@ -393,11 +466,11 @@ if printf '1\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_L
   fail 'run should fail when the container stops after the initial running check'
 fi
 
-assert_file_contains 'Hermes Agent container stopped before attach: hermes-agent-alpha-0.10.0-20260417-120000-123' "$TMP_DIR/dies-before-exec.stderr" 'run should explain when the container dies after startup but before exec'
-assert_file_contains 'Container image: image=hermes-agent-0.10.0-20260417-120000-123' "$TMP_DIR/dies-before-exec.stderr" 'run should print the selected image name when the container stops before attach'
-assert_file_contains 'Container state: status=exited running=false exit_code=125' "$TMP_DIR/dies-before-exec.stderr" 'run should print a short state summary when the container stops before attach'
-assert_file_contains 'Recent container logs:' "$TMP_DIR/dies-before-exec.stderr" 'run should print recent logs when the container stops before attach'
-assert_file_contains 'boot line 2' "$TMP_DIR/dies-before-exec.stderr" 'run should include recent container logs when the container stops before attach'
+assert_file_contains 'Hermes Agent container failed to become healthy: hermes-agent-alpha-0.10.0-20260417-120000-123' "$TMP_DIR/dies-before-exec.stderr" 'run should explain when the container dies before it ever becomes healthy'
+assert_file_contains 'Container image: image=hermes-agent-0.10.0-20260417-120000-123' "$TMP_DIR/dies-before-exec.stderr" 'run should print the selected image name when the container fails before health checks pass'
+assert_file_contains 'Container state: status=exited running=false exit_code=125' "$TMP_DIR/dies-before-exec.stderr" 'run should print a short state summary when the container fails before health checks pass'
+assert_file_contains 'Recent container logs:' "$TMP_DIR/dies-before-exec.stderr" 'run should print recent logs when the container fails before health checks pass'
+assert_file_contains 'boot line 2' "$TMP_DIR/dies-before-exec.stderr" 'run should include recent container logs when the container fails before health checks pass'
 assert_file_not_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes' "$PODMAN_LOG" 'run should not try to exec into a container that has already stopped'
 
 # This checks that the wrapper still fails cleanly if the container dies after the dashboard open step.
@@ -433,6 +506,75 @@ printf '1\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG=
 
 assert_file_not_contains 'run -d --name hermes-agent-alpha-0.10.0-20260417-120000-123' "$PODMAN_LOG" 'run should reuse an existing matching workspace container instead of recreating it'
 assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes' "$PODMAN_LOG" 'run should attach to the existing matching workspace container'
+
+# This checks that a matching running container is replaced when setup or service health is not ready.
+: >"$PODMAN_LOG"
+: >"$OPEN_LOG"
+rm -f "$PODMAN_LOG.ran"
+printf '1\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_STALE_MODE='same-name' HERMES_TEST_HEALTH_MODE='setup-incomplete-once' bash "$ROOT/scripts/agent/shared/hermes-agent-run" >"$RUN_STDOUT"
+
+assert_file_contains 'rm -f hermes-agent-alpha-0.10.0-20260417-120000-123' "$PODMAN_LOG" 'run should remove a matching running container that is still waiting for setup or healthy services'
+assert_file_contains 'run -d --name hermes-agent-alpha-0.10.0-20260417-120000-123' "$PODMAN_LOG" 'run should recreate a matching running container that is still waiting for setup or healthy services'
+assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes' "$PODMAN_LOG" 'run should attach after recreating a matching running container that was not ready'
+
+# This checks that a first-run container runs interactive setup before opening the dashboard or attaching.
+: >"$PODMAN_LOG"
+: >"$OPEN_LOG"
+rm -f "$PODMAN_LOG.health-probes" "$PODMAN_LOG.setup-complete"
+if printf '1\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_HEALTH_MODE='first-run-setup' bash "$ROOT/scripts/agent/shared/hermes-agent-run" >"$RUN_STDOUT" 2>"$TMP_DIR/first-run-setup.stderr"; then
+  :
+else
+  fail 'run should complete first-run setup instead of treating setup wait as a hard failure'
+fi
+
+assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes setup' "$PODMAN_LOG" 'run should launch hermes setup when the container is still waiting for setup'
+
+# This checks that first-run setup finishes before the host dashboard opener is invoked.
+setup_line="$(grep -Fn 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes setup' "$PODMAN_LOG" | head -n 1 | cut -d: -f1)"
+open_line="$(grep -Fn 'host-open http://127.0.0.1:9334' "$PODMAN_LOG" | head -n 1 | cut -d: -f1)"
+if [[ -z "$setup_line" || -z "$open_line" || "$open_line" -le "$setup_line" ]]; then
+  fail 'run should not open the dashboard before first-run setup completes'
+fi
+
+assert_file_contains 'host-open http://127.0.0.1:9334' "$PODMAN_LOG" 'run should open the dashboard after first-run setup completes and services become healthy'
+assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes' "$PODMAN_LOG" 'run should attach to Hermes after first-run setup completes'
+
+# This checks that a healthy matching running container is reused as-is.
+: >"$PODMAN_LOG"
+: >"$OPEN_LOG"
+printf '1\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_STALE_MODE='same-name' HERMES_TEST_HEALTH_MODE='healthy' bash "$ROOT/scripts/agent/shared/hermes-agent-run" >"$RUN_STDOUT"
+
+assert_file_not_contains 'rm -f hermes-agent-alpha-0.10.0-20260417-120000-123' "$PODMAN_LOG" 'run should keep a matching running container when setup and both services are healthy'
+assert_file_not_contains 'run -d --name hermes-agent-alpha-0.10.0-20260417-120000-123' "$PODMAN_LOG" 'run should not recreate a matching running container when it is already healthy'
+assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes' "$PODMAN_LOG" 'run should attach to a matching running container once it is healthy'
+
+# This checks that the wrapper waits for health before opening the dashboard or attaching.
+: >"$PODMAN_LOG"
+: >"$OPEN_LOG"
+: >"$SLEEP_LOG"
+rm -f "$PODMAN_LOG.health-probes"
+: >"$PODMAN_LOG.opened-before-healthy"
+: >"$PODMAN_LOG.attached-before-healthy"
+printf '1\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_SLEEP_LOG="$SLEEP_LOG" HERMES_TEST_HEALTH_MODE='delayed-healthy' bash "$ROOT/scripts/agent/shared/hermes-agent-run" >"$RUN_STDOUT"
+
+assert_file_contains 'gateway_state.json' "$PODMAN_LOG" 'run should probe the official gateway status file before opening the dashboard'
+assert_file_not_contains 'opened-before-healthy' "$PODMAN_LOG.opened-before-healthy" 'run should not open the dashboard before health checks pass'
+assert_file_not_contains 'attached-before-healthy' "$PODMAN_LOG.attached-before-healthy" 'run should not attach before health checks pass'
+assert_file_contains 'host-open http://127.0.0.1:9334' "$PODMAN_LOG" 'run should open the dashboard only after the delayed health checks succeed'
+assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes' "$PODMAN_LOG" 'run should attach after the delayed health checks succeed'
+
+# This checks that the wrapper allows enough host-side health slack for normal entrypoint polling.
+: >"$PODMAN_LOG"
+: >"$OPEN_LOG"
+rm -f "$PODMAN_LOG.health-probes"
+if printf '1\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_HEALTH_MODE='delayed-healthy-after-entrypoint-slack' bash "$ROOT/scripts/agent/shared/hermes-agent-run" >"$RUN_STDOUT" 2>"$TMP_DIR/delayed-healthy-after-entrypoint-slack.stderr"; then
+  :
+else
+  fail 'run should allow enough health wait slack for delayed but normal entrypoint startup'
+fi
+
+assert_file_contains 'host-open http://127.0.0.1:9334' "$PODMAN_LOG" 'run should still open the dashboard when health succeeds just beyond the old host-side wait budget'
+assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes' "$PODMAN_LOG" 'run should still attach when health succeeds just beyond the old host-side wait budget'
 
 # This checks that a matching stopped container is started instead of replaced.
 : >"$PODMAN_LOG"

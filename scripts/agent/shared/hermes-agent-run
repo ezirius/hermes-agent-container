@@ -113,6 +113,32 @@ while true; do
     exit 1
   fi
 
+  # This runs first-time setup in the container before waiting for services to become healthy.
+  if ! hermes_container_setup_is_complete "$container_name"; then
+    if ! hermes_run_podman_interactive_command exec "$container_name" "$HERMES_AGENT_CHAT_COMMAND" setup; then
+      printf 'Hermes Agent setup did not complete: %s\n' "$container_name" >&2
+      hermes_print_container_startup_diagnostics "$container_name"
+      exit 1
+    fi
+
+    continue
+  fi
+
+  # This waits for setup completion and both local service checks before reuse or attach.
+  if ! hermes_wait_for_healthy_container "$container_name"; then
+    if [[ "$reuse_existing" == "1" && "$recreated_exact_match_container" != "1" ]]; then
+      podman rm -f "$container_name" >/dev/null 2>&1 || true
+      create_workspace_container
+      reuse_existing=0
+      recreated_exact_match_container=1
+      continue
+    fi
+
+    printf 'Hermes Agent container failed to become healthy: %s\n' "$container_name" >&2
+    hermes_print_container_startup_diagnostics "$container_name"
+    exit 1
+  fi
+
   # This removes older workspace containers only after the replacement proved it stayed up.
   if [[ "$reuse_existing" != "1" ]]; then
     while IFS= read -r old_container; do

@@ -39,6 +39,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PATH="/opt/hermes-venv/bin:${PATH}" \
     HOME=${HERMES_AGENT_CONTAINER_HOME} \
     HERMES_AGENT_DASHBOARD_PORT=${HERMES_AGENT_DASHBOARD_PORT} \
+    HERMES_BUNDLED_SKILLS=/opt/hermes-src/skills \
     HERMES_HOME=${HERMES_AGENT_CONTAINER_HOME}/.hermes \
     HERMES_WORKSPACE=${HERMES_AGENT_CONTAINER_WORKSPACE}
 
@@ -90,6 +91,11 @@ RUN export PATH="${HERMES_AGENT_CONTAINER_HOME}/.local/bin:${PATH}" \
     && container_group_name="$(getent group "${HERMES_AGENT_GID}" | cut -d: -f1)" \
     && chown -R hermes-agent:"${container_group_name}" /opt/hermes-venv
 
+# Copy the repo entrypoint into a stable runtime location.
+COPY scripts/agent/shared/hermes-agent-entrypoint /usr/local/bin/hermes-agent-entrypoint
+
+RUN chmod +x /usr/local/bin/hermes-agent-entrypoint
+
 # WORKDIR must follow the shared config so host workspace mounts land at the active shell location.
 USER hermes-agent
 WORKDIR ${HERMES_AGENT_CONTAINER_WORKSPACE}
@@ -97,7 +103,6 @@ WORKDIR ${HERMES_AGENT_CONTAINER_WORKSPACE}
 # Expose the same dashboard port the host run script publishes.
 EXPOSE ${HERMES_AGENT_DASHBOARD_PORT}
 
-# Tini remains PID 1 so interactive exec sessions and dashboard shutdown behave cleanly.
-ENTRYPOINT ["/usr/bin/tini", "--"]
-# Hermes requires --insecure when binding the dashboard to 0.0.0.0; the wrapper relies on that bind so the published host port works.
-CMD ["bash", "-lc", "exec hermes dashboard --host 0.0.0.0 --port \"$HERMES_AGENT_DASHBOARD_PORT\" --no-open --insecure"]
+# Tini remains PID 1 and hands off to the repo entrypoint for setup-aware service startup.
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/hermes-agent-entrypoint"]
+CMD []

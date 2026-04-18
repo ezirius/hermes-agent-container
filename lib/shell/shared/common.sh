@@ -141,6 +141,47 @@ hermes_exec_podman_interactive_command() {
   exec podman "$subcommand" -i "$@"
 }
 
+# This runs an interactive Podman command and then returns to the caller.
+hermes_run_podman_interactive_command() {
+  local subcommand="$1"
+  shift
+  local wrap_status
+
+  if hermes_use_interactive_tty; then
+    if hermes_should_wrap_podman_tty_with_script; then
+      wrap_status=0
+    else
+      wrap_status=$?
+    fi
+
+    if [[ "$wrap_status" == "0" ]]; then
+      local command=(podman "$subcommand" -it "$@")
+      if [[ "${OSTYPE:-}" == darwin* ]]; then
+        script -q /dev/null "${command[@]}"
+        return $?
+      fi
+
+      local quoted=()
+      local arg
+      local command_string
+      for arg in "${command[@]}"; do
+        printf -v arg '%q' "$arg"
+        quoted+=("$arg")
+      done
+      command_string="${quoted[*]}"
+      script -q -e -c "$command_string" /dev/null
+      return $?
+    elif [[ "$wrap_status" == "2" ]]; then
+      return 2
+    fi
+
+    podman "$subcommand" -it "$@"
+    return $?
+  fi
+
+  podman "$subcommand" -i "$@"
+}
+
 # This treats host junk files like .DS_Store as harmless so they do not block a build.
 hermes_is_ignorable_host_untracked_path() {
   local path="$1"
@@ -373,8 +414,44 @@ hermes_wait_for_running_container() {
   local container_name="$1"
   local attempt
 
-  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+  for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
     if hermes_container_is_running "$container_name"; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  return 1
+}
+
+# This checks whether the container setup files have been written yet.
+hermes_container_setup_is_complete() {
+  local container_name="$1"
+
+  podman exec "$container_name" bash -lc 'test -s "$HERMES_HOME/config.toml" && test -s "$HERMES_HOME/.env"' >/dev/null 2>&1
+}
+
+# This checks the official gateway state and dashboard probe after setup is complete.
+hermes_container_services_are_healthy() {
+  local container_name="$1"
+
+  podman exec "$container_name" bash -lc 'python -c '"'"'import json, os, sys; path=os.path.join(os.environ["HERMES_HOME"], "gateway_state.json"); data=json.load(open(path, encoding="utf-8")); sys.exit(0 if data.get("gateway_state") == "running" else 1)'"'"' && curl -fsS "http://127.0.0.1:${HERMES_AGENT_DASHBOARD_PORT}/" >/dev/null' >/dev/null 2>&1
+}
+
+# This checks the setup files, official gateway state, and dashboard probe inside one running container.
+hermes_container_is_ready() {
+  local container_name="$1"
+
+  hermes_container_setup_is_complete "$container_name" && hermes_container_services_are_healthy "$container_name"
+}
+
+# This waits until the running container finishes setup and both local services answer healthy.
+hermes_wait_for_healthy_container() {
+  local container_name="$1"
+  local attempt
+
+  for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if hermes_container_is_running "$container_name" && hermes_container_is_ready "$container_name"; then
       return 0
     fi
     sleep 1
