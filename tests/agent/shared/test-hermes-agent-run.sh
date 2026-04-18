@@ -203,7 +203,14 @@ case "$1" in
     if [[ "${HERMES_TEST_DIAGNOSTICS_FAIL:-0}" == "1" ]]; then
       exit 1
     fi
-    printf 'status=exited running=false exit_code=125\n'
+    case "$*" in
+      *'.ImageName'*)
+        printf 'image=hermes-agent-0.10.0-20260417-120000-123\n'
+        ;;
+      *)
+        printf 'status=exited running=false exit_code=125\n'
+        ;;
+    esac
     ;;
   logs)
     if [[ "${HERMES_TEST_DIAGNOSTICS_FAIL:-0}" == "1" ]]; then
@@ -342,6 +349,7 @@ if printf '1\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_L
 fi
 
 assert_file_contains 'Hermes Agent container failed to stay running: hermes-agent-alpha-0.10.0-20260417-120000-123' "$TMP_DIR/not-running.stderr" 'run should report a clear startup error when the container is not running after startup'
+assert_file_contains 'Container image: image=hermes-agent-0.10.0-20260417-120000-123' "$TMP_DIR/not-running.stderr" 'run should print the selected image name when startup fails'
 assert_file_contains 'Container state: status=exited running=false exit_code=125' "$TMP_DIR/not-running.stderr" 'run should print a short state summary when startup fails'
 assert_file_contains 'Recent container logs:' "$TMP_DIR/not-running.stderr" 'run should print recent logs when startup fails'
 assert_file_contains 'boot line 1' "$TMP_DIR/not-running.stderr" 'run should include recent container log output when startup fails'
@@ -386,6 +394,7 @@ if printf '1\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_L
 fi
 
 assert_file_contains 'Hermes Agent container stopped before attach: hermes-agent-alpha-0.10.0-20260417-120000-123' "$TMP_DIR/dies-before-exec.stderr" 'run should explain when the container dies after startup but before exec'
+assert_file_contains 'Container image: image=hermes-agent-0.10.0-20260417-120000-123' "$TMP_DIR/dies-before-exec.stderr" 'run should print the selected image name when the container stops before attach'
 assert_file_contains 'Container state: status=exited running=false exit_code=125' "$TMP_DIR/dies-before-exec.stderr" 'run should print a short state summary when the container stops before attach'
 assert_file_contains 'Recent container logs:' "$TMP_DIR/dies-before-exec.stderr" 'run should print recent logs when the container stops before attach'
 assert_file_contains 'boot line 2' "$TMP_DIR/dies-before-exec.stderr" 'run should include recent container logs when the container stops before attach'
@@ -400,6 +409,7 @@ if printf '1\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_L
 fi
 
 assert_file_contains 'Hermes Agent container stopped before attach: hermes-agent-alpha-0.10.0-20260417-120000-123' "$TMP_DIR/dies-after-open.stderr" 'run should explain when the container dies after the dashboard open step'
+assert_file_contains 'Container image: image=hermes-agent-0.10.0-20260417-120000-123' "$TMP_DIR/dies-after-open.stderr" 'run should print the selected image name when the container stops after the dashboard open step'
 assert_file_contains 'Container state: status=exited running=false exit_code=125' "$TMP_DIR/dies-after-open.stderr" 'run should print a short state summary when the container stops after the dashboard open step'
 assert_file_contains 'Recent container logs:' "$TMP_DIR/dies-after-open.stderr" 'run should print recent logs when the container stops after the dashboard open step'
 assert_file_contains 'boot line 1' "$TMP_DIR/dies-after-open.stderr" 'run should include recent container logs when the container stops after the dashboard open step'
@@ -412,6 +422,7 @@ if printf '1\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_L
 fi
 
 assert_file_contains 'Hermes Agent container failed to stay running: hermes-agent-alpha-0.10.0-20260417-120000-123' "$TMP_DIR/diagnostics-fail.stderr" 'run should keep the main startup error when diagnostics fail'
+assert_file_contains 'Container image: unavailable' "$TMP_DIR/diagnostics-fail.stderr" 'run should fall back to an unavailable image summary when inspect fails'
 assert_file_contains 'Container state: unavailable' "$TMP_DIR/diagnostics-fail.stderr" 'run should fall back to an unavailable state summary when inspect fails'
 assert_file_contains 'Recent container logs: unavailable' "$TMP_DIR/diagnostics-fail.stderr" 'run should fall back to unavailable logs when log collection fails'
 

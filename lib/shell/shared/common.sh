@@ -399,6 +399,21 @@ hermes_wait_for_stable_running_container() {
 }
 
 # This gathers a short state summary without failing the wrapper when diagnostics break.
+hermes_container_image_summary() {
+  local container_name="$1"
+  local summary
+
+  if summary="$(podman inspect --format 'image={{.ImageName}}' "$container_name" 2>/dev/null)"; then
+    if [[ -n "$summary" ]]; then
+      printf '%s\n' "$summary"
+      return 0
+    fi
+  fi
+
+  printf 'unavailable\n'
+}
+
+# This gathers a short state summary without failing the wrapper when diagnostics break.
 hermes_container_state_summary() {
   local container_name="$1"
   local summary
@@ -435,6 +450,7 @@ hermes_container_recent_logs() {
 hermes_print_container_startup_diagnostics() {
   local container_name="$1"
 
+  printf 'Container image: %s\n' "$(hermes_container_image_summary "$container_name")" >&2
   printf 'Container state: %s\n' "$(hermes_container_state_summary "$container_name")" >&2
 
   local recent_logs
