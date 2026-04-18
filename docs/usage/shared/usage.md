@@ -30,12 +30,15 @@ Examples:
 
 The dashboard is opened on the host after the container starts.
 
+The image build runs the upstream Hermes frontend build and carries the resulting `hermes_cli/web_dist` assets into the runtime image, so the dashboard route serves the bundled portal files.
+
 - `HERMES_AGENT_OPEN_COMMAND="auto"` resolves a supported opener for the current host.
 - On macOS, the wrapper prefers `open` when it is available.
 - On Linux, the wrapper prefers `xdg-open` when it is available.
 - If no supported opener exists, or the opener fails, the container still starts and the script still attaches to the Hermes CLI.
 - The container starts Hermes with `--host 0.0.0.0 --insecure` so the published host port can reach the dashboard.
 - The wrapper binds the published dashboard port to `127.0.0.1` on the host to keep that insecure dashboard local to the developer machine by default.
+- Without the bundled frontend assets, Hermes cannot serve the portal files and falls back to its missing-frontend error path.
 - Risk: Hermes marks this mode insecure because the dashboard exposes API keys and config without robust authentication. Only run this wrapper on a trusted local host and do not re-publish or forward the mapped loopback port to untrusted networks.
 
 ## Host To Container Mappings

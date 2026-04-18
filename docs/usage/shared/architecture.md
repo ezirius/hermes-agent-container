@@ -9,12 +9,14 @@ This repo keeps a small wrapper around a Hermes Agent container with three respo
 ## Layout
 
 - `config/containers/shared/Containerfile` builds the image and reflects the config contract through build args and runtime env vars.
+- `config/containers/shared/Containerfile` also builds the upstream Hermes frontend in a separate stage and copies the resulting `hermes_cli/web_dist` assets into the runtime source tree before `uv pip install /opt/hermes-src[web]` packages Hermes.
 - `lib/shell/shared/common.sh` is the only shared shell library path.
 - `scripts/agent/shared/hermes-agent-build` builds an image from config.
 - `scripts/agent/shared/hermes-agent-run` starts a selected workspace, mounts host paths into the container, recreates poisoned exact-match containers once, and prints startup diagnostics on failure.
 - `scripts/agent/shared/hermes-agent-shell` connects to an existing workspace container.
 - `tests/agent/shared/*` verify behavior and layout, using focused source-text assertions where they check stable build or runtime contract strings.
 - The container dashboard command must keep the service reachable through Podman port publishing, which currently requires `--host 0.0.0.0 --insecure` with Hermes 0.10.0, while the wrapper keeps the published host port bound to `127.0.0.1`.
+- If the runtime image is installed without those built frontend assets, Hermes cannot serve the portal dashboard and falls back to its missing-frontend error path.
 
 ## Design Constraints
 

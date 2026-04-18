@@ -212,6 +212,12 @@ assert_file_contains "-C $ROOT diff --numstat" "$GIT_LOG" 'build should check un
 assert_file_contains "-C $ROOT diff --cached --numstat" "$GIT_LOG" 'build should check staged content changes for the repo root'
 assert_file_contains "-C $ROOT ls-files --others --exclude-standard" "$GIT_LOG" 'build should check meaningful untracked files for the repo root'
 assert_file_contains 'getent group "${HERMES_AGENT_GID}"' "$ROOT/config/containers/shared/Containerfile" 'container build should reuse an existing group when the gid already exists'
+
+# These checks lock in the frontend packaging contract for the Hermes dashboard assets.
+assert_file_contains 'npm ci' "$ROOT/config/containers/shared/Containerfile" 'container build should install frontend dependencies with the upstream lockfile before packaging Hermes web assets'
+assert_file_contains 'npm run build' "$ROOT/config/containers/shared/Containerfile" 'container build should build Hermes frontend assets before installing the runtime package'
+assert_file_contains 'COPY --from=hermes-web-builder /opt/hermes-src/hermes_cli/web_dist /opt/hermes-src/hermes_cli/web_dist' "$ROOT/config/containers/shared/Containerfile" 'runtime image contract should copy the built Hermes web_dist assets into the runtime source tree before installation'
+
 assert_file_contains '--host 0.0.0.0' "$ROOT/config/containers/shared/Containerfile" 'dashboard command should bind the container to all interfaces so the published host port can reach it'
 assert_file_contains '--no-open' "$ROOT/config/containers/shared/Containerfile" 'dashboard command should keep browser opening on the host side only'
 assert_file_contains '--insecure' "$ROOT/config/containers/shared/Containerfile" 'dashboard command should opt into Hermes insecure binding explicitly'

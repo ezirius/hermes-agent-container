@@ -47,6 +47,8 @@ Container build configuration lives in:
 config/containers/shared/Containerfile
 ```
 
+The image build compiles the upstream Hermes frontend and bundles the resulting `hermes_cli/web_dist` assets into the runtime image before the Hermes package install. Without those built assets, the Hermes dashboard cannot serve the portal files and falls back to its missing-frontend error path.
+
 ## Documentation
 
 - Usage guide: `docs/usage/shared/usage.md`
