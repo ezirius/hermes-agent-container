@@ -431,11 +431,39 @@ hermes_container_setup_is_complete() {
   podman exec "$container_name" bash -lc 'test -s "$HERMES_HOME/config.yaml" && test -s "$HERMES_HOME/.env"' >/dev/null 2>&1
 }
 
+# This checks the official gateway state after setup is complete.
+hermes_container_gateway_is_healthy() {
+  local container_name="$1"
+
+  podman exec "$container_name" bash -lc 'python -c '"'"'import json, os, sys; path=os.path.join(os.environ["HERMES_HOME"], "gateway_state.json"); data=json.load(open(path, encoding="utf-8")); sys.exit(0 if data.get("gateway_state") == "running" else 1)'"'"'' >/dev/null 2>&1
+}
+
+# This checks the local dashboard probe after setup is complete.
+hermes_container_dashboard_is_healthy() {
+  local container_name="$1"
+
+  podman exec "$container_name" bash -lc 'curl -fsS "http://127.0.0.1:'"$HERMES_AGENT_DASHBOARD_PORT"'/" >/dev/null' >/dev/null 2>&1
+}
+
+# This starts the gateway in the background inside an existing container.
+hermes_container_start_gateway() {
+  local container_name="$1"
+
+  podman exec -d "$container_name" hermes gateway run >/dev/null 2>&1
+}
+
+# This starts the dashboard in the background inside an existing container.
+hermes_container_start_dashboard() {
+  local container_name="$1"
+
+  podman exec -d "$container_name" hermes dashboard --host 0.0.0.0 --port "$HERMES_AGENT_DASHBOARD_PORT" --no-open --insecure >/dev/null 2>&1
+}
+
 # This checks the official gateway state and dashboard probe after setup is complete.
 hermes_container_services_are_healthy() {
   local container_name="$1"
 
-  podman exec "$container_name" bash -lc 'python -c '"'"'import json, os, sys; path=os.path.join(os.environ["HERMES_HOME"], "gateway_state.json"); data=json.load(open(path, encoding="utf-8")); sys.exit(0 if data.get("gateway_state") == "running" else 1)'"'"' && curl -fsS "http://127.0.0.1:${HERMES_AGENT_DASHBOARD_PORT}/" >/dev/null' >/dev/null 2>&1
+  hermes_container_gateway_is_healthy "$container_name" && hermes_container_dashboard_is_healthy "$container_name"
 }
 
 # This checks the setup files, official gateway state, and dashboard probe inside one running container.

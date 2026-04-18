@@ -225,6 +225,14 @@ case "$1" in
       fi
     fi
 
+    if [[ "$*" == *'hermes gateway run'* ]]; then
+      : >"${HERMES_TEST_PODMAN_LOG}.gateway-started"
+    fi
+
+    if [[ "$*" == *'hermes dashboard --host 0.0.0.0 --port 9234 --no-open --insecure'* ]]; then
+      : >"${HERMES_TEST_PODMAN_LOG}.dashboard-started"
+    fi
+
     if [[ "$*" == *'config.toml'* && "$*" != *'gateway_state.json'* ]]; then
       exit 1
     fi
@@ -253,8 +261,18 @@ case "$1" in
             exit 1
           fi
           ;;
+        delayed-healthy-on-create|delayed-healthy-on-start|delayed-services-on-create)
+          if (( probe_count < 4 )); then
+            exit 1
+          fi
+          ;;
         delayed-healthy-after-entrypoint-slack)
           if (( probe_count < 10 )); then
+            exit 1
+          fi
+          ;;
+        later-run-gateway-unhealthy)
+          if [[ ! -f "${HERMES_TEST_PODMAN_LOG}.gateway-started" ]]; then
             exit 1
           fi
           ;;
@@ -263,6 +281,24 @@ case "$1" in
           ;;
         setup-incomplete-once|services-unhealthy-once)
           if [[ ! -f "${HERMES_TEST_PODMAN_LOG}.ran" ]]; then
+            exit 1
+          fi
+          ;;
+      esac
+
+      exit 0
+    fi
+
+    if [[ "$*" == *'curl -fsS'* ]]; then
+      case "${HERMES_TEST_HEALTH_MODE:-healthy}" in
+        delayed-services-on-create)
+          probe_count="$(wc -l <"${HERMES_TEST_PODMAN_LOG}.health-probes" 2>/dev/null || printf '0')"
+          if (( probe_count < 4 )); then
+            exit 1
+          fi
+          ;;
+        later-run-dashboard-unhealthy)
+          if [[ ! -f "${HERMES_TEST_PODMAN_LOG}.dashboard-started" ]]; then
             exit 1
           fi
           ;;
@@ -448,6 +484,21 @@ assert_file_not_contains() {
   fi
 }
 
+# This helper checks that a log file contains an exact command line the expected number of times.
+assert_file_line_count() {
+  local needle="$1"
+  local expected_count="$2"
+  local file_path="$3"
+  local message="$4"
+  local actual_count
+
+  actual_count="$(grep -Fxc -- "$needle" "$file_path" 2>/dev/null || true)"
+
+  if [[ "$actual_count" != "$expected_count" ]]; then
+    fail "$message: expected $expected_count exact matches for [$needle] in $file_path but found $actual_count"
+  fi
+}
+
 # These checks prove old containers are left alone when replacement startup fails.
 assert_file_not_contains 'rm -f stale-1' "$PODMAN_LOG" 'run should not remove existing workspace containers before replacement startup succeeds'
 assert_file_not_contains 'rm -f stale-2' "$PODMAN_LOG" 'run should not remove other workspace containers before replacement startup succeeds'
@@ -543,16 +594,53 @@ if [[ -z "$setup_line" || -z "$open_line" || "$open_line" -le "$setup_line" ]]; 
 fi
 
 assert_file_contains 'host-open http://127.0.0.1:9334' "$PODMAN_LOG" 'run should open the dashboard after first-run setup completes and services become healthy'
-assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes' "$PODMAN_LOG" 'run should attach to Hermes after first-run setup completes'
+assert_file_line_count 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes setup' '1' "$PODMAN_LOG" 'run should launch setup exactly once during first-run flow'
+assert_file_line_count 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes' '0' "$PODMAN_LOG" 'run should not do an extra wrapper-driven attach after first-run setup returns'
+
+# This checks that a newly created container does not race the entrypoint by starting services from the wrapper.
+: >"$PODMAN_LOG"
+: >"$OPEN_LOG"
+rm -f "$PODMAN_LOG.health-probes" "$PODMAN_LOG.gateway-started" "$PODMAN_LOG.dashboard-started"
+printf '1\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_HEALTH_MODE='delayed-healthy-on-create' bash "$ROOT/scripts/agent/shared/hermes-agent-run" >"$RUN_STDOUT"
+
+assert_file_not_contains 'exec -d hermes-agent-alpha-0.10.0-20260417-120000-123 hermes gateway run' "$PODMAN_LOG" 'run should let a newly created container wait for entrypoint-managed gateway startup'
+assert_file_not_contains 'exec -d hermes-agent-alpha-0.10.0-20260417-120000-123 hermes dashboard --host 0.0.0.0 --port 9234 --no-open --insecure' "$PODMAN_LOG" 'run should let a newly created container wait for entrypoint-managed dashboard startup'
+assert_file_contains 'host-open http://127.0.0.1:9334' "$PODMAN_LOG" 'run should still open the dashboard after entrypoint-managed startup finishes in a newly created container'
+assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes' "$PODMAN_LOG" 'run should still attach after entrypoint-managed startup finishes in a newly created container'
 
 # This checks that a healthy matching running container is reused as-is.
 : >"$PODMAN_LOG"
 : >"$OPEN_LOG"
+rm -f "$PODMAN_LOG.gateway-started" "$PODMAN_LOG.dashboard-started"
 printf '1\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_STALE_MODE='same-name' HERMES_TEST_HEALTH_MODE='healthy' bash "$ROOT/scripts/agent/shared/hermes-agent-run" >"$RUN_STDOUT"
 
 assert_file_not_contains 'rm -f hermes-agent-alpha-0.10.0-20260417-120000-123' "$PODMAN_LOG" 'run should keep a matching running container when setup and both services are healthy'
 assert_file_not_contains 'run -d --name hermes-agent-alpha-0.10.0-20260417-120000-123' "$PODMAN_LOG" 'run should not recreate a matching running container when it is already healthy'
+assert_file_not_contains 'exec -d hermes-agent-alpha-0.10.0-20260417-120000-123 hermes gateway run' "$PODMAN_LOG" 'run should leave a healthy gateway alone on later runs'
+assert_file_not_contains 'exec -d hermes-agent-alpha-0.10.0-20260417-120000-123 hermes dashboard --host 0.0.0.0 --port 9234 --no-open --insecure' "$PODMAN_LOG" 'run should leave a healthy dashboard alone on later runs'
 assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes' "$PODMAN_LOG" 'run should attach to a matching running container once it is healthy'
+
+# This checks that a later run only starts the gateway when the dashboard is already healthy.
+: >"$PODMAN_LOG"
+: >"$OPEN_LOG"
+rm -f "$PODMAN_LOG.gateway-started" "$PODMAN_LOG.dashboard-started"
+printf '1\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_STALE_MODE='same-name' HERMES_TEST_HEALTH_MODE='later-run-gateway-unhealthy' bash "$ROOT/scripts/agent/shared/hermes-agent-run" >"$RUN_STDOUT"
+
+assert_file_contains 'exec -d hermes-agent-alpha-0.10.0-20260417-120000-123 hermes gateway run' "$PODMAN_LOG" 'run should start the gateway when it is unhealthy on a later run'
+assert_file_not_contains 'exec -d hermes-agent-alpha-0.10.0-20260417-120000-123 hermes dashboard --host 0.0.0.0 --port 9234 --no-open --insecure' "$PODMAN_LOG" 'run should not restart the dashboard when it is already healthy on a later run'
+assert_file_contains 'host-open http://127.0.0.1:9334' "$PODMAN_LOG" 'run should still open the dashboard after starting the missing gateway service'
+assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes' "$PODMAN_LOG" 'run should attach after starting the missing gateway service'
+
+# This checks that a later run only starts the dashboard when the gateway is already healthy.
+: >"$PODMAN_LOG"
+: >"$OPEN_LOG"
+rm -f "$PODMAN_LOG.gateway-started" "$PODMAN_LOG.dashboard-started"
+printf '1\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_STALE_MODE='same-name' HERMES_TEST_HEALTH_MODE='later-run-dashboard-unhealthy' bash "$ROOT/scripts/agent/shared/hermes-agent-run" >"$RUN_STDOUT"
+
+assert_file_not_contains 'exec -d hermes-agent-alpha-0.10.0-20260417-120000-123 hermes gateway run' "$PODMAN_LOG" 'run should not restart the gateway when it is already healthy on a later run'
+assert_file_contains 'exec -d hermes-agent-alpha-0.10.0-20260417-120000-123 hermes dashboard --host 0.0.0.0 --port 9234 --no-open --insecure' "$PODMAN_LOG" 'run should start the dashboard when it is unhealthy on a later run'
+assert_file_contains 'host-open http://127.0.0.1:9334' "$PODMAN_LOG" 'run should still open the dashboard after starting the missing dashboard service'
+assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes' "$PODMAN_LOG" 'run should attach after starting the missing dashboard service'
 
 # This checks that the wrapper waits for health before opening the dashboard or attaching.
 : >"$PODMAN_LOG"
@@ -590,6 +678,18 @@ printf '1\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG=
 
 assert_file_contains 'start hermes-agent-alpha-0.10.0-20260417-120000-123' "$PODMAN_LOG" 'run should start a matching stopped workspace container before attaching'
 assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes' "$PODMAN_LOG" 'run should attach after starting a matching stopped workspace container'
+
+# This checks that a just-started matching container does not race the entrypoint by starting services from the wrapper.
+: >"$PODMAN_LOG"
+: >"$OPEN_LOG"
+rm -f "$PODMAN_LOG.started" "$PODMAN_LOG.health-probes" "$PODMAN_LOG.gateway-started" "$PODMAN_LOG.dashboard-started"
+printf '1\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_STALE_MODE='same-name' HERMES_TEST_RUNNING_MODE='stopped' HERMES_TEST_HEALTH_MODE='delayed-healthy-on-start' bash "$ROOT/scripts/agent/shared/hermes-agent-run" >"$RUN_STDOUT"
+
+assert_file_contains 'start hermes-agent-alpha-0.10.0-20260417-120000-123' "$PODMAN_LOG" 'run should start a matching stopped workspace container before waiting for entrypoint-managed startup'
+assert_file_not_contains 'exec -d hermes-agent-alpha-0.10.0-20260417-120000-123 hermes gateway run' "$PODMAN_LOG" 'run should let a just-started matching container wait for entrypoint-managed gateway startup'
+assert_file_not_contains 'exec -d hermes-agent-alpha-0.10.0-20260417-120000-123 hermes dashboard --host 0.0.0.0 --port 9234 --no-open --insecure' "$PODMAN_LOG" 'run should let a just-started matching container wait for entrypoint-managed dashboard startup'
+assert_file_contains 'host-open http://127.0.0.1:9334' "$PODMAN_LOG" 'run should still open the dashboard after entrypoint-managed startup finishes in a just-started matching container'
+assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes' "$PODMAN_LOG" 'run should still attach after entrypoint-managed startup finishes in a just-started matching container'
 
 # This checks that a matching stopped container is recreated once if it dies during the initial running wait.
 : >"$PODMAN_LOG"
@@ -631,6 +731,19 @@ printf '1\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG=
 assert_file_contains 'rm -f hermes-agent-alpha-0.10.0-20260417-120000-123' "$PODMAN_LOG" 'run should remove a matching container whose dashboard port is not loopback-only'
 assert_file_contains 'run -d --name hermes-agent-alpha-0.10.0-20260417-120000-123' "$PODMAN_LOG" 'run should recreate a matching container when its dashboard publish contract is outdated'
 assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes' "$PODMAN_LOG" 'run should attach after recreating a matching container with an outdated dashboard publish contract'
+
+# This checks that a replaced matching running container still waits for entrypoint-managed service startup.
+: >"$PODMAN_LOG"
+: >"$OPEN_LOG"
+rm -f "$PODMAN_LOG.health-probes" "$PODMAN_LOG.gateway-started" "$PODMAN_LOG.dashboard-started"
+printf '1\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_STALE_MODE='same-name' HERMES_TEST_PORT_MODE='public' HERMES_TEST_HEALTH_MODE='delayed-services-on-create' bash "$ROOT/scripts/agent/shared/hermes-agent-run" >"$RUN_STDOUT"
+
+assert_file_contains 'rm -f hermes-agent-alpha-0.10.0-20260417-120000-123' "$PODMAN_LOG" 'run should replace an initially running matching container before waiting for fresh startup'
+assert_file_contains 'run -d --name hermes-agent-alpha-0.10.0-20260417-120000-123' "$PODMAN_LOG" 'run should recreate the matching container before waiting for fresh startup'
+assert_file_not_contains 'exec -d hermes-agent-alpha-0.10.0-20260417-120000-123 hermes gateway run' "$PODMAN_LOG" 'run should not start the gateway from the wrapper after replacing a previously running container'
+assert_file_not_contains 'exec -d hermes-agent-alpha-0.10.0-20260417-120000-123 hermes dashboard --host 0.0.0.0 --port 9234 --no-open --insecure' "$PODMAN_LOG" 'run should not start the dashboard from the wrapper after replacing a previously running container'
+assert_file_contains 'host-open http://127.0.0.1:9334' "$PODMAN_LOG" 'run should still open the dashboard after entrypoint-managed startup finishes in the replacement container'
+assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes' "$PODMAN_LOG" 'run should still attach after entrypoint-managed startup finishes in the replacement container'
 
 # This checks that the wrapper does not attach if the container dies during the dashboard-open readiness window.
 : >"$PODMAN_LOG"
