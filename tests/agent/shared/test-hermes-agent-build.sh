@@ -257,6 +257,9 @@ assert_file_contains 'uv python install 3.11' "$ROOT/config/containers/shared/Co
 assert_file_contains 'uv venv /opt/hermes-venv --python 3.11' "$ROOT/config/containers/shared/Containerfile" 'runtime image should create its venv with Python 3.11 to match the upstream full install flow'
 assert_file_contains 'uv pip install -e "/opt/hermes-src[all]"' "$ROOT/config/containers/shared/Containerfile" 'runtime image should install Hermes with the upstream full extras instead of a web-only package shape'
 assert_file_contains 'tools/skills_sync.py' "$ROOT/config/containers/shared/Containerfile" 'runtime image should keep the upstream skills sync tool available from the preserved Hermes source tree'
+assert_file_contains 'HOME=${HERMES_AGENT_CONTAINER_HOME}' "$ROOT/config/containers/shared/Containerfile" 'runtime image should set HOME to the configured Hermes container home'
+assert_file_contains 'curl -LsSf https://astral.sh/uv/install.sh | sh' "$ROOT/config/containers/shared/Containerfile" 'runtime image should install uv through the upstream installer'
+assert_file_contains 'export PATH="${HERMES_AGENT_CONTAINER_HOME}/.local/bin:${PATH}"' "$ROOT/config/containers/shared/Containerfile" 'runtime image should use the configured HOME-local bin path after installing uv'
 
 if grep -Fq 'uv pip install /opt/hermes-src[web]' "$ROOT/config/containers/shared/Containerfile"; then
   fail 'runtime image should not use a web-only Hermes install when aligning to the upstream full install path'
@@ -264,6 +267,10 @@ fi
 
 if grep -Fq 'rm -rf /opt/hermes-src' "$ROOT/config/containers/shared/Containerfile"; then
   fail 'runtime image should not delete the Hermes source tree because upstream bundled skills sync relies on it'
+fi
+
+if grep -Fq 'export PATH="/root/.local/bin:${PATH}"' "$ROOT/config/containers/shared/Containerfile"; then
+  fail 'runtime image should not hardcode /root/.local/bin when HOME points at the Hermes container home'
 fi
 
 assert_file_contains '--host 0.0.0.0' "$ROOT/config/containers/shared/Containerfile" 'dashboard command should bind the container to all interfaces so the published host port can reach it'
