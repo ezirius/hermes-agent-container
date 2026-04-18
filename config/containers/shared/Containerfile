@@ -42,13 +42,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HERMES_HOME=${HERMES_AGENT_CONTAINER_HOME}/.hermes \
     HERMES_WORKSPACE=${HERMES_AGENT_CONTAINER_WORKSPACE}
 
-# Install only the base packages needed to run Hermes and keep PID 1 well-behaved.
+# Install the base packages needed for the upstream full install flow and keep PID 1 well-behaved.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     ca-certificates \
     curl \
     ffmpeg \
     git \
+    libolm-dev \
     python3 \
     python3-pip \
     python3-venv \
@@ -68,9 +69,11 @@ RUN container_group_name="$(getent group "${HERMES_AGENT_GID}" | cut -d: -f1 || 
     && mkdir -p "${HERMES_AGENT_CONTAINER_HOME}/.hermes" "${HERMES_AGENT_CONTAINER_WORKSPACE}" \
     && chown -R hermes-agent:"${container_group_name}" "${HERMES_AGENT_CONTAINER_HOME}" "${HERMES_AGENT_CONTAINER_WORKSPACE}"
 
-# Hermes is installed into an isolated venv so the runtime command path stays predictable.
-RUN python3 -m venv /opt/hermes-venv \
-    && /opt/hermes-venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel uv \
+# Hermes follows the upstream full install flow with uv, Python 3.11, and an editable repo install.
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && export PATH="/root/.local/bin:${PATH}" \
+    && uv python install 3.11 \
+    && uv venv /opt/hermes-venv --python 3.11 \
     && mkdir -p /opt/hermes-src \
     && curl -fsSL "https://github.com/NousResearch/hermes-agent/archive/refs/tags/${HERMES_AGENT_RELEASE_TAG}.tar.gz" -o /tmp/hermes-agent.tar.gz \
     && tar -xzf /tmp/hermes-agent.tar.gz --strip-components=1 -C /opt/hermes-src \
@@ -79,10 +82,10 @@ RUN python3 -m venv /opt/hermes-venv \
 # Copy the built frontend into the source tree before install so Hermes packages web_dist.
 COPY --from=hermes-web-builder /opt/hermes-src/hermes_cli/web_dist /opt/hermes-src/hermes_cli/web_dist
 
-RUN /opt/hermes-venv/bin/uv pip install /opt/hermes-src[web] \
+RUN /opt/hermes-venv/bin/uv pip install -e "/opt/hermes-src[all]" \
+    && test -f /opt/hermes-src/tools/skills_sync.py \
     && container_group_name="$(getent group "${HERMES_AGENT_GID}" | cut -d: -f1)" \
-    && chown -R hermes-agent:"${container_group_name}" /opt/hermes-venv \
-    && rm -rf /opt/hermes-src
+    && chown -R hermes-agent:"${container_group_name}" /opt/hermes-venv
 
 # WORKDIR must follow the shared config so host workspace mounts land at the active shell location.
 USER hermes-agent
