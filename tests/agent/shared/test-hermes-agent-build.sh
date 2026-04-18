@@ -214,6 +214,12 @@ assert_file_contains "-C $ROOT ls-files --others --exclude-standard" "$GIT_LOG" 
 assert_file_contains 'getent group "${HERMES_AGENT_GID}"' "$ROOT/config/containers/shared/Containerfile" 'container build should reuse an existing group when the gid already exists'
 
 # These checks lock in the frontend packaging contract for the Hermes dashboard assets.
+containerfile_text="$(<"$ROOT/config/containers/shared/Containerfile")"
+assert_contains "RUN apt-get update && apt-get install -y --no-install-recommends \\
+    ca-certificates \\
+    curl \\
+    tar \\
+    && rm -rf /var/lib/apt/lists/*" "$containerfile_text" 'frontend builder should install ca-certificates before fetching the upstream Hermes source tarball over HTTPS'
 assert_file_contains 'npm ci' "$ROOT/config/containers/shared/Containerfile" 'container build should install frontend dependencies with the upstream lockfile before packaging Hermes web assets'
 assert_file_contains 'npm run build' "$ROOT/config/containers/shared/Containerfile" 'container build should build Hermes frontend assets before installing the runtime package'
 assert_file_contains 'COPY --from=hermes-web-builder /opt/hermes-src/hermes_cli/web_dist /opt/hermes-src/hermes_cli/web_dist' "$ROOT/config/containers/shared/Containerfile" 'runtime image contract should copy the built Hermes web_dist assets into the runtime source tree before installation'
