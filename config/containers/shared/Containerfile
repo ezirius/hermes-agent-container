@@ -69,7 +69,7 @@ RUN container_group_name="$(getent group "${HERMES_AGENT_GID}" | cut -d: -f1 || 
     && mkdir -p "${HERMES_AGENT_CONTAINER_HOME}/.hermes" "${HERMES_AGENT_CONTAINER_WORKSPACE}" \
     && chown -R hermes-agent:"${container_group_name}" "${HERMES_AGENT_CONTAINER_HOME}" "${HERMES_AGENT_CONTAINER_WORKSPACE}"
 
-# Hermes follows the upstream full install flow with uv, Python 3.11, and an editable repo install.
+# Hermes follows the upstream full install flow with uv, Python 3.11, and a source-tree install.
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && export PATH="${HERMES_AGENT_CONTAINER_HOME}/.local/bin:${PATH}" \
     && export UV_PYTHON_INSTALL_DIR="/opt/hermes-python" \
@@ -85,7 +85,7 @@ COPY --from=hermes-web-builder /opt/hermes-src/hermes_cli/web_dist /opt/hermes-s
 
 RUN export PATH="${HERMES_AGENT_CONTAINER_HOME}/.local/bin:${PATH}" \
     && export VIRTUAL_ENV="/opt/hermes-venv" \
-    && uv pip install -e "/opt/hermes-src[all]" \
+    && uv pip install "/opt/hermes-src[all]" \
     && test -f /opt/hermes-src/tools/skills_sync.py \
     && container_group_name="$(getent group "${HERMES_AGENT_GID}" | cut -d: -f1)" \
     && chown -R hermes-agent:"${container_group_name}" /opt/hermes-venv
