@@ -82,7 +82,9 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
 # Copy the built frontend into the source tree before install so Hermes packages web_dist.
 COPY --from=hermes-web-builder /opt/hermes-src/hermes_cli/web_dist /opt/hermes-src/hermes_cli/web_dist
 
-RUN /opt/hermes-venv/bin/uv pip install -e "/opt/hermes-src[all]" \
+RUN export PATH="${HERMES_AGENT_CONTAINER_HOME}/.local/bin:${PATH}" \
+    && export VIRTUAL_ENV="/opt/hermes-venv" \
+    && uv pip install -e "/opt/hermes-src[all]" \
     && test -f /opt/hermes-src/tools/skills_sync.py \
     && container_group_name="$(getent group "${HERMES_AGENT_GID}" | cut -d: -f1)" \
     && chown -R hermes-agent:"${container_group_name}" /opt/hermes-venv

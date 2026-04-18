@@ -260,6 +260,7 @@ assert_file_contains 'tools/skills_sync.py' "$ROOT/config/containers/shared/Cont
 assert_file_contains 'HOME=${HERMES_AGENT_CONTAINER_HOME}' "$ROOT/config/containers/shared/Containerfile" 'runtime image should set HOME to the configured Hermes container home'
 assert_file_contains 'curl -LsSf https://astral.sh/uv/install.sh | sh' "$ROOT/config/containers/shared/Containerfile" 'runtime image should install uv through the upstream installer'
 assert_file_contains 'export PATH="${HERMES_AGENT_CONTAINER_HOME}/.local/bin:${PATH}"' "$ROOT/config/containers/shared/Containerfile" 'runtime image should use the configured HOME-local bin path after installing uv'
+assert_file_contains 'export VIRTUAL_ENV="/opt/hermes-venv"' "$ROOT/config/containers/shared/Containerfile" 'runtime image should point standalone uv at the created virtualenv before installing Hermes'
 
 if grep -Fq 'uv pip install /opt/hermes-src[web]' "$ROOT/config/containers/shared/Containerfile"; then
   fail 'runtime image should not use a web-only Hermes install when aligning to the upstream full install path'
@@ -271,6 +272,10 @@ fi
 
 if grep -Fq 'export PATH="/root/.local/bin:${PATH}"' "$ROOT/config/containers/shared/Containerfile"; then
   fail 'runtime image should not hardcode /root/.local/bin when HOME points at the Hermes container home'
+fi
+
+if grep -Fq '/opt/hermes-venv/bin/uv' "$ROOT/config/containers/shared/Containerfile"; then
+  fail 'runtime image should not assume uv is installed inside the virtualenv'
 fi
 
 assert_file_contains '--host 0.0.0.0' "$ROOT/config/containers/shared/Containerfile" 'dashboard command should bind the container to all interfaces so the published host port can reach it'
