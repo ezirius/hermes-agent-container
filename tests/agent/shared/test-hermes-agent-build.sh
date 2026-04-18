@@ -221,9 +221,29 @@ assert_file_contains 'ARG HERMES_AGENT_NODE_IMAGE' "$ROOT/config/containers/shar
 assert_file_contains 'ARG HERMES_AGENT_RUNTIME_IMAGE' "$ROOT/config/containers/shared/Containerfile" 'container build should declare the configured runtime base image arg'
 assert_file_contains 'FROM ${HERMES_AGENT_NODE_IMAGE} AS hermes-web-builder' "$ROOT/config/containers/shared/Containerfile" 'frontend builder should use the configured Node base image'
 assert_file_contains 'FROM ${HERMES_AGENT_RUNTIME_IMAGE}' "$ROOT/config/containers/shared/Containerfile" 'runtime image should use the configured runtime base image'
-
 # These checks lock in the frontend packaging contract for the Hermes dashboard assets.
-containerfile_text="$(<"$ROOT/config/containers/shared/Containerfile")"
+containerfile_path="$ROOT/config/containers/shared/Containerfile"
+containerfile_text="$(<"$containerfile_path")"
+
+# This keeps both stage image args ahead of the first FROM without caring about comments or spacing between them.
+first_from_match="$(grep -n -m 1 '^[[:space:]]*FROM[[:space:]]' "$containerfile_path" || true)"
+if [[ -z "$first_from_match" ]]; then
+  fail 'container build test expected the Containerfile to declare at least one FROM instruction'
+fi
+first_from_line="${first_from_match%%:*}"
+
+for required_image_arg in HERMES_AGENT_NODE_IMAGE HERMES_AGENT_RUNTIME_IMAGE; do
+  arg_match="$(grep -n -m 1 "^[[:space:]]*ARG[[:space:]]\+${required_image_arg}$" "$containerfile_path" || true)"
+  if [[ -z "$arg_match" ]]; then
+    fail "container build should declare ${required_image_arg} before the first FROM so build arg interpolation works in every stage"
+  fi
+
+  arg_line="${arg_match%%:*}"
+  if (( arg_line >= first_from_line )); then
+    fail "container build should declare ${required_image_arg} before the first FROM so build arg interpolation works in every stage"
+  fi
+done
+
 assert_contains "RUN apt-get update && apt-get install -y --no-install-recommends \\
     ca-certificates \\
     curl \\

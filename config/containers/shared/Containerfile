@@ -1,5 +1,7 @@
 # This image consumes shared config via build args and keeps the runtime contract in env vars.
 ARG HERMES_AGENT_NODE_IMAGE
+ARG HERMES_AGENT_RUNTIME_IMAGE
+
 FROM ${HERMES_AGENT_NODE_IMAGE} AS hermes-web-builder
 
 # This stage builds the upstream Hermes frontend so the runtime install can package web_dist.
@@ -22,7 +24,6 @@ WORKDIR /opt/hermes-src/web
 RUN npm ci \
     && npm run build
 
-ARG HERMES_AGENT_RUNTIME_IMAGE
 FROM ${HERMES_AGENT_RUNTIME_IMAGE}
 
 # Build args mirror the shared config so the image shape stays config-driven.
