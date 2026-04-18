@@ -180,6 +180,8 @@ HERMES_AGENT_UID="1000"
 HERMES_AGENT_GID="1000"
 HERMES_AGENT_VERSION="0.10.0"
 HERMES_AGENT_RELEASE_TAG="v2026.4.16"
+HERMES_AGENT_NODE_IMAGE="node:22-bookworm-slim"
+HERMES_AGENT_RUNTIME_IMAGE="ubuntu:24.04"
 HERMES_AGENT_DASHBOARD_PORT="9234"
 HERMES_AGENT_CHAT_COMMAND="hermes"
 HERMES_AGENT_SHELL_COMMAND="bash"
@@ -206,6 +208,8 @@ PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG=
 assert_file_contains '--build-arg HERMES_AGENT_DASHBOARD_PORT=9234' "$PODMAN_LOG" 'build should pass dashboard port from config'
 assert_file_contains '--build-arg HERMES_AGENT_RELEASE_TAG=v2026.4.16' "$PODMAN_LOG" 'build should pass release tag from config'
 assert_file_contains '--build-arg HERMES_AGENT_GID=1000' "$PODMAN_LOG" 'build should pass the requested gid through to the image build'
+assert_file_contains '--build-arg HERMES_AGENT_NODE_IMAGE=node:22-bookworm-slim' "$PODMAN_LOG" 'build should pass the configured Node base image to the container build'
+assert_file_contains '--build-arg HERMES_AGENT_RUNTIME_IMAGE=ubuntu:24.04' "$PODMAN_LOG" 'build should pass the configured runtime base image to the container build'
 assert_file_contains "-C $ROOT rev-parse --verify HEAD" "$GIT_LOG" 'build should check commit state for the repo root'
 assert_file_contains "-C $ROOT update-index -q --refresh" "$GIT_LOG" 'build should refresh the index before checking cleanliness'
 assert_file_contains "-C $ROOT diff --numstat" "$GIT_LOG" 'build should check unstaged content changes for the repo root'
@@ -213,6 +217,10 @@ assert_file_contains "-C $ROOT diff --cached --numstat" "$GIT_LOG" 'build should
 assert_file_contains "-C $ROOT ls-files --others --exclude-standard" "$GIT_LOG" 'build should check meaningful untracked files for the repo root'
 assert_file_contains 'getent group "${HERMES_AGENT_GID}"' "$ROOT/config/containers/shared/Containerfile" 'container build should reuse an existing group when the gid already exists'
 assert_file_contains 'chown -R hermes-agent:"${container_group_name}" /opt/hermes-venv' "$ROOT/config/containers/shared/Containerfile" 'container build should make the shared Python venv writable for runtime installs by hermes-agent'
+assert_file_contains 'ARG HERMES_AGENT_NODE_IMAGE' "$ROOT/config/containers/shared/Containerfile" 'container build should declare the configured Node base image arg'
+assert_file_contains 'ARG HERMES_AGENT_RUNTIME_IMAGE' "$ROOT/config/containers/shared/Containerfile" 'container build should declare the configured runtime base image arg'
+assert_file_contains 'FROM ${HERMES_AGENT_NODE_IMAGE} AS hermes-web-builder' "$ROOT/config/containers/shared/Containerfile" 'frontend builder should use the configured Node base image'
+assert_file_contains 'FROM ${HERMES_AGENT_RUNTIME_IMAGE}' "$ROOT/config/containers/shared/Containerfile" 'runtime image should use the configured runtime base image'
 
 # These checks lock in the frontend packaging contract for the Hermes dashboard assets.
 containerfile_text="$(<"$ROOT/config/containers/shared/Containerfile")"
