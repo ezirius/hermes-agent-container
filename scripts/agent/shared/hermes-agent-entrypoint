@@ -14,7 +14,7 @@ log() {
 
 # This treats setup as complete only when the usual Hermes config files are present.
 setup_is_complete() {
-  [[ -s "${HERMES_HOME}/config.toml" ]] && [[ -s "${HERMES_HOME}/.env" ]]
+  [[ -s "${HERMES_HOME}/config.yaml" ]] && [[ -s "${HERMES_HOME}/.env" ]]
 }
 
 # This starts the Hermes gateway in the background and records its pid.
@@ -44,7 +44,7 @@ stop_services() {
 
 # This keeps the container alive in a safe idle mode until setup is finished.
 idle_until_setup() {
-  log "Hermes setup is incomplete. Skipping gateway and dashboard startup until ${HERMES_HOME}/config.toml and ${HERMES_HOME}/.env exist."
+  log "Hermes setup is incomplete. Skipping gateway and dashboard startup until ${HERMES_HOME}/config.yaml and ${HERMES_HOME}/.env exist."
 
   # This polls for the usual setup files so services start as soon as setup finishes.
   while ! setup_is_complete; do

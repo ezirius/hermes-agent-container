@@ -64,9 +64,17 @@ if [[ -s "$HERMES_LOG" ]]; then
   fail 'entrypoint should not start Hermes services before setup is complete'
 fi
 
-# This completes setup after the entrypoint has already started waiting.
+# This confirms the old config.toml path does not count as completed setup.
 printf 'model = "default"\n' >"$HERMES_HOME_DIR/config.toml"
 printf 'HERMES_API_KEY=test\n' >"$HERMES_HOME_DIR/.env"
+sleep 6
+
+if [[ -s "$HERMES_LOG" ]]; then
+  fail 'entrypoint should keep waiting when only config.toml and .env exist'
+fi
+
+# This completes setup after the entrypoint has already started waiting.
+printf 'model: default\n' >"$HERMES_HOME_DIR/config.yaml"
 
 # This waits for the delayed setup to trigger both managed services.
 for attempt in 1 2 3 4 5 6 7 8; do

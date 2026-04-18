@@ -428,7 +428,7 @@ hermes_wait_for_running_container() {
 hermes_container_setup_is_complete() {
   local container_name="$1"
 
-  podman exec "$container_name" bash -lc 'test -s "$HERMES_HOME/config.toml" && test -s "$HERMES_HOME/.env"' >/dev/null 2>&1
+  podman exec "$container_name" bash -lc 'test -s "$HERMES_HOME/config.yaml" && test -s "$HERMES_HOME/.env"' >/dev/null 2>&1
 }
 
 # This checks the official gateway state and dashboard probe after setup is complete.

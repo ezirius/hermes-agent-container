@@ -226,6 +226,10 @@ case "$1" in
     fi
 
     if [[ "$*" == *'config.toml'* && "$*" != *'gateway_state.json'* ]]; then
+      exit 1
+    fi
+
+    if [[ "$*" == *'config.yaml'* && "$*" != *'gateway_state.json'* ]]; then
       if [[ "${HERMES_TEST_HEALTH_MODE:-healthy}" == "first-run-setup" && ! -f "${HERMES_TEST_PODMAN_LOG}.setup-complete" ]]; then
         exit 1
       fi
@@ -528,6 +532,8 @@ else
 fi
 
 assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes setup' "$PODMAN_LOG" 'run should launch hermes setup when the container is still waiting for setup'
+assert_file_contains 'config.yaml' "$PODMAN_LOG" 'run should check for config.yaml when deciding whether setup is complete'
+assert_file_not_contains 'config.toml' "$PODMAN_LOG" 'run should not treat config.toml as the setup completion file'
 
 # This checks that first-run setup finishes before the host dashboard opener is invoked.
 setup_line="$(grep -Fn 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes setup' "$PODMAN_LOG" | head -n 1 | cut -d: -f1)"
