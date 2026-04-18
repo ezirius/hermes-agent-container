@@ -77,6 +77,8 @@ RUN python3 -m venv /opt/hermes-venv \
 COPY --from=hermes-web-builder /opt/hermes-src/hermes_cli/web_dist /opt/hermes-src/hermes_cli/web_dist
 
 RUN /opt/hermes-venv/bin/uv pip install /opt/hermes-src[web] \
+    && container_group_name="$(getent group "${HERMES_AGENT_GID}" | cut -d: -f1)" \
+    && chown -R hermes-agent:"${container_group_name}" /opt/hermes-venv \
     && rm -rf /opt/hermes-src
 
 # WORKDIR must follow the shared config so host workspace mounts land at the active shell location.

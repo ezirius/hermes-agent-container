@@ -212,6 +212,7 @@ assert_file_contains "-C $ROOT diff --numstat" "$GIT_LOG" 'build should check un
 assert_file_contains "-C $ROOT diff --cached --numstat" "$GIT_LOG" 'build should check staged content changes for the repo root'
 assert_file_contains "-C $ROOT ls-files --others --exclude-standard" "$GIT_LOG" 'build should check meaningful untracked files for the repo root'
 assert_file_contains 'getent group "${HERMES_AGENT_GID}"' "$ROOT/config/containers/shared/Containerfile" 'container build should reuse an existing group when the gid already exists'
+assert_file_contains 'chown -R hermes-agent:"${container_group_name}" /opt/hermes-venv' "$ROOT/config/containers/shared/Containerfile" 'container build should make the shared Python venv writable for runtime installs by hermes-agent'
 
 # These checks lock in the frontend packaging contract for the Hermes dashboard assets.
 containerfile_text="$(<"$ROOT/config/containers/shared/Containerfile")"
