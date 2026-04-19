@@ -335,6 +335,60 @@ hermes_repair_relative_worktree_gitdir() {
 }
 
 # This makes sure we only build from a saved, tidy checkout.
+# This rewrites managed worktree gitdir files to relative paths so host and container namespaces can share them.
+hermes_repair_relative_worktree_gitdir() {
+  local checkout_root="$1"
+  local gitfile_path="$checkout_root/.git"
+  local gitdir_line=""
+  local gitdir_path=""
+  local parent_dirname=""
+  local worktree_name=""
+  local relative_gitdir=""
+  local main_repo_gitdir=""
+  local expected_container_gitdir=""
+
+  if [[ ! -f "$gitfile_path" ]]; then
+    return 0
+  fi
+
+  gitdir_line="$(<"$gitfile_path")"
+  case "$gitdir_line" in
+    'gitdir: '/*)
+      gitdir_path="${gitdir_line#gitdir: }"
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+
+  if [[ -e "$gitdir_path" ]]; then
+    return 0
+  fi
+
+  parent_dirname="$(basename "$(dirname "$checkout_root")")"
+  worktree_name="$(basename "$checkout_root")"
+  expected_container_gitdir="/workspace/project/.git/worktrees/$worktree_name"
+  case "$parent_dirname" in
+    .worktrees|worktrees)
+      if [[ "$gitdir_path" != "$expected_container_gitdir" ]]; then
+        return 0
+      fi
+      relative_gitdir="../../.git/worktrees/$worktree_name"
+      main_repo_gitdir="$checkout_root/$relative_gitdir"
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+
+  if [[ ! -e "$main_repo_gitdir" ]]; then
+    return 0
+  fi
+
+  printf 'gitdir: %s\n' "$relative_gitdir" >"$gitfile_path"
+}
+
+# This makes sure we only build from a saved, tidy checkout.
 # If the checkout is messy, the build stops so the image matches real committed code.
 hermes_require_clean_committed_checkout() {
   local checkout_root="${1:-$ROOT}"
