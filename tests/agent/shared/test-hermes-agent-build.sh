@@ -143,14 +143,46 @@ cp "$CONFIG_PATH" "$CONFIG_BACKUP"
 FAKE_BIN="$TMP_DIR/fake-bin"
 mkdir -p "$FAKE_BIN"
 
-# This fake Podman records the build command and writes a stable fake image id to the requested iidfile.
+# This fake Podman records the build command, exposes before/after dangling-image snapshots, and writes a stable fake image id to the requested iidfile.
 cat >"$FAKE_BIN/podman" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$HERMES_TEST_PODMAN_LOG"
 
-if [[ "${1:-}" == 'build' ]]; then
+if [[ "${1:-}" == 'images' ]]; then
+  case "$*" in
+    *'--filter dangling=true --format {{.ID}}'*)
+      phase_file="${HERMES_TEST_PODMAN_IMAGES_PHASE_FILE:-}"
+      if [[ -n "$phase_file" && -f "$phase_file" ]]; then
+        current_phase="$(<"$phase_file")"
+      else
+        current_phase='before'
+      fi
+
+      case "$current_phase" in
+        before)
+          printf 'old-dangling-id\n'
+          ;;
+        after)
+          printf 'old-dangling-id\nnew-dangling-id\n'
+          ;;
+        multi-after)
+          printf 'old-dangling-id\nnew-dangling-id\nother-new-dangling-id\n'
+          ;;
+      esac
+      ;;
+    *)
+      printf 'unexpected images invocation\n' >&2
+      exit 1
+      ;;
+  esac
+elif [[ "${1:-}" == 'rmi' ]]; then
+  exit 0
+elif [[ "${1:-}" == 'build' ]]; then
   iidfile_path=''
+  if [[ -n "${HERMES_TEST_PODMAN_IMAGES_PHASE_FILE:-}" ]]; then
+    printf '%s\n' "${HERMES_TEST_PODMAN_IMAGES_PHASE_AFTER:-after}" >"$HERMES_TEST_PODMAN_IMAGES_PHASE_FILE"
+  fi
   shift
 
   while [[ $# -gt 0 ]]; do
@@ -283,15 +315,29 @@ source "$CONFIG_PATH"
 PODMAN_LOG="$TMP_DIR/podman.log"
 GIT_LOG="$TMP_DIR/git.log"
 BUILD_STDOUT="$TMP_DIR/build.stdout"
+PODMAN_IMAGES_PHASE_FILE="$TMP_DIR/podman-images.phase"
+printf 'before\n' >"$PODMAN_IMAGES_PHASE_FILE"
 
 # This clean case should build and should check commit state before building.
-PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="clean" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >"$BUILD_STDOUT"
+PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_PODMAN_IMAGES_PHASE_FILE="$PODMAN_IMAGES_PHASE_FILE" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="clean" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >"$BUILD_STDOUT"
 
 # These checks prove the build used saved config values and asked git about checkout state.
 assert_file_contains 'Image ID: new-image-id' "$BUILD_STDOUT" 'build should print the image id with a label'
 if grep -Fxq -- 'new-image-id' "$BUILD_STDOUT"; then
   fail 'build should not print the raw image id on its own line'
 fi
+assert_file_contains 'rmi new-dangling-id' "$PODMAN_LOG" 'build should remove the exact new dangling builder image created by this build'
+assert_file_not_contains 'rmi old-dangling-id' "$PODMAN_LOG" 'build should not remove pre-existing dangling images'
+assert_file_not_contains 'rmi new-image-id' "$PODMAN_LOG" 'build should not remove the final tagged runtime image'
+assert_file_not_contains 'image prune' "$PODMAN_LOG" 'build should not run a global image prune'
+
+# This multi-dangling case should refuse to guess which new dangling image belongs to this build.
+PODMAN_LOG_MULTI="$TMP_DIR/podman-multi.log"
+BUILD_STDOUT_MULTI="$TMP_DIR/build-multi.stdout"
+printf 'before\n' >"$PODMAN_IMAGES_PHASE_FILE"
+PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG_MULTI" HERMES_TEST_PODMAN_IMAGES_PHASE_FILE="$PODMAN_IMAGES_PHASE_FILE" HERMES_TEST_PODMAN_IMAGES_PHASE_AFTER='multi-after' HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="clean" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >"$BUILD_STDOUT_MULTI"
+assert_file_not_contains 'rmi new-dangling-id' "$PODMAN_LOG_MULTI" 'build should not remove a dangling image when more than one new dangling image appears during this build window'
+assert_file_not_contains 'rmi other-new-dangling-id' "$PODMAN_LOG_MULTI" 'build should not guess between multiple new dangling images'
 assert_file_contains '--build-arg HERMES_AGENT_DASHBOARD_PORT=9234' "$PODMAN_LOG" 'build should pass dashboard port from config'
 assert_file_contains '--build-arg HERMES_AGENT_RELEASE_TAG=v2026.4.16' "$PODMAN_LOG" 'build should pass release tag from config'
 assert_file_contains '--build-arg HERMES_AGENT_GID=1000' "$PODMAN_LOG" 'build should pass the requested gid through to the image build'

@@ -23,13 +23,20 @@ printf -v build_suffix '%03d' "$(( $$ % 1000 ))"
 timestamp="$(/bin/date +"%Y%m%d-%H%M%S")-$build_suffix"
 image_name="$HERMES_AGENT_IMAGE_BASENAME-$HERMES_AGENT_VERSION-$timestamp"
 iidfile_path="$(mktemp)"
+before_dangling_images_path="$(mktemp)"
+after_dangling_images_path="$(mktemp)"
+new_dangling_images_path="$(mktemp)"
 
 # This removes the temporary iidfile after the build succeeds or fails.
 cleanup() {
   rm -f "$iidfile_path"
+  rm -f "$before_dangling_images_path" "$after_dangling_images_path" "$new_dangling_images_path"
 }
 
 trap cleanup EXIT
+
+# This snapshots current dangling image ids so cleanup can target only the dangling image created by this build.
+podman images --filter dangling=true --format '{{.ID}}' | sort -u >"$before_dangling_images_path"
 
 # This lets Podman stream its normal build output while saving the final image id for later.
 podman build \
@@ -50,3 +57,16 @@ podman build \
 image_id="$(<"$iidfile_path")"
 
 printf 'Image ID: %s\n' "$image_id"
+
+# This removes only the exact new dangling builder image created by this build, leaving every other image untouched.
+podman images --filter dangling=true --format '{{.ID}}' | sort -u >"$after_dangling_images_path"
+comm -13 "$before_dangling_images_path" "$after_dangling_images_path" >"$new_dangling_images_path"
+
+if [[ "$(grep -cve '^$' "$new_dangling_images_path")" == '1' ]]; then
+  dangling_image_id="$(<"$new_dangling_images_path")"
+  dangling_image_id="${dangling_image_id//$'\n'/}"
+
+  if [[ -n "$dangling_image_id" && "$dangling_image_id" != "$image_id" ]]; then
+    podman rmi "$dangling_image_id" >/dev/null 2>&1 || true
+  fi
+fi
