@@ -14,6 +14,7 @@ CONFIG_BACKUP="$(mktemp)"
 TMP_DIR="$(mktemp -d)"
 REAL_SMOKE_IMAGE_NAME=""
 REAL_SMOKE_CONTAINER_NAME=""
+PATCH_PATH="$ROOT/config/patches/shared/hermes-matrix-device-backport.patch"
 
 # This checks that two required snippets both exist and appear in the expected textual order.
 assert_text_appears_in_order() {
@@ -34,6 +35,138 @@ assert_text_appears_in_order() {
   after_first_text="${haystack#*"$first_text"}"
   if [[ "$after_first_text" != *"$second_text"* ]]; then
     fail "$message: [$first_text] must appear before [$second_text]"
+  fi
+}
+
+# This creates a minimal git fixture so git apply --check can validate the tracked patch file syntax.
+assert_matrix_backport_patch_is_valid() {
+  local patch_path="$1"
+  local fixture_repo="$TMP_DIR/matrix-patch-fixture"
+
+  rm -rf "$fixture_repo"
+  mkdir -p "$fixture_repo/gateway/platforms"
+
+  cat >"$fixture_repo/gateway/platforms/matrix.py" <<'EOF'
+class MatrixAdapter(BasePlatformAdapter):
+    # ------------------------------------------------------------------
+    # E2EE helpers
+    # ------------------------------------------------------------------
+
+    async def _verify_device_keys_on_server(self, client: Any, olm: Any) -> bool:
+        """Verify our device keys are on the homeserver after loading crypto state.
+
+        Returns True if keys are valid or were successfully re-uploaded.
+        Returns False if verification fails (caller should refuse E2EE).
+        """
+        try:
+            resp = await client.query_keys({client.mxid: [client.device_id]})
+        except Exception as exc:
+            logger.error(
+                "Matrix: cannot verify device keys on server: %s — refusing E2EE", exc,
+            )
+            return False
+
+        # query_keys returns typed objects (QueryKeysResponse, DeviceKeys
+        # with KeyID keys).  Normalise to plain strings for comparison.
+        device_keys_map = getattr(resp, "device_keys", {}) or {}
+        our_user_devices = device_keys_map.get(str(client.mxid)) or {}
+        our_keys = our_user_devices.get(str(client.device_id))
+
+        if not our_keys:
+            logger.warning("Matrix: device keys missing from server — re-uploading")
+            olm.account.shared = False
+            try:
+                await olm.share_keys()
+            except Exception as exc:
+                logger.error("Matrix: failed to re-upload device keys: %s", exc)
+                return False
+            return True
+
+        # DeviceKeys.keys is a dict[KeyID, str].  Iterate to find the
+        # ed25519 key rather than constructing a KeyID for lookup.
+        server_ed25519 = None
+        keys_dict = getattr(our_keys, "keys", {}) or {}
+        for key_id, key_value in keys_dict.items():
+            if str(key_id).startswith("ed25519:"):
+                server_ed25519 = str(key_value)
+                break
+        local_ed25519 = olm.account.identity_keys.get("ed25519")
+
+        if server_ed25519 != local_ed25519:
+            if olm.account.shared:
+                # Restored account from DB but server has different keys — corrupted state.
+                logger.error(
+                    "Matrix: server has different identity keys for device %s — "
+                    "local crypto state is stale. Delete %s and restart.",
+                    client.device_id,
+                    _CRYPTO_DB_PATH,
+                )
+                return False
+
+            # Fresh account (never uploaded). Server has stale keys from a
+            # previous installation. Try to delete the old device and re-upload.
+            logger.warning(
+                "Matrix: server has stale keys for device %s — attempting re-upload",
+                client.device_id,
+            )
+            try:
+                await client.api.request(
+                    client.api.Method.DELETE
+                    if hasattr(client.api, "Method")
+                    else "DELETE",
+                    f"/_matrix/client/v3/devices/{client.device_id}",
+                )
+                logger.info("Matrix: deleted stale device %s from server", client.device_id)
+            except Exception:
+                # Device deletion often requires UIA or may simply not be
+                # permitted — that's fine, share_keys will try to overwrite.
+                pass
+            try:
+                await olm.share_keys()
+            except Exception as exc:
+                logger.error(
+                    "Matrix: cannot upload device keys for %s: %s. "
+                    "Try generating a new access token to get a fresh device.",
+                    client.device_id,
+                    exc,
+                )
+                return False
+
+        return True
+
+    # ------------------------------------------------------------------
+    # Required overrides
+    # ------------------------------------------------------------------
+
+    async def connect(self) -> bool:
+        if self._encryption:
+            try:
+                await olm.load()
+
+                # Verify our device keys are still on the homeserver.
+                if not await self._verify_device_keys_on_server(client, olm):
+                    await crypto_db.stop()
+                    await api.session.close()
+                    return False
+
+                # Import cross-signing private keys from SSSS and self-sign
+                # the current device. Required after any device-key rotation
+                # (fresh crypto.db, share_keys re-upload) — otherwise the
+                # device's self-signing signature is stale and peers refuse
+                # to share Megolm sessions with the rotated device.
+            except Exception as exc:
+                logger.error(
+                    "Matrix: failed to create E2EE client: %s. %s",
+                    exc, _E2EE_INSTALL_HINT,
+                )
+                await api.session.close()
+                return False
+EOF
+
+  git init "$fixture_repo" >/dev/null 2>&1
+  if ! git -C "$fixture_repo" apply --check "$patch_path" >/dev/null 2>"$TMP_DIR/matrix-patch-check.stderr"; then
+    cat "$TMP_DIR/matrix-patch-check.stderr" >&2
+    fail 'matrix backport patch should be a valid unified diff that git apply accepts'
   fi
 }
 
@@ -347,7 +480,9 @@ assert_file_contains 'COPY --from=hermes-web-builder /opt/hermes-src/hermes_cli/
 assert_file_contains 'libolm-dev' "$ROOT/config/containers/shared/Containerfile" 'runtime image should install the libolm system package documented for Matrix E2EE support'
 assert_file_contains 'uv python install 3.11' "$ROOT/config/containers/shared/Containerfile" 'runtime image should install Python 3.11 the way the upstream full installer documents'
 assert_file_contains 'uv venv /opt/hermes-venv --python 3.11' "$ROOT/config/containers/shared/Containerfile" 'runtime image should create its venv with Python 3.11 to match the upstream full install flow'
-assert_file_contains "git apply <<'HERMES_MATRIX_DEVICE_BACKPORT'" "$ROOT/config/containers/shared/Containerfile" 'runtime image should apply the Matrix device backport inline during the build'
+assert_file_contains 'COPY config/patches/shared/hermes-matrix-device-backport.patch /tmp/hermes-matrix-device-backport.patch' "$ROOT/config/containers/shared/Containerfile" 'runtime image should copy the canonical Matrix backport patch into the build context before applying it'
+assert_file_contains 'git apply /tmp/hermes-matrix-device-backport.patch' "$ROOT/config/containers/shared/Containerfile" 'runtime image should apply the canonical Matrix backport patch file during the build'
+assert_file_contains 'rm -f /tmp/hermes-matrix-device-backport.patch' "$ROOT/config/containers/shared/Containerfile" 'runtime image should remove the temporary Matrix backport patch file after applying it'
 assert_file_contains 'uv pip install "/opt/hermes-src[all]"' "$ROOT/config/containers/shared/Containerfile" 'runtime image should install Hermes with the upstream full extras from the prepared source tree instead of a web-only package shape'
 assert_file_contains 'tools/skills_sync.py' "$ROOT/config/containers/shared/Containerfile" 'runtime image should keep the upstream skills sync tool available from the preserved Hermes source tree'
 assert_file_contains 'HOME=${HERMES_AGENT_CONTAINER_HOME}' "$ROOT/config/containers/shared/Containerfile" 'runtime image should set HOME to the configured Hermes container home'
@@ -358,12 +493,20 @@ assert_text_appears_in_order 'UV_PYTHON_INSTALL_DIR="/opt/hermes-python"' 'uv py
 
 # This keeps the uv-managed Python install path outside the mounted home without pinning the whole RUN block layout.
 assert_text_appears_in_order 'UV_PYTHON_INSTALL_DIR="/opt/hermes-python"' 'uv python install 3.11' "$containerfile_text" 'runtime image should keep uv-managed Python outside the mounted container home before creating the venv'
-assert_text_appears_in_order "git apply <<'HERMES_MATRIX_DEVICE_BACKPORT'" 'uv pip install "/opt/hermes-src[all]"' "$containerfile_text" 'runtime image should apply the Matrix device backport before installing Hermes into the virtualenv'
+assert_text_appears_in_order 'git apply /tmp/hermes-matrix-device-backport.patch' 'uv pip install "/opt/hermes-src[all]"' "$containerfile_text" 'runtime image should apply the Matrix device backport before installing Hermes into the virtualenv'
 
 assert_file_contains 'export VIRTUAL_ENV="/opt/hermes-venv"' "$ROOT/config/containers/shared/Containerfile" 'runtime image should point standalone uv at the created virtualenv before installing Hermes'
-assert_file_contains '_reverify_keys_after_upload' "$ROOT/config/containers/shared/Containerfile" 'matrix backport should restore the device re-verification helper from upstream'
-assert_file_contains 'device %s is still missing from server after key upload' "$ROOT/config/containers/shared/Containerfile" 'matrix backport should fail closed if device keys are still missing after upload'
-assert_file_contains 'stale one-time keys on the server' "$ROOT/config/containers/shared/Containerfile" 'matrix backport should fail closed when startup sees stale one-time keys on the server'
+assert_file_contains '_reverify_keys_after_upload' "$PATCH_PATH" 'matrix backport patch should restore the device re-verification helper from upstream'
+assert_file_contains 'device %s is still missing from server after key upload' "$PATCH_PATH" 'matrix backport patch should fail closed if device keys are still missing after upload'
+assert_file_contains 'stale one-time keys on the server' "$PATCH_PATH" 'matrix backport patch should fail closed when startup sees stale one-time keys on the server'
+assert_file_contains 'diff --git a/gateway/platforms/matrix.py b/gateway/platforms/matrix.py' "$PATCH_PATH" 'matrix backport patch should target only the upstream Matrix adapter file'
+assert_file_contains 'index ' "$PATCH_PATH" 'matrix backport patch should include canonical git diff metadata so image builds can apply the tracked patch verbatim'
+
+if [[ "$(grep -Fc 'diff --git a/' "$PATCH_PATH")" != '1' ]]; then
+  fail 'matrix backport patch should only target gateway/platforms/matrix.py'
+fi
+
+assert_matrix_backport_patch_is_valid "$PATCH_PATH"
 
 if grep -Fq 'uv pip install /opt/hermes-src[web]' "$ROOT/config/containers/shared/Containerfile"; then
   fail 'runtime image should not use a web-only Hermes install when aligning to the upstream full install path'
