@@ -178,7 +178,7 @@ if [[ "${1:-}" == 'build' ]]; then
 fi
 EOF
 
-# This fake git lets the test choose checkout, branch, and upstream states.
+# This fake git lets the test choose checkout, branch, upstream, and broken-worktree states.
 cat >"$FAKE_BIN/git" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -190,9 +190,19 @@ if [[ "$1" == '-C' ]]; then
 fi
 
 case "$1 $2 ${3:-}" in
+  'rev-parse --show-toplevel ')
+    if [[ "${HERMES_TEST_GIT_MODE:-clean}" == "broken-worktree" ]]; then
+      printf 'fatal: not a git repository: /workspace/project/.git/worktrees/fix-matrix-device-backport-2\n' >&2
+      exit 128
+    fi
+    printf '%s\n' "${HERMES_TEST_GIT_TOPLEVEL:-$PWD}"
+    ;;
   'rev-parse --verify HEAD')
     if [[ "${HERMES_TEST_GIT_MODE:-clean}" == "no-commit" ]]; then
       exit 1
+    elif [[ "${HERMES_TEST_GIT_MODE:-clean}" == "broken-worktree" ]]; then
+      printf 'fatal: not a git repository: /workspace/project/.git/worktrees/fix-matrix-device-backport-2\n' >&2
+      exit 128
     fi
     printf 'deadbeef\n'
     ;;
@@ -426,6 +436,29 @@ assert_file_contains 'Image ID: new-image-id' "$TMP_DIR/non-main-no-upstream.std
 # This non-main case should allow a clean committed checkout even when ahead of upstream.
 PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="clean" HERMES_TEST_GIT_BRANCH="feature/test" HERMES_TEST_GIT_UPSTREAM_STATE="configured" HERMES_TEST_GIT_AHEAD_STATE="ahead" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >"$TMP_DIR/non-main-ahead.stdout"
 assert_file_contains 'Image ID: new-image-id' "$TMP_DIR/non-main-ahead.stdout" 'build should allow a clean non-main branch even when it is ahead of upstream'
+
+# This broken-worktree case should explain cross-namespace gitdir failures clearly for a managed worktree path.
+mkdir -p "$TMP_DIR/.worktrees/fix-matrix-device-backport-2"
+if PATH="$FAKE_BIN:$PATH" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="broken-worktree" bash -c 'set -euo pipefail; source "$1"; hermes_require_clean_committed_checkout "$2"' _ "$ROOT/lib/shell/shared/common.sh" "$TMP_DIR/.worktrees/fix-matrix-device-backport-2" >/dev/null 2>"$TMP_DIR/broken-worktree.stderr"; then
+  fail 'build helper should fail when the checkout points at a missing managed worktree gitdir path'
+fi
+
+assert_file_contains 'This checkout is not a usable git worktree in this environment.' "$TMP_DIR/broken-worktree.stderr" 'build helper should explain cross-namespace worktree failures clearly'
+assert_file_contains 'Recreate or relink this worktree using relative gitdir paths before building.' "$TMP_DIR/broken-worktree.stderr" 'build helper should tell the user how to recover from a broken worktree link'
+assert_file_not_contains 'Build requires the current checkout to have at least one commit.' "$TMP_DIR/broken-worktree.stderr" 'build helper should not misclassify a broken worktree as a no-commit checkout'
+
+# This real file check proves the helper rewrites absolute worktree gitdir links to relative paths.
+WORKTREE_TMP="$TMP_DIR/worktree-paths"
+mkdir -p "$WORKTREE_TMP/.git/worktrees/feature" "$WORKTREE_TMP/.worktrees/feature"
+printf 'gitdir: /workspace/project/.git/worktrees/feature\n' >"$WORKTREE_TMP/.worktrees/feature/.git"
+
+rewritten_gitfile="$(bash -c 'set -euo pipefail; source "$1"; hermes_repair_relative_worktree_gitdir "$2"; cat "$2/.git"' _ "$ROOT/lib/shell/shared/common.sh" "$WORKTREE_TMP/.worktrees/feature")"
+assert_equals 'gitdir: ../../.git/worktrees/feature' "$rewritten_gitfile" 'build helper should rewrite managed worktree gitdir links to relative paths'
+
+printf 'gitdir: /foreign/repo/.git/worktrees/feature\n' >"$WORKTREE_TMP/.worktrees/feature/.git"
+
+unchanged_gitfile="$(bash -c 'set -euo pipefail; source "$1"; hermes_repair_relative_worktree_gitdir "$2"; cat "$2/.git"' _ "$ROOT/lib/shell/shared/common.sh" "$WORKTREE_TMP/.worktrees/feature")"
+assert_equals 'gitdir: /foreign/repo/.git/worktrees/feature' "$unchanged_gitfile" 'build helper should leave foreign absolute worktree links untouched'
 
 # This real git repo checks that executable-bit changes still count as dirty git changes.
 GIT_TMP="$TMP_DIR/git-cleanliness"
