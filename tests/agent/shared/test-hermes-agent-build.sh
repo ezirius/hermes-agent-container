@@ -143,11 +143,39 @@ cp "$CONFIG_PATH" "$CONFIG_BACKUP"
 FAKE_BIN="$TMP_DIR/fake-bin"
 mkdir -p "$FAKE_BIN"
 
-# This fake Podman just records the build command instead of doing a real build.
+# This fake Podman records the build command and writes a stable fake image id to the requested iidfile.
 cat >"$FAKE_BIN/podman" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$HERMES_TEST_PODMAN_LOG"
+
+if [[ "${1:-}" == 'build' ]]; then
+  iidfile_path=''
+  shift
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --iidfile)
+        if [[ $# -lt 2 ]]; then
+          printf 'expected --iidfile to include a path\n' >&2
+          exit 1
+        fi
+        iidfile_path="$2"
+        shift 2
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -z "$iidfile_path" ]]; then
+    printf 'expected build to pass --iidfile\n' >&2
+    exit 1
+  fi
+
+  printf 'new-image-id\n' >"$iidfile_path"
+fi
 EOF
 
 # This fake git lets the test choose between clean, dirty, and no-commit states.
@@ -222,16 +250,22 @@ source "$CONFIG_PATH"
 # These logs capture the fake command calls so the test can check behavior.
 PODMAN_LOG="$TMP_DIR/podman.log"
 GIT_LOG="$TMP_DIR/git.log"
+BUILD_STDOUT="$TMP_DIR/build.stdout"
 
 # This clean case should build and should check commit state before building.
-PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="clean" bash "$ROOT/scripts/agent/shared/hermes-agent-build"
+PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="clean" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >"$BUILD_STDOUT"
 
 # These checks prove the build used saved config values and asked git about checkout state.
+assert_file_contains 'Image ID: new-image-id' "$BUILD_STDOUT" 'build should print the image id with a label'
+if grep -Fxq -- 'new-image-id' "$BUILD_STDOUT"; then
+  fail 'build should not print the raw image id on its own line'
+fi
 assert_file_contains '--build-arg HERMES_AGENT_DASHBOARD_PORT=9234' "$PODMAN_LOG" 'build should pass dashboard port from config'
 assert_file_contains '--build-arg HERMES_AGENT_RELEASE_TAG=v2026.4.16' "$PODMAN_LOG" 'build should pass release tag from config'
 assert_file_contains '--build-arg HERMES_AGENT_GID=1000' "$PODMAN_LOG" 'build should pass the requested gid through to the image build'
 assert_file_contains '--build-arg HERMES_AGENT_NODE_IMAGE=node:24-bookworm-slim' "$PODMAN_LOG" 'build should pass the configured Node base image to the container build'
 assert_file_contains '--build-arg HERMES_AGENT_RUNTIME_IMAGE=ubuntu:24.04' "$PODMAN_LOG" 'build should pass the configured runtime base image to the container build'
+assert_file_contains '--iidfile' "$PODMAN_LOG" 'build should request an iidfile so podman output can keep streaming normally'
 assert_file_contains "-C $ROOT rev-parse --verify HEAD" "$GIT_LOG" 'build should check commit state for the repo root'
 assert_file_contains "-C $ROOT update-index -q --refresh" "$GIT_LOG" 'build should refresh the index before checking cleanliness'
 assert_file_contains "-C $ROOT diff --numstat" "$GIT_LOG" 'build should check unstaged content changes for the repo root'

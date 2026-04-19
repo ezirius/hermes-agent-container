@@ -22,8 +22,16 @@ hermes_require_clean_committed_checkout "$ROOT"
 printf -v build_suffix '%03d' "$(( $$ % 1000 ))"
 timestamp="$(/bin/date +"%Y%m%d-%H%M%S")-$build_suffix"
 image_name="$HERMES_AGENT_IMAGE_BASENAME-$HERMES_AGENT_VERSION-$timestamp"
+iidfile_path="$(mktemp)"
 
-# This sends every build setting through from config so the script stays free of hidden defaults.
+# This removes the temporary iidfile after the build succeeds or fails.
+cleanup() {
+  rm -f "$iidfile_path"
+}
+
+trap cleanup EXIT
+
+# This lets Podman stream its normal build output while saving the final image id for later.
 podman build \
   --build-arg HERMES_AGENT_UID="$HERMES_AGENT_UID" \
   --build-arg HERMES_AGENT_GID="$HERMES_AGENT_GID" \
@@ -33,6 +41,12 @@ podman build \
   --build-arg HERMES_AGENT_DASHBOARD_PORT="$HERMES_AGENT_DASHBOARD_PORT" \
   --build-arg HERMES_AGENT_CONTAINER_HOME="$HERMES_AGENT_CONTAINER_HOME" \
   --build-arg HERMES_AGENT_CONTAINER_WORKSPACE="$HERMES_AGENT_CONTAINER_WORKSPACE" \
+  --iidfile "$iidfile_path" \
   -f "$ROOT/config/containers/shared/Containerfile" \
   -t "$image_name" \
   "$ROOT"
+
+# This reads the saved image id after Podman finishes streaming the build output.
+image_id="$(<"$iidfile_path")"
+
+printf 'Image ID: %s\n' "$image_id"
