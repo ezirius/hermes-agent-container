@@ -178,7 +178,7 @@ if [[ "${1:-}" == 'build' ]]; then
 fi
 EOF
 
-# This fake git lets the test choose between clean, dirty, and no-commit states.
+# This fake git lets the test choose checkout, branch, and upstream states.
 cat >"$FAKE_BIN/git" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -195,6 +195,28 @@ case "$1 $2 ${3:-}" in
       exit 1
     fi
     printf 'deadbeef\n'
+    ;;
+  'branch --show-current ')
+    printf '%s\n' "${HERMES_TEST_GIT_BRANCH:-main}"
+    ;;
+  'rev-parse --abbrev-ref --symbolic-full-name')
+    if [[ "${4:-}" != '@{upstream}' ]]; then
+      printf 'unexpected git invocation: %s\n' "$*" >&2
+      exit 1
+    fi
+
+    if [[ "${HERMES_TEST_GIT_UPSTREAM_STATE:-configured}" == "missing" ]]; then
+      exit 1
+    fi
+
+    printf 'origin/main\n'
+    ;;
+  'rev-list --count @{upstream}..HEAD')
+    if [[ "${HERMES_TEST_GIT_AHEAD_STATE:-not-ahead}" == "ahead" ]]; then
+      printf '1\n'
+    else
+      printf '0\n'
+    fi
     ;;
   'update-index -q --refresh')
     ;;
@@ -271,6 +293,9 @@ assert_file_contains "-C $ROOT update-index -q --refresh" "$GIT_LOG" 'build shou
 assert_file_contains "-C $ROOT diff --numstat" "$GIT_LOG" 'build should check unstaged content changes for the repo root'
 assert_file_contains "-C $ROOT diff --cached --numstat" "$GIT_LOG" 'build should check staged content changes for the repo root'
 assert_file_contains "-C $ROOT ls-files --others --exclude-standard" "$GIT_LOG" 'build should check meaningful untracked files for the repo root'
+assert_file_contains "-C $ROOT branch --show-current" "$GIT_LOG" 'build should check the current branch before enforcing push policy'
+assert_file_contains "-C $ROOT rev-parse --abbrev-ref --symbolic-full-name @{upstream}" "$GIT_LOG" 'build should look up the upstream branch when building from main'
+assert_file_contains "-C $ROOT rev-list --count @{upstream}..HEAD" "$GIT_LOG" 'build should check whether local main is ahead of its upstream'
 assert_file_contains 'getent group "${HERMES_AGENT_GID}"' "$ROOT/config/containers/shared/Containerfile" 'container build should reuse an existing group when the gid already exists'
 assert_file_contains 'chown -R hermes-agent:"${container_group_name}" /opt/hermes-venv' "$ROOT/config/containers/shared/Containerfile" 'container build should make the shared Python venv writable for runtime installs by hermes-agent'
 assert_file_contains 'ARG HERMES_AGENT_NODE_IMAGE' "$ROOT/config/containers/shared/Containerfile" 'container build should declare the configured Node base image arg'
@@ -312,6 +337,7 @@ assert_file_contains 'COPY --from=hermes-web-builder /opt/hermes-src/hermes_cli/
 assert_file_contains 'libolm-dev' "$ROOT/config/containers/shared/Containerfile" 'runtime image should install the libolm system package documented for Matrix E2EE support'
 assert_file_contains 'uv python install 3.11' "$ROOT/config/containers/shared/Containerfile" 'runtime image should install Python 3.11 the way the upstream full installer documents'
 assert_file_contains 'uv venv /opt/hermes-venv --python 3.11' "$ROOT/config/containers/shared/Containerfile" 'runtime image should create its venv with Python 3.11 to match the upstream full install flow'
+assert_file_contains "git apply <<'HERMES_MATRIX_DEVICE_BACKPORT'" "$ROOT/config/containers/shared/Containerfile" 'runtime image should apply the Matrix device backport inline during the build'
 assert_file_contains 'uv pip install "/opt/hermes-src[all]"' "$ROOT/config/containers/shared/Containerfile" 'runtime image should install Hermes with the upstream full extras from the prepared source tree instead of a web-only package shape'
 assert_file_contains 'tools/skills_sync.py' "$ROOT/config/containers/shared/Containerfile" 'runtime image should keep the upstream skills sync tool available from the preserved Hermes source tree'
 assert_file_contains 'HOME=${HERMES_AGENT_CONTAINER_HOME}' "$ROOT/config/containers/shared/Containerfile" 'runtime image should set HOME to the configured Hermes container home'
@@ -322,8 +348,12 @@ assert_text_appears_in_order 'UV_PYTHON_INSTALL_DIR="/opt/hermes-python"' 'uv py
 
 # This keeps the uv-managed Python install path outside the mounted home without pinning the whole RUN block layout.
 assert_text_appears_in_order 'UV_PYTHON_INSTALL_DIR="/opt/hermes-python"' 'uv python install 3.11' "$containerfile_text" 'runtime image should keep uv-managed Python outside the mounted container home before creating the venv'
+assert_text_appears_in_order "git apply <<'HERMES_MATRIX_DEVICE_BACKPORT'" 'uv pip install "/opt/hermes-src[all]"' "$containerfile_text" 'runtime image should apply the Matrix device backport before installing Hermes into the virtualenv'
 
 assert_file_contains 'export VIRTUAL_ENV="/opt/hermes-venv"' "$ROOT/config/containers/shared/Containerfile" 'runtime image should point standalone uv at the created virtualenv before installing Hermes'
+assert_file_contains '_reverify_keys_after_upload' "$ROOT/config/containers/shared/Containerfile" 'matrix backport should restore the device re-verification helper from upstream'
+assert_file_contains 'device %s is still missing from server after key upload' "$ROOT/config/containers/shared/Containerfile" 'matrix backport should fail closed if device keys are still missing after upload'
+assert_file_contains 'stale one-time keys on the server' "$ROOT/config/containers/shared/Containerfile" 'matrix backport should fail closed when startup sees stale one-time keys on the server'
 
 if grep -Fq 'uv pip install /opt/hermes-src[web]' "$ROOT/config/containers/shared/Containerfile"; then
   fail 'runtime image should not use a web-only Hermes install when aligning to the upstream full install path'
@@ -372,6 +402,30 @@ fi
 
 # This checks that the no-commit failure message stays clear.
 assert_file_contains 'Build requires the current checkout to have at least one commit.' "$TMP_DIR/no-commit.stderr" 'build should explain missing-commit failures'
+
+# This main-branch case should stop the build when local main is ahead of upstream.
+if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="clean" HERMES_TEST_GIT_BRANCH="main" HERMES_TEST_GIT_UPSTREAM_STATE="configured" HERMES_TEST_GIT_AHEAD_STATE="ahead" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >/dev/null 2>"$TMP_DIR/main-ahead.stderr"; then
+  fail 'build should fail when local main is ahead of its upstream'
+fi
+
+# This checks that the ahead-of-upstream failure message stays clear.
+assert_file_contains 'Build requires local main to be pushed to its upstream before building.' "$TMP_DIR/main-ahead.stderr" 'build should explain main-ahead failures'
+
+# This main-branch case should stop the build when main has no upstream configured.
+if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="clean" HERMES_TEST_GIT_BRANCH="main" HERMES_TEST_GIT_UPSTREAM_STATE="missing" HERMES_TEST_GIT_AHEAD_STATE="not-ahead" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >/dev/null 2>"$TMP_DIR/main-no-upstream.stderr"; then
+  fail 'build should fail when main has no upstream configured'
+fi
+
+# This checks that the missing-upstream failure message stays clear.
+assert_file_contains 'Build requires main to have an upstream branch configured.' "$TMP_DIR/main-no-upstream.stderr" 'build should explain missing-upstream failures on main'
+
+# This non-main case should allow a clean committed checkout without any upstream.
+PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="clean" HERMES_TEST_GIT_BRANCH="feature/test" HERMES_TEST_GIT_UPSTREAM_STATE="missing" HERMES_TEST_GIT_AHEAD_STATE="not-ahead" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >"$TMP_DIR/non-main-no-upstream.stdout"
+assert_file_contains 'Image ID: new-image-id' "$TMP_DIR/non-main-no-upstream.stdout" 'build should allow a clean non-main branch without an upstream'
+
+# This non-main case should allow a clean committed checkout even when ahead of upstream.
+PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="clean" HERMES_TEST_GIT_BRANCH="feature/test" HERMES_TEST_GIT_UPSTREAM_STATE="configured" HERMES_TEST_GIT_AHEAD_STATE="ahead" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >"$TMP_DIR/non-main-ahead.stdout"
+assert_file_contains 'Image ID: new-image-id' "$TMP_DIR/non-main-ahead.stdout" 'build should allow a clean non-main branch even when it is ahead of upstream'
 
 # This real git repo checks that executable-bit changes still count as dirty git changes.
 GIT_TMP="$TMP_DIR/git-cleanliness"

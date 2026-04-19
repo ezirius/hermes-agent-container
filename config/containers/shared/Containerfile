@@ -84,6 +84,122 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
 # Copy the built frontend into the source tree before install so Hermes packages web_dist.
 COPY --from=hermes-web-builder /opt/hermes-src/hermes_cli/web_dist /opt/hermes-src/hermes_cli/web_dist
 
+# Apply the backport from the extracted Hermes source tree before installation.
+WORKDIR /opt/hermes-src
+
+RUN git apply <<'HERMES_MATRIX_DEVICE_BACKPORT'
+diff --git a/gateway/platforms/matrix.py b/gateway/platforms/matrix.py
+--- a/gateway/platforms/matrix.py
++++ b/gateway/platforms/matrix.py
+@@ -272,6 +272,33 @@ class MatrixAdapter(BasePlatformAdapter):
+      # ------------------------------------------------------------------
+      # E2EE helpers
+      # ------------------------------------------------------------------
++
++    @staticmethod
++    def _extract_server_ed25519(device_keys_obj: Any) -> Optional[str]:
++        """Extract the ed25519 identity key from a DeviceKeys object."""
++        for kid, kval in (getattr(device_keys_obj, "keys", {}) or {}).items():
++            if str(kid).startswith("ed25519:"):
++                return str(kval)
++        return None
++
++    async def _reverify_keys_after_upload(
++        self, client: Any, local_ed25519: str
++    ) -> bool:
++        """Re-query the server after share_keys() and verify our ed25519 key matches."""
++        try:
++            resp = await client.query_keys({client.mxid: [client.device_id]})
++            dk = getattr(resp, "device_keys", {}) or {}
++            ud = dk.get(str(client.mxid)) or {}
++            dev = ud.get(str(client.device_id))
++            if not dev:
++                logger.error(
++                    "Matrix: device %s is still missing from server after key upload.",
++                    client.device_id,
++                )
++                return False
++            if self._extract_server_ed25519(dev) != local_ed25519:
++                logger.error(
++                    "Matrix: device %s has immutable identity keys that don't match this installation. Generate a new access token with a fresh device.",
++                    client.device_id,
++                )
++                return False
++        except Exception as exc:
++            logger.error("Matrix: post-upload key verification failed: %s", exc)
++            return False
++        return True
+ 
+      async def _verify_device_keys_on_server(self, client: Any, olm: Any) -> bool:
+          """Verify our device keys are on the homeserver after loading crypto state.
+ 
+@@ -290,6 +317,7 @@ class MatrixAdapter(BasePlatformAdapter):
+          device_keys_map = getattr(resp, "device_keys", {}) or {}
+          our_user_devices = device_keys_map.get(str(client.mxid)) or {}
+          our_keys = our_user_devices.get(str(client.device_id))
++        local_ed25519 = olm.account.identity_keys.get("ed25519")
+ 
+          if not our_keys:
+              logger.warning("Matrix: device keys missing from server — re-uploading")
+@@ -299,17 +327,13 @@ class MatrixAdapter(BasePlatformAdapter):
+              except Exception as exc:
+                  logger.error("Matrix: failed to re-upload device keys: %s", exc)
+                  return False
+-            return True
++            return await self._reverify_keys_after_upload(client, local_ed25519)
+ 
+          # DeviceKeys.keys is a dict[KeyID, str].  Iterate to find the
+          # ed25519 key rather than constructing a KeyID for lookup.
+-        server_ed25519 = None
+-        keys_dict = getattr(our_keys, "keys", {}) or {}
+-        for key_id, key_value in keys_dict.items():
+-            if str(key_id).startswith("ed25519:"):
+-                server_ed25519 = str(key_value)
+-                break
+-        local_ed25519 = olm.account.identity_keys.get("ed25519")
++        server_ed25519 = self._extract_server_ed25519(our_keys)
+ 
+          if server_ed25519 != local_ed25519:
+              if olm.account.shared:
+@@ -343,6 +367,8 @@ class MatrixAdapter(BasePlatformAdapter):
+                      exc,
+                  )
+                  return False
++
++            return await self._reverify_keys_after_upload(client, local_ed25519)
+ 
+          return True
+ 
+@@ -461,6 +487,31 @@ class MatrixAdapter(BasePlatformAdapter):
+                      await api.session.close()
+                      return False
+ 
++                # Proactively flush one-time keys to detect stale OTK
++                # conflicts early during startup.
++                try:
++                    await olm.share_keys()
++                except Exception as exc:
++                    exc_str = str(exc)
++                    if "already exists" in exc_str:
++                        logger.error(
++                            "Matrix: device %s has stale one-time keys on the server signed with a previous identity key. "
++                            "Peers cannot establish new Olm sessions with this device. Delete the device from the "
++                            "homeserver and restart, or generate a new access token to get a fresh device ID.",
++                            client.device_id,
++                        )
++                        await crypto_db.stop()
++                        await api.session.close()
++                        return False
++                    logger.warning(
++                        "Matrix: share_keys() warning during startup: %s",
++                        exc,
++                    )
++
+                  # Import cross-signing private keys from SSSS and self-sign
+                  # the current device. Required after any device-key rotation
+                  # (fresh crypto.db, share_keys re-upload) — otherwise the
+HERMES_MATRIX_DEVICE_BACKPORT
+
 RUN export PATH="${HERMES_AGENT_CONTAINER_HOME}/.local/bin:${PATH}" \
     && export VIRTUAL_ENV="/opt/hermes-venv" \
     && uv pip install "/opt/hermes-src[all]" \

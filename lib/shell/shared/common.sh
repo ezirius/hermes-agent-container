@@ -256,6 +256,30 @@ hermes_git_has_meaningful_worktree_changes() {
   return 1
 }
 
+# This only enforces upstream push safety when the current checkout is on local main.
+hermes_require_main_branch_not_ahead_of_upstream() {
+  local checkout_root="$1"
+  local current_branch=""
+  local upstream_branch=""
+  local ahead_count=""
+
+  current_branch="$(git -C "$checkout_root" branch --show-current 2>/dev/null || true)"
+  if [[ "$current_branch" != 'main' ]]; then
+    return 0
+  fi
+
+  if ! upstream_branch="$(git -C "$checkout_root" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null)"; then
+    printf 'Build requires main to have an upstream branch configured.\n' >&2
+    exit 1
+  fi
+
+  ahead_count="$(git -C "$checkout_root" rev-list --count '@{upstream}..HEAD' 2>/dev/null || true)"
+  if [[ "$upstream_branch" != '' && "$ahead_count" != '0' ]]; then
+    printf 'Build requires local main to be pushed to its upstream before building.\n' >&2
+    exit 1
+  fi
+}
+
 # This makes sure we only build from a saved, tidy checkout.
 # If the checkout is messy, the build stops so the image matches real committed code.
 hermes_require_clean_committed_checkout() {
@@ -270,6 +294,8 @@ hermes_require_clean_committed_checkout() {
     printf 'Build requires a clean checkout with all changes committed.\n' >&2
     exit 1
   fi
+
+  hermes_require_main_branch_not_ahead_of_upstream "$checkout_root"
 }
 
 # This reads the saved workspace list and splits it into names and offsets.
