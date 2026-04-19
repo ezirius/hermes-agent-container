@@ -220,9 +220,11 @@ case "$1" in
     ;;
   exec)
     if [[ "$*" == *'hermes setup'* ]]; then
-      if [[ "${HERMES_TEST_HEALTH_MODE:-healthy}" == "first-run-setup" ]]; then
-        : >"${HERMES_TEST_PODMAN_LOG}.setup-complete"
-      fi
+      case "${HERMES_TEST_HEALTH_MODE:-healthy}" in
+        first-run-setup|first-run-gateway-unhealthy|first-run-dashboard-unhealthy)
+          : >"${HERMES_TEST_PODMAN_LOG}.setup-complete"
+          ;;
+      esac
     fi
 
     if [[ "$*" == *'hermes gateway run'* ]]; then
@@ -238,9 +240,13 @@ case "$1" in
     fi
 
     if [[ "$*" == *'config.yaml'* && "$*" != *'gateway_state.json'* ]]; then
-      if [[ "${HERMES_TEST_HEALTH_MODE:-healthy}" == "first-run-setup" && ! -f "${HERMES_TEST_PODMAN_LOG}.setup-complete" ]]; then
-        exit 1
-      fi
+      case "${HERMES_TEST_HEALTH_MODE:-healthy}" in
+        first-run-setup|first-run-gateway-unhealthy|first-run-dashboard-unhealthy)
+          if [[ ! -f "${HERMES_TEST_PODMAN_LOG}.setup-complete" ]]; then
+            exit 1
+          fi
+          ;;
+      esac
 
       exit 0
     fi
@@ -251,8 +257,13 @@ case "$1" in
       printf 'probe\n' >>"$probe_log"
 
       case "${HERMES_TEST_HEALTH_MODE:-healthy}" in
-        first-run-setup)
+        first-run-setup|first-run-dashboard-unhealthy)
           if [[ ! -f "${HERMES_TEST_PODMAN_LOG}.setup-complete" ]]; then
+            exit 1
+          fi
+          ;;
+        first-run-gateway-unhealthy)
+          if (( probe_count < 2 )); then
             exit 1
           fi
           ;;
@@ -294,6 +305,16 @@ case "$1" in
         delayed-services-on-create)
           probe_count="$(wc -l <"${HERMES_TEST_PODMAN_LOG}.health-probes" 2>/dev/null || printf '0')"
           if (( probe_count < 4 )); then
+            exit 1
+          fi
+          ;;
+        first-run-dashboard-unhealthy)
+          if [[ ! -f "${HERMES_TEST_PODMAN_LOG}.setup-complete" ]]; then
+            exit 1
+          fi
+
+          probe_count="$(wc -l <"${HERMES_TEST_PODMAN_LOG}.health-probes" 2>/dev/null || printf '0')"
+          if (( probe_count < 2 )); then
             exit 1
           fi
           ;;
@@ -585,6 +606,9 @@ fi
 assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes setup' "$PODMAN_LOG" 'run should launch hermes setup when the container is still waiting for setup'
 assert_file_contains 'config.yaml' "$PODMAN_LOG" 'run should check for config.yaml when deciding whether setup is complete'
 assert_file_not_contains 'config.toml' "$PODMAN_LOG" 'run should not treat config.toml as the setup completion file'
+assert_file_contains $'\033[33mWarning:' "$TMP_DIR/first-run-setup.stderr" 'run should print an amber warning before launching first-run setup'
+assert_file_contains 'Do not choose to open the CLI at the end of setup.' "$TMP_DIR/first-run-setup.stderr" 'run should tell the user not to choose open CLI at the end of setup'
+assert_file_contains 'This wrapper will then check or start the gateway and dashboard, open the dashboard, and attach into the CLI for you.' "$TMP_DIR/first-run-setup.stderr" 'run should explain the unified post-setup flow in the warning'
 
 # This checks that first-run setup finishes before the host dashboard opener is invoked.
 setup_line="$(grep -Fn 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes setup' "$PODMAN_LOG" | head -n 1 | cut -d: -f1)"
@@ -595,7 +619,34 @@ fi
 
 assert_file_contains 'host-open http://127.0.0.1:9334' "$PODMAN_LOG" 'run should open the dashboard after first-run setup completes and services become healthy'
 assert_file_line_count 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes setup' '1' "$PODMAN_LOG" 'run should launch setup exactly once during first-run flow'
-assert_file_line_count 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes' '0' "$PODMAN_LOG" 'run should not do an extra wrapper-driven attach after first-run setup returns'
+assert_file_line_count 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes' '1' "$PODMAN_LOG" 'run should attach exactly once after first-run setup returns'
+assert_file_contains 'gateway_state.json' "$PODMAN_LOG" 'run should check gateway health after first-run setup returns'
+assert_file_not_contains 'exec -d hermes-agent-alpha-0.10.0-20260417-120000-123 hermes gateway run' "$PODMAN_LOG" 'run should leave a healthy gateway alone after first-run setup returns'
+assert_file_not_contains 'exec -d hermes-agent-alpha-0.10.0-20260417-120000-123 hermes dashboard --host 0.0.0.0 --port 9234 --no-open --insecure' "$PODMAN_LOG" 'run should leave a healthy dashboard alone after first-run setup returns'
+
+# This checks that first-run post-setup flow waits for entrypoint-managed gateway startup.
+: >"$PODMAN_LOG"
+: >"$OPEN_LOG"
+rm -f "$PODMAN_LOG.health-probes" "$PODMAN_LOG.setup-complete" "$PODMAN_LOG.gateway-started" "$PODMAN_LOG.dashboard-started"
+printf '1\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_HEALTH_MODE='first-run-gateway-unhealthy' bash "$ROOT/scripts/agent/shared/hermes-agent-run" >"$RUN_STDOUT" 2>"$TMP_DIR/first-run-gateway-unhealthy.stderr"
+
+assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes setup' "$PODMAN_LOG" 'run should still launch setup before first-run post-setup gateway recovery'
+assert_file_not_contains 'exec -d hermes-agent-alpha-0.10.0-20260417-120000-123 hermes gateway run' "$PODMAN_LOG" 'run should keep waiting for entrypoint-managed gateway startup immediately after first-run setup returns'
+assert_file_not_contains 'exec -d hermes-agent-alpha-0.10.0-20260417-120000-123 hermes dashboard --host 0.0.0.0 --port 9234 --no-open --insecure' "$PODMAN_LOG" 'run should not restart the dashboard when it is already healthy after first-run setup returns'
+assert_file_contains 'host-open http://127.0.0.1:9334' "$PODMAN_LOG" 'run should still open the dashboard after starting the missing gateway in first-run post-setup flow'
+assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes' "$PODMAN_LOG" 'run should still attach after starting the missing gateway in first-run post-setup flow'
+
+# This checks that first-run post-setup flow waits for entrypoint-managed dashboard startup.
+: >"$PODMAN_LOG"
+: >"$OPEN_LOG"
+rm -f "$PODMAN_LOG.health-probes" "$PODMAN_LOG.setup-complete" "$PODMAN_LOG.gateway-started" "$PODMAN_LOG.dashboard-started"
+printf '1\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_HEALTH_MODE='first-run-dashboard-unhealthy' bash "$ROOT/scripts/agent/shared/hermes-agent-run" >"$RUN_STDOUT" 2>"$TMP_DIR/first-run-dashboard-unhealthy.stderr"
+
+assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes setup' "$PODMAN_LOG" 'run should still launch setup before first-run post-setup dashboard recovery'
+assert_file_not_contains 'exec -d hermes-agent-alpha-0.10.0-20260417-120000-123 hermes gateway run' "$PODMAN_LOG" 'run should not restart the gateway when it is already healthy after first-run setup returns'
+assert_file_not_contains 'exec -d hermes-agent-alpha-0.10.0-20260417-120000-123 hermes dashboard --host 0.0.0.0 --port 9234 --no-open --insecure' "$PODMAN_LOG" 'run should keep waiting for entrypoint-managed dashboard startup immediately after first-run setup returns'
+assert_file_contains 'host-open http://127.0.0.1:9334' "$PODMAN_LOG" 'run should still open the dashboard after starting the missing dashboard in first-run post-setup flow'
+assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes' "$PODMAN_LOG" 'run should still attach after starting the missing dashboard in first-run post-setup flow'
 
 # This checks that a newly created container does not race the entrypoint by starting services from the wrapper.
 : >"$PODMAN_LOG"

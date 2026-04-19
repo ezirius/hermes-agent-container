@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-# This script opens bash by default, or runs a Hermes command inside a running workspace container.
+# This script opens bash by default, or runs an explicit command inside a running workspace container.
 
 # This finds the repo root so the script can reach shared helpers.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -12,7 +12,7 @@ source "$ROOT/lib/shell/shared/common.sh"
 # This loads the saved workspace list before the script picks or validates a workspace.
 hermes_load_workspaces
 
-# This chooses the workspace from the argument when present, otherwise from the picker.
+# This chooses the workspace first, then treats any remaining words as the in-container command.
 if [[ $# -eq 0 ]]; then
   workspace="$(hermes_pick_workspace)"
   command=("$HERMES_AGENT_SHELL_COMMAND")
@@ -25,7 +25,7 @@ else
   if [[ $# -eq 0 ]]; then
     command=("$HERMES_AGENT_SHELL_COMMAND")
   else
-    command=("$HERMES_AGENT_CHAT_COMMAND" "$@")
+    command=("$@")
   fi
 fi
 
@@ -38,5 +38,5 @@ if [[ -z "$container_name" ]]; then
   exit 1
 fi
 
-# This opens bash by default, or runs `hermes ...` when extra command words were given.
+# This opens bash by default, or runs the explicit command vector when one was provided.
 hermes_exec_podman_interactive_command exec "$container_name" "${command[@]}"

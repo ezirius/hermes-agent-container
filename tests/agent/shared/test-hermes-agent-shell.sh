@@ -98,11 +98,17 @@ PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/
 assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 bash' "$PODMAN_LOG" 'shell should accept a workspace argument and still open bash'
 assert_file_not_contains 'Selection:' "$SHELL_STDERR" 'shell should not show the picker when a workspace argument is provided'
 
-# This checks that extra arguments run through hermes inside the chosen workspace.
+# This checks that an explicit in-container command passes through unchanged.
 : >"$PODMAN_LOG"
-PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha auth list >/dev/null 2>"$SHELL_STDERR"
+PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha hermes auth list >/dev/null 2>"$SHELL_STDERR"
 
-assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes auth list' "$PODMAN_LOG" 'shell should run hermes with forwarded arguments after the workspace name'
+assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes auth list' "$PODMAN_LOG" 'shell should forward an explicit command vector after the workspace name'
+
+# This checks that a non-Hermes command also passes through unchanged.
+: >"$PODMAN_LOG"
+PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha python -V >/dev/null 2>"$SHELL_STDERR"
+
+assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 python -V' "$PODMAN_LOG" 'shell should forward non-Hermes commands after the workspace name'
 
 # This checks that a typed workspace still has to be one of the configured ones.
 if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" gamma >/dev/null 2>"$TMP_DIR/unconfigured.stderr"; then

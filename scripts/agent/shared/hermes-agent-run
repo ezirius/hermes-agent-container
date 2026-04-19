@@ -47,7 +47,6 @@ dashboard_url="http://127.0.0.1:$host_port"
 reuse_existing=0
 matching_running_container=""
 recreated_exact_match_container=0
-setup_ran_in_wrapper=0
 wrapper_may_start_services=0
 
 # This checks whether an existing container already publishes the dashboard on host loopback only.
@@ -82,6 +81,12 @@ start_service_if_needed() {
   if ! "$start_function" "$container_name"; then
     return 1
   fi
+}
+
+# This warns first-run users to let the wrapper finish the post-setup flow.
+print_first_run_setup_warning() {
+  printf '\033[33mWarning:\033[0m Do not choose to open the CLI at the end of setup.\n' >&2
+  printf 'This wrapper will then check or start the gateway and dashboard, open the dashboard, and attach into the CLI for you.\n' >&2
 }
 
 # This makes sure the host folders exist before the container is started.
@@ -136,13 +141,12 @@ while true; do
 
   # This runs first-time setup in the container before waiting for services to become healthy.
   if ! hermes_container_setup_is_complete "$container_name"; then
+    print_first_run_setup_warning
     if ! hermes_run_podman_interactive_command exec "$container_name" "$HERMES_AGENT_CHAT_COMMAND" setup; then
       printf 'Hermes Agent setup did not complete: %s\n' "$container_name" >&2
       hermes_print_container_startup_diagnostics "$container_name"
       exit 1
     fi
-
-    setup_ran_in_wrapper=1
 
     continue
   fi
@@ -206,9 +210,5 @@ while true; do
 
   break
 done
-
-if [[ "$setup_ran_in_wrapper" == "1" ]]; then
-  exit 0
-fi
 
 hermes_exec_podman_interactive_command exec "$container_name" "$HERMES_AGENT_CHAT_COMMAND"
