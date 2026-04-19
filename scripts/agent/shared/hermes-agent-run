@@ -59,13 +59,16 @@ dashboard_port_is_loopback_only() {
 
 # This creates the workspace container with the current image, mounts, and dashboard publish contract.
 create_workspace_container() {
+  local container_id
+
   wrapper_may_start_services=0
-  podman run -d \
+  container_id="$(podman run -d \
     --name "$container_name" \
     -p "127.0.0.1:$host_port:$HERMES_AGENT_DASHBOARD_PORT" \
     -v "$host_home:$HERMES_AGENT_CONTAINER_HOME" \
     -v "$host_workspace:$HERMES_AGENT_CONTAINER_WORKSPACE" \
-    "$image_name"
+    "$image_name")"
+  printf 'Container ID: %s\n' "$container_id"
 }
 
 # This starts one service only when its health check still says it is missing.
@@ -87,6 +90,15 @@ start_service_if_needed() {
 print_first_run_setup_warning() {
   printf '\033[33mWarning:\033[0m Do not choose to open the CLI at the end of setup.\n' >&2
   printf 'This wrapper will then check or start the gateway and dashboard, open the dashboard, and attach into the CLI for you.\n' >&2
+}
+
+# This gives interactive users a moment to read the setup warning before setup clears the screen.
+pause_before_first_run_setup() {
+  printf 'Press any key to continue to Hermes setup.\n' >&2
+
+  if hermes_use_interactive_tty; then
+    read -r -n 1 -s _ || true
+  fi
 }
 
 # This makes sure the host folders exist before the container is started.
@@ -142,6 +154,7 @@ while true; do
   # This runs first-time setup in the container before waiting for services to become healthy.
   if ! hermes_container_setup_is_complete "$container_name"; then
     print_first_run_setup_warning
+    pause_before_first_run_setup
     if ! hermes_run_podman_interactive_command exec "$container_name" "$HERMES_AGENT_CHAT_COMMAND" setup; then
       printf 'Hermes Agent setup did not complete: %s\n' "$container_name" >&2
       hermes_print_container_startup_diagnostics "$container_name"

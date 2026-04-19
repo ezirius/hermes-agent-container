@@ -220,6 +220,10 @@ case "$1" in
     ;;
   exec)
     if [[ "$*" == *'hermes setup'* ]]; then
+      if [[ "${HERMES_TEST_TRACE_SETUP_STDERR:-0}" == "1" ]]; then
+        printf 'hermes setup\n' >&2
+      fi
+
       case "${HERMES_TEST_HEALTH_MODE:-healthy}" in
         first-run-setup|first-run-gateway-unhealthy|first-run-dashboard-unhealthy)
           : >"${HERMES_TEST_PODMAN_LOG}.setup-complete"
@@ -597,18 +601,30 @@ assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 herm
 : >"$PODMAN_LOG"
 : >"$OPEN_LOG"
 rm -f "$PODMAN_LOG.health-probes" "$PODMAN_LOG.setup-complete"
-if printf '1\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_HEALTH_MODE='first-run-setup' bash "$ROOT/scripts/agent/shared/hermes-agent-run" >"$RUN_STDOUT" 2>"$TMP_DIR/first-run-setup.stderr"; then
+if printf '1\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_HEALTH_MODE='first-run-setup' HERMES_TEST_TRACE_SETUP_STDERR='1' bash "$ROOT/scripts/agent/shared/hermes-agent-run" >"$RUN_STDOUT" 2>"$TMP_DIR/first-run-setup.stderr"; then
   :
 else
   fail 'run should complete first-run setup instead of treating setup wait as a hard failure'
 fi
 
+assert_file_contains 'Container ID: new-container' "$RUN_STDOUT" 'run should label the created container id instead of printing a bare id line'
+if grep -Fxc -- 'new-container' "$RUN_STDOUT" >/dev/null 2>&1; then
+  fail 'run should not print a bare container id line'
+fi
 assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes setup' "$PODMAN_LOG" 'run should launch hermes setup when the container is still waiting for setup'
 assert_file_contains 'config.yaml' "$PODMAN_LOG" 'run should check for config.yaml when deciding whether setup is complete'
 assert_file_not_contains 'config.toml' "$PODMAN_LOG" 'run should not treat config.toml as the setup completion file'
 assert_file_contains $'\033[33mWarning:' "$TMP_DIR/first-run-setup.stderr" 'run should print an amber warning before launching first-run setup'
 assert_file_contains 'Do not choose to open the CLI at the end of setup.' "$TMP_DIR/first-run-setup.stderr" 'run should tell the user not to choose open CLI at the end of setup'
 assert_file_contains 'This wrapper will then check or start the gateway and dashboard, open the dashboard, and attach into the CLI for you.' "$TMP_DIR/first-run-setup.stderr" 'run should explain the unified post-setup flow in the warning'
+assert_file_contains 'Press any key to continue to Hermes setup.' "$TMP_DIR/first-run-setup.stderr" 'run should prompt before launching first-run setup'
+
+warning_line="$(grep -Fn $'\033[33mWarning:' "$TMP_DIR/first-run-setup.stderr" | head -n 1 | cut -d: -f1)"
+pause_line="$(grep -Fn 'Press any key to continue to Hermes setup.' "$TMP_DIR/first-run-setup.stderr" | head -n 1 | cut -d: -f1)"
+setup_stderr_line="$(grep -Fn 'hermes setup' "$TMP_DIR/first-run-setup.stderr" | head -n 1 | cut -d: -f1)"
+if [[ -z "$warning_line" || -z "$pause_line" || -z "$setup_stderr_line" || "$pause_line" -le "$warning_line" || "$setup_stderr_line" -le "$pause_line" ]]; then
+  fail 'run should print the warning, then the pause prompt, then launch hermes setup'
+fi
 
 # This checks that first-run setup finishes before the host dashboard opener is invoked.
 setup_line="$(grep -Fn 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes setup' "$PODMAN_LOG" | head -n 1 | cut -d: -f1)"
