@@ -206,6 +206,28 @@ case "$1 $2 ${3:-}" in
     fi
     printf 'deadbeef\n'
     ;;
+  'branch --show-current ')
+    printf '%s\n' "${HERMES_TEST_GIT_BRANCH:-main}"
+    ;;
+  'rev-parse --abbrev-ref --symbolic-full-name')
+    if [[ "${4:-}" != '@{upstream}' ]]; then
+      printf 'unexpected git invocation: %s\n' "$*" >&2
+      exit 1
+    fi
+
+    if [[ "${HERMES_TEST_GIT_UPSTREAM_STATE:-configured}" == "missing" ]]; then
+      exit 1
+    fi
+
+    printf '%s\n' "${HERMES_TEST_GIT_UPSTREAM_NAME:-origin/main}"
+    ;;
+  'rev-list --count @{upstream}..HEAD')
+    if [[ "${HERMES_TEST_GIT_AHEAD_STATE:-not-ahead}" == "ahead" ]]; then
+      printf '1\n'
+    else
+      printf '0\n'
+    fi
+    ;;
   'update-index -q --refresh')
     ;;
   'diff --numstat '|'diff --summary '|'diff --cached --numstat'|'diff --cached --summary')
@@ -281,6 +303,9 @@ assert_file_contains "-C $ROOT update-index -q --refresh" "$GIT_LOG" 'build shou
 assert_file_contains "-C $ROOT diff --numstat" "$GIT_LOG" 'build should check unstaged content changes for the repo root'
 assert_file_contains "-C $ROOT diff --cached --numstat" "$GIT_LOG" 'build should check staged content changes for the repo root'
 assert_file_contains "-C $ROOT ls-files --others --exclude-standard" "$GIT_LOG" 'build should check meaningful untracked files for the repo root'
+assert_file_contains "-C $ROOT branch --show-current" "$GIT_LOG" 'build should check the current branch before enforcing push policy'
+assert_file_contains "-C $ROOT rev-parse --abbrev-ref --symbolic-full-name @{upstream}" "$GIT_LOG" 'build should look up the upstream branch when building from main'
+assert_file_contains "-C $ROOT rev-list --count @{upstream}..HEAD" "$GIT_LOG" 'build should check whether local main is ahead of its upstream'
 assert_file_contains 'getent group "${HERMES_AGENT_GID}"' "$ROOT/config/containers/shared/Containerfile" 'container build should reuse an existing group when the gid already exists'
 assert_file_contains 'chown -R hermes-agent:"${container_group_name}" /opt/hermes-venv' "$ROOT/config/containers/shared/Containerfile" 'container build should make the shared Python venv writable for runtime installs by hermes-agent'
 assert_file_contains 'ARG HERMES_AGENT_NODE_IMAGE' "$ROOT/config/containers/shared/Containerfile" 'container build should declare the configured Node base image arg'
@@ -382,6 +407,28 @@ fi
 
 # This checks that the no-commit failure message stays clear.
 assert_file_contains 'Build requires the current checkout to have at least one commit.' "$TMP_DIR/no-commit.stderr" 'build should explain missing-commit failures'
+
+# This main-branch case should stop the build when local main is ahead of upstream.
+if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="clean" HERMES_TEST_GIT_BRANCH="main" HERMES_TEST_GIT_UPSTREAM_STATE="configured" HERMES_TEST_GIT_AHEAD_STATE="ahead" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >/dev/null 2>"$TMP_DIR/main-ahead.stderr"; then
+  fail 'build should fail when local main is ahead of its upstream'
+fi
+
+assert_file_contains 'Build from main requires all commits to be pushed to the remote first.' "$TMP_DIR/main-ahead.stderr" 'build should refuse to run from main when local commits are not pushed'
+
+# This main-branch case should stop the build when no upstream is configured.
+if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="clean" HERMES_TEST_GIT_BRANCH="main" HERMES_TEST_GIT_UPSTREAM_STATE="missing" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >/dev/null 2>"$TMP_DIR/main-no-upstream.stderr"; then
+  fail 'build should fail when main has no upstream configured'
+fi
+
+assert_file_contains 'Build from main requires a configured upstream remote.' "$TMP_DIR/main-no-upstream.stderr" 'build should refuse to run from main when no upstream remote is configured'
+
+# This non-main case should allow a clean committed checkout even with no upstream configured.
+PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="clean" HERMES_TEST_GIT_BRANCH="feature/test" HERMES_TEST_GIT_UPSTREAM_STATE="missing" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >"$TMP_DIR/non-main-no-upstream.stdout"
+assert_file_contains 'Image ID: new-image-id' "$TMP_DIR/non-main-no-upstream.stdout" 'build should allow a clean non-main branch even when no upstream is configured'
+
+# This non-main case should allow a clean committed checkout even when ahead of upstream.
+PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="clean" HERMES_TEST_GIT_BRANCH="feature/test" HERMES_TEST_GIT_UPSTREAM_STATE="configured" HERMES_TEST_GIT_AHEAD_STATE="ahead" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >"$TMP_DIR/non-main-ahead.stdout"
+assert_file_contains 'Image ID: new-image-id' "$TMP_DIR/non-main-ahead.stdout" 'build should allow a clean non-main branch even when it is ahead of upstream'
 
 # This broken-worktree case should explain cross-namespace gitdir failures clearly for a managed worktree path.
 mkdir -p "$TMP_DIR/.worktrees/fix-matrix-device-backport-2"

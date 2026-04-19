@@ -311,6 +311,49 @@ hermes_repair_relative_worktree_gitdir() {
 }
 
 # This makes sure we only build from a saved, tidy checkout.
+# This returns the current branch name so build policy can distinguish main from worktree branches.
+hermes_git_current_branch() {
+  local checkout_root="$1"
+  git -C "$checkout_root" branch --show-current
+}
+
+# This checks whether the current branch has an upstream configured.
+hermes_git_branch_has_upstream() {
+  local checkout_root="$1"
+  git -C "$checkout_root" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' >/dev/null 2>&1
+}
+
+# This checks whether the current branch is ahead of its upstream.
+hermes_git_branch_is_ahead_of_upstream() {
+  local checkout_root="$1"
+  local ahead_count=""
+
+  ahead_count="$(git -C "$checkout_root" rev-list --count '@{upstream}..HEAD')"
+  [[ "$ahead_count" != '0' ]]
+}
+
+# This enforces the stricter remote-sync rule only when building from main.
+hermes_require_main_branch_not_ahead_of_upstream() {
+  local checkout_root="$1"
+  local current_branch=""
+
+  current_branch="$(hermes_git_current_branch "$checkout_root")"
+  if [[ "$current_branch" != 'main' ]]; then
+    return 0
+  fi
+
+  if ! hermes_git_branch_has_upstream "$checkout_root"; then
+    printf 'Build from main requires a configured upstream remote.\n' >&2
+    exit 1
+  fi
+
+  if hermes_git_branch_is_ahead_of_upstream "$checkout_root"; then
+    printf 'Build from main requires all commits to be pushed to the remote first.\n' >&2
+    exit 1
+  fi
+}
+
+# This makes sure we only build from a saved, tidy checkout.
 # If the checkout is messy, the build stops so the image matches real committed code.
 hermes_require_clean_committed_checkout() {
   local checkout_root="${1:-$ROOT}"
@@ -351,6 +394,8 @@ hermes_require_clean_committed_checkout() {
     printf 'Build requires a clean checkout with all changes committed.\n' >&2
     exit 1
   fi
+
+  hermes_require_main_branch_not_ahead_of_upstream "$checkout_root"
 }
 
 # This reads the saved workspace list and splits it into names and offsets.
