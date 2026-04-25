@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-# This script starts one saved workspace container and opens Hermes inside it.
+# This script starts saved workspace gateway and dashboard containers, then opens Hermes.
 
 # This finds the repo root so the script can reach shared helpers.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -39,13 +39,21 @@ port_offset="$(hermes_workspace_offset "$workspace")"
 host_home="$HERMES_AGENT_BASE_PATH/$workspace/$HERMES_AGENT_HOST_HOME_DIRNAME"
 host_workspace="$HERMES_AGENT_BASE_PATH/$workspace/$HERMES_AGENT_HOST_WORKSPACE_DIRNAME"
 old_containers="$(hermes_workspace_containers "$workspace")"
+old_pods="$(hermes_workspace_pods "$workspace")"
 
 image_suffix="${image_name#$HERMES_AGENT_IMAGE_BASENAME-}"
 host_port=$((HERMES_AGENT_DASHBOARD_PORT + port_offset))
-container_name="$HERMES_AGENT_IMAGE_BASENAME-$workspace-$image_suffix"
+gateway_container_name="$HERMES_AGENT_IMAGE_BASENAME-$workspace-gateway-$image_suffix"
+dashboard_container_name="$HERMES_AGENT_IMAGE_BASENAME-$workspace-dashboard-$image_suffix"
+gateway_pod_name="$gateway_container_name"
+dashboard_pod_name="$dashboard_container_name"
 dashboard_url="http://127.0.0.1:$host_port"
-reuse_existing=0
-matching_running_container=""
+reuse_gateway=0
+reuse_dashboard=0
+reuse_gateway_pod=0
+reuse_dashboard_pod=0
+matching_gateway_container=""
+matching_dashboard_container=""
 recreated_exact_match_container=0
 wrapper_may_start_services=0
 
@@ -53,21 +61,61 @@ wrapper_may_start_services=0
 dashboard_port_is_loopback_only() {
   local published
 
-  published="$(podman port "$container_name" "$HERMES_AGENT_DASHBOARD_PORT/tcp" 2>/dev/null || true)"
+  published="$(podman port "$dashboard_pod_name" "$HERMES_AGENT_DASHBOARD_PORT/tcp" 2>/dev/null || true)"
   [[ "$published" == 127.0.0.1:* ]]
 }
 
-# This creates the workspace container with the current image, mounts, and dashboard publish contract.
-create_workspace_container() {
+# This creates the gateway pod that owns the gateway container namespace.
+create_gateway_pod() {
+  podman pod create --name "$gateway_pod_name" >/dev/null
+}
+
+# This creates the dashboard pod and publishes the dashboard on host loopback.
+create_dashboard_pod() {
+  podman pod create --name "$dashboard_pod_name" -p "127.0.0.1:$host_port:$HERMES_AGENT_DASHBOARD_PORT" >/dev/null
+}
+
+# This checks whether a pod with the exact name already exists.
+pod_exists() {
+  local pod_name="$1"
+  local matched_pod
+
+  matched_pod="$(podman pod ps --format '{{.Name}}' --filter "name=$(hermes_container_name_regex "$pod_name")" | head -n 1)"
+  [[ "$matched_pod" == "$pod_name" ]]
+}
+
+# This creates the gateway container with the current image and workspace mounts.
+create_gateway_container() {
   local container_id
 
   wrapper_may_start_services=0
   container_id="$(podman run -d \
-    --name "$container_name" \
-    -p "127.0.0.1:$host_port:$HERMES_AGENT_DASHBOARD_PORT" \
+    --name "$gateway_container_name" \
+    --pod "$gateway_pod_name" \
+    --workdir "$HERMES_AGENT_CONTAINER_WORKSPACE" \
+    -e "HERMES_UID=$HERMES_AGENT_UID" \
+    -e "HERMES_GID=$HERMES_AGENT_GID" \
     -v "$host_home:$HERMES_AGENT_CONTAINER_HOME" \
     -v "$host_workspace:$HERMES_AGENT_CONTAINER_WORKSPACE" \
-    "$image_name")"
+    "$image_name" \
+    gateway run)"
+  printf 'Gateway container ID: %s\n' "$container_id"
+}
+
+# This creates the dashboard container with the current image, mounts, and loopback publish contract.
+create_dashboard_container() {
+  local container_id
+
+  container_id="$(podman run -d \
+    --name "$dashboard_container_name" \
+    --pod "$dashboard_pod_name" \
+    --workdir "$HERMES_AGENT_CONTAINER_WORKSPACE" \
+    -e "HERMES_UID=$HERMES_AGENT_UID" \
+    -e "HERMES_GID=$HERMES_AGENT_GID" \
+    -v "$host_home:$HERMES_AGENT_CONTAINER_HOME" \
+    -v "$host_workspace:$HERMES_AGENT_CONTAINER_WORKSPACE" \
+    "$image_name" \
+    dashboard --host 0.0.0.0 --port "$HERMES_AGENT_DASHBOARD_PORT" --no-open)"
   printf 'Container ID: %s\n' "$container_id"
 }
 
@@ -107,57 +155,86 @@ mkdir -p "$host_home" "$host_workspace"
 # This checks whether the newest image already has a matching workspace container.
 while IFS= read -r old_container; do
   [[ -n "$old_container" ]] || continue
-  if [[ "$old_container" == "$container_name" ]]; then
-    reuse_existing=1
-    break
+  if [[ "$old_container" == "$gateway_container_name" ]]; then
+    reuse_gateway=1
+  fi
+  if [[ "$old_container" == "$dashboard_container_name" ]]; then
+    reuse_dashboard=1
   fi
 done <<< "$old_containers"
 
-# This checks whether that exact matching container is already running.
-matching_running_container="$(podman ps --format '{{.Names}}' --filter "name=$(hermes_container_name_regex "$container_name")" | head -n 1)"
-if [[ "$reuse_existing" == "1" && "$matching_running_container" == "$container_name" ]]; then
+# This checks whether the newest image already has matching workspace pods.
+if pod_exists "$gateway_pod_name"; then
+  reuse_gateway_pod=1
+fi
+if pod_exists "$dashboard_pod_name"; then
+  reuse_dashboard_pod=1
+fi
+
+# This checks whether the exact matching containers are already running.
+matching_gateway_container="$(podman ps --format '{{.Names}}' --filter "name=$(hermes_container_name_regex "$gateway_container_name")" | head -n 1)"
+matching_dashboard_container="$(podman ps --format '{{.Names}}' --filter "name=$(hermes_container_name_regex "$dashboard_container_name")" | head -n 1)"
+if [[ "$reuse_gateway" == "1" && "$matching_gateway_container" == "$gateway_container_name" ]]; then
   wrapper_may_start_services=1
 fi
 
 # This forces a replacement when an older exact-match container still exposes the dashboard beyond host loopback.
-if [[ "$reuse_existing" == "1" ]] && ! dashboard_port_is_loopback_only; then
-  podman rm -f "$container_name" >/dev/null 2>&1 || true
-  reuse_existing=0
-  matching_running_container=""
+if [[ "$reuse_dashboard" == "1" ]] && ! dashboard_port_is_loopback_only; then
+  podman rm -f "$dashboard_container_name" >/dev/null 2>&1 || true
+  podman pod rm -f "$dashboard_pod_name" >/dev/null 2>&1 || true
+  reuse_dashboard=0
+  reuse_dashboard_pod=0
+  matching_dashboard_container=""
 fi
 
-# This creates a new container when needed, or reuses the right old one when it already exists.
-if [[ "$reuse_existing" != "1" ]]; then
-  create_workspace_container
+# This creates new containers when needed, or reuses the right old ones when they already exist.
+if [[ "$reuse_gateway" != "1" ]]; then
+  if [[ "$reuse_gateway_pod" != "1" ]]; then
+    create_gateway_pod
+  fi
+  create_gateway_container
+elif [[ "$matching_gateway_container" != "$gateway_container_name" ]]; then
+  podman start "$gateway_container_name" >/dev/null
+fi
 
-elif [[ "$matching_running_container" != "$container_name" ]]; then
-  # This starts the matching stopped container instead of making a duplicate one.
-  podman start "$container_name" >/dev/null
+if [[ "$reuse_dashboard" != "1" ]]; then
+  if [[ "$reuse_dashboard_pod" != "1" ]]; then
+    create_dashboard_pod
+  fi
+  create_dashboard_container
+elif [[ "$matching_dashboard_container" != "$dashboard_container_name" ]]; then
+  podman start "$dashboard_container_name" >/dev/null
 fi
 
 while true; do
   # This waits a little so the script only attaches after the container is really running.
-  if ! hermes_wait_for_running_container "$container_name"; then
-    if [[ "$reuse_existing" == "1" && "$recreated_exact_match_container" != "1" ]]; then
-      podman rm -f "$container_name" >/dev/null 2>&1 || true
-      create_workspace_container
-      reuse_existing=0
+  if ! hermes_wait_for_running_container "$gateway_container_name" || ! hermes_wait_for_running_container "$dashboard_container_name"; then
+    if [[ ( "$reuse_gateway" == "1" || "$reuse_dashboard" == "1" ) && "$recreated_exact_match_container" != "1" ]]; then
+      podman rm -f "$gateway_container_name" "$dashboard_container_name" >/dev/null 2>&1 || true
+      podman pod rm -f "$gateway_pod_name" "$dashboard_pod_name" >/dev/null 2>&1 || true
+      create_gateway_pod
+      create_dashboard_pod
+      create_gateway_container
+      create_dashboard_container
+      reuse_gateway=0
+      reuse_dashboard=0
       recreated_exact_match_container=1
       continue
     fi
 
-    printf 'Hermes Agent container failed to stay running: %s\n' "$container_name" >&2
-    hermes_print_container_startup_diagnostics "$container_name"
+    printf 'Hermes Agent containers failed to stay running: %s %s\n' "$gateway_container_name" "$dashboard_container_name" >&2
+    hermes_print_container_startup_diagnostics "$gateway_container_name"
+    hermes_print_container_startup_diagnostics "$dashboard_container_name"
     exit 1
   fi
 
   # This runs first-time setup in the container before waiting for services to become healthy.
-  if ! hermes_container_setup_is_complete "$container_name"; then
+  if ! hermes_container_setup_is_complete "$gateway_container_name"; then
     print_first_run_setup_warning
     pause_before_first_run_setup
-    if ! hermes_run_podman_interactive_command exec "$container_name" "$HERMES_AGENT_CHAT_COMMAND" setup; then
-      printf 'Hermes Agent setup did not complete: %s\n' "$container_name" >&2
-      hermes_print_container_startup_diagnostics "$container_name"
+    if ! hermes_run_podman_interactive_command exec --workdir "$HERMES_AGENT_CONTAINER_WORKSPACE" "$gateway_container_name" "$HERMES_AGENT_CHAT_COMMAND" setup; then
+      printf 'Hermes Agent setup did not complete: %s\n' "$gateway_container_name" >&2
+      hermes_print_container_startup_diagnostics "$gateway_container_name"
       exit 1
     fi
 
@@ -166,62 +243,77 @@ while true; do
 
   # This only repairs missing services when reusing a container that was already running.
   if [[ "$wrapper_may_start_services" == "1" ]]; then
-    if ! start_service_if_needed "$container_name" hermes_container_gateway_is_healthy hermes_container_start_gateway; then
-      printf 'Hermes Agent gateway failed to start in reused container: %s\n' "$container_name" >&2
-      hermes_print_container_startup_diagnostics "$container_name"
-      exit 1
-    fi
-
-    if ! start_service_if_needed "$container_name" hermes_container_dashboard_is_healthy hermes_container_start_dashboard; then
-      printf 'Hermes Agent dashboard failed to start in reused container: %s\n' "$container_name" >&2
-      hermes_print_container_startup_diagnostics "$container_name"
+    if ! start_service_if_needed "$gateway_container_name" hermes_container_gateway_is_healthy hermes_container_start_gateway; then
+      printf 'Hermes Agent gateway failed to start in reused container: %s\n' "$gateway_container_name" >&2
+      hermes_print_container_startup_diagnostics "$gateway_container_name"
       exit 1
     fi
   fi
 
   # This waits for setup completion and both local service checks before reuse or attach.
-  if ! hermes_wait_for_healthy_container "$container_name"; then
-    if [[ "$reuse_existing" == "1" && "$recreated_exact_match_container" != "1" ]]; then
-      podman rm -f "$container_name" >/dev/null 2>&1 || true
-      create_workspace_container
-      reuse_existing=0
+  if ! hermes_wait_for_gateway_container "$gateway_container_name" || ! hermes_wait_for_dashboard_container "$dashboard_container_name"; then
+    if [[ ( "$reuse_gateway" == "1" || "$reuse_dashboard" == "1" ) && "$recreated_exact_match_container" != "1" ]]; then
+      podman rm -f "$gateway_container_name" "$dashboard_container_name" >/dev/null 2>&1 || true
+      podman pod rm -f "$gateway_pod_name" "$dashboard_pod_name" >/dev/null 2>&1 || true
+      create_gateway_pod
+      create_dashboard_pod
+      create_gateway_container
+      create_dashboard_container
+      reuse_gateway=0
+      reuse_dashboard=0
       recreated_exact_match_container=1
       continue
     fi
 
-    printf 'Hermes Agent container failed to become healthy: %s\n' "$container_name" >&2
-    hermes_print_container_startup_diagnostics "$container_name"
+    printf 'Hermes Agent containers failed to become healthy: %s %s\n' "$gateway_container_name" "$dashboard_container_name" >&2
+    hermes_print_container_startup_diagnostics "$gateway_container_name"
+    hermes_print_container_startup_diagnostics "$dashboard_container_name"
     exit 1
   fi
 
   # This removes older workspace containers only after the replacement proved it stayed up.
-  if [[ "$reuse_existing" != "1" ]]; then
+  if [[ "$reuse_gateway" != "1" || "$reuse_dashboard" != "1" ]]; then
     while IFS= read -r old_container; do
       [[ -n "$old_container" ]] || continue
-      [[ "$old_container" == "$container_name" ]] && continue
+      [[ "$old_container" == "$gateway_container_name" ]] && continue
+      [[ "$old_container" == "$dashboard_container_name" ]] && continue
       podman rm -f "$old_container" >/dev/null 2>&1 || true
+      podman pod rm -f "$old_container" >/dev/null 2>&1 || true
     done <<< "$old_containers"
+
+    while IFS= read -r old_pod; do
+      [[ -n "$old_pod" ]] || continue
+      [[ "$old_pod" == "$gateway_pod_name" ]] && continue
+      [[ "$old_pod" == "$dashboard_pod_name" ]] && continue
+      podman pod rm -f "$old_pod" >/dev/null 2>&1 || true
+    done <<< "$old_pods"
   fi
 
   # This opens the dashboard, then confirms the container stays up across the pre-attach window.
   hermes_open_dashboard "$dashboard_url"
 
   # This recreates a poisoned exact-match container once before giving up on attach.
-  if ! hermes_wait_for_stable_running_container "$container_name"; then
-    if [[ "$reuse_existing" == "1" && "$recreated_exact_match_container" != "1" ]]; then
-      podman rm -f "$container_name" >/dev/null 2>&1 || true
-      create_workspace_container
-      reuse_existing=0
+  if ! hermes_wait_for_stable_running_container "$gateway_container_name" || ! hermes_wait_for_stable_running_container "$dashboard_container_name"; then
+    if [[ ( "$reuse_gateway" == "1" || "$reuse_dashboard" == "1" ) && "$recreated_exact_match_container" != "1" ]]; then
+      podman rm -f "$gateway_container_name" "$dashboard_container_name" >/dev/null 2>&1 || true
+      podman pod rm -f "$gateway_pod_name" "$dashboard_pod_name" >/dev/null 2>&1 || true
+      create_gateway_pod
+      create_dashboard_pod
+      create_gateway_container
+      create_dashboard_container
+      reuse_gateway=0
+      reuse_dashboard=0
       recreated_exact_match_container=1
       continue
     fi
 
-    printf 'Hermes Agent container stopped before attach: %s\n' "$container_name" >&2
-    hermes_print_container_startup_diagnostics "$container_name"
+    printf 'Hermes Agent containers stopped before attach: %s %s\n' "$gateway_container_name" "$dashboard_container_name" >&2
+    hermes_print_container_startup_diagnostics "$gateway_container_name"
+    hermes_print_container_startup_diagnostics "$dashboard_container_name"
     exit 1
   fi
 
   break
 done
 
-hermes_exec_podman_interactive_command exec "$container_name" "$HERMES_AGENT_CHAT_COMMAND"
+hermes_exec_podman_interactive_command exec --workdir "$HERMES_AGENT_CONTAINER_WORKSPACE" "$gateway_container_name" "$HERMES_AGENT_CHAT_COMMAND"

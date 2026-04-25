@@ -40,16 +40,16 @@ case "$1" in
       present)
         case "$*" in
           *beta*)
-            printf 'hermes-agent-beta-0.10.0-20260417-120000-123\n'
+            printf 'hermes-agent-beta-gateway-0.10.0-20260417-120000-123\n'
             ;;
           *)
-            printf 'hermes-agent-alpha-0.10.0-20260417-120000-123\n'
+            printf 'hermes-agent-alpha-gateway-0.10.0-20260417-120000-123\n'
             ;;
         esac
         ;;
       multiple)
-        printf 'hermes-agent-beta-0.10.0-20260417-120000-123\n'
-        printf 'hermes-agent-beta-0.10.0-20260417-120500-456\n'
+        printf 'hermes-agent-beta-gateway-0.10.0-20260417-120000-123\n'
+        printf 'hermes-agent-beta-gateway-0.10.0-20260417-120500-456\n'
         ;;
     esac
     ;;
@@ -70,11 +70,11 @@ HERMES_AGENT_VERSION="0.10.0"
 HERMES_AGENT_RELEASE_TAG="v2026.4.16"
 HERMES_AGENT_DASHBOARD_PORT="9234"
 HERMES_AGENT_CHAT_COMMAND="hermes"
-HERMES_AGENT_SHELL_COMMAND="bash"
+HERMES_AGENT_SHELL_COMMAND="nu"
 HERMES_AGENT_OPEN_COMMAND="open"
 HERMES_AGENT_BASE_PATH="${HOME}/tmp/hermes-agent"
 HERMES_AGENT_WORKSPACES="alpha:100 beta:200"
-HERMES_AGENT_CONTAINER_HOME="/home/hermes-agent"
+HERMES_AGENT_CONTAINER_HOME="/opt/data"
 HERMES_AGENT_CONTAINER_WORKSPACE="/workspace/general"
 HERMES_AGENT_HOST_HOME_DIRNAME="hermes-agent-home"
 HERMES_AGENT_HOST_WORKSPACE_DIRNAME="hermes-agent-general"
@@ -88,27 +88,27 @@ printf 'beta\n' | PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" ba
 
 # These checks prove the shell command looked up the right container and attached to it.
 assert_file_contains 'Selection:' "$SHELL_STDERR" 'shell should show an explicit selection prompt'
-assert_file_contains '--filter name=^hermes-agent-beta-' "$PODMAN_LOG" 'shell should filter running containers by chosen workspace'
-assert_file_contains 'exec -i hermes-agent-beta-0.10.0-20260417-120000-123 bash' "$PODMAN_LOG" 'shell should exec configured shell command'
+assert_file_contains '--filter name=^hermes-agent-beta-gateway-' "$PODMAN_LOG" 'shell should filter running gateway containers by chosen workspace'
+assert_file_contains 'exec -i hermes-agent-beta-gateway-0.10.0-20260417-120000-123 nu' "$PODMAN_LOG" 'shell should exec configured nushell command in the gateway container'
 
-# This checks that one workspace argument skips the picker and still opens bash.
+# This checks that one workspace argument skips the picker and still opens nushell.
 : >"$PODMAN_LOG"
 PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha >/dev/null 2>"$SHELL_STDERR"
 
-assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 bash' "$PODMAN_LOG" 'shell should accept a workspace argument and still open bash'
+assert_file_contains 'exec -i hermes-agent-alpha-gateway-0.10.0-20260417-120000-123 nu' "$PODMAN_LOG" 'shell should accept a workspace argument and still open nushell'
 assert_file_not_contains 'Selection:' "$SHELL_STDERR" 'shell should not show the picker when a workspace argument is provided'
 
 # This checks that an explicit in-container command passes through unchanged.
 : >"$PODMAN_LOG"
 PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha hermes auth list >/dev/null 2>"$SHELL_STDERR"
 
-assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 hermes auth list' "$PODMAN_LOG" 'shell should forward an explicit command vector after the workspace name'
+assert_file_contains 'exec -i hermes-agent-alpha-gateway-0.10.0-20260417-120000-123 hermes auth list' "$PODMAN_LOG" 'shell should forward an explicit command vector after the workspace name'
 
 # This checks that a non-Hermes command also passes through unchanged.
 : >"$PODMAN_LOG"
 PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha python -V >/dev/null 2>"$SHELL_STDERR"
 
-assert_file_contains 'exec -i hermes-agent-alpha-0.10.0-20260417-120000-123 python -V' "$PODMAN_LOG" 'shell should forward non-Hermes commands after the workspace name'
+assert_file_contains 'exec -i hermes-agent-alpha-gateway-0.10.0-20260417-120000-123 python -V' "$PODMAN_LOG" 'shell should forward non-Hermes commands after the workspace name'
 
 # This checks that a typed workspace still has to be one of the configured ones.
 if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" gamma >/dev/null 2>"$TMP_DIR/unconfigured.stderr"; then
@@ -121,7 +121,7 @@ assert_file_contains 'Workspace gamma is not configured.' "$TMP_DIR/unconfigured
 : >"$PODMAN_LOG"
 printf 'beta\n' | PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_CONTAINER_MODE="multiple" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" >/dev/null
 
-assert_file_contains 'exec -i hermes-agent-beta-0.10.0-20260417-120500-456 bash' "$PODMAN_LOG" 'shell should choose the newest running workspace container when multiple match'
+assert_file_contains 'exec -i hermes-agent-beta-gateway-0.10.0-20260417-120500-456 nu' "$PODMAN_LOG" 'shell should choose the newest running gateway container when multiple match'
 
 # This checks that the script explains the failure when no container exists.
 if printf 'alpha\n' | PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_CONTAINER_MODE="missing" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" >/dev/null 2>"$TMP_DIR/missing.stderr"; then
@@ -139,18 +139,18 @@ EOF
 
 chmod +x "$FAKE_BIN/podman"
 : >"$PODMAN_LOG"
-PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash -lc 'set -euo pipefail; source "$1"; hermes_exec_podman_interactive_command exec demo-container bash' _ "$ROOT/lib/shell/shared/common.sh" </dev/null >/dev/null
+PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash -c 'set -euo pipefail; source "$1"; hermes_exec_podman_interactive_command exec demo-container bash' _ "$ROOT/lib/shell/shared/common.sh" </dev/null >/dev/null
 
 assert_file_contains 'exec -i demo-container bash' "$PODMAN_LOG" 'shared exec helper should drop tty mode when stdin is not interactive'
 
 # This checks that interactive Linux auto mode falls back to plain Podman `-it` when no wrapper is needed.
 : >"$PODMAN_LOG"
-PATH="$FAKE_BIN:/usr/bin:/bin" ROOT="$ROOT" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_AGENT_FORCE_EXEC_TTY="1" OSTYPE='linux-gnu' /bin/bash -lc 'set -euo pipefail; source "$1"; hermes_exec_podman_interactive_command exec demo-container bash' _ "$ROOT/lib/shell/shared/common.sh" >/dev/null
+PATH="$FAKE_BIN:/usr/bin:/bin" ROOT="$ROOT" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_AGENT_FORCE_EXEC_TTY="1" OSTYPE='linux-gnu' /bin/bash -c 'set -euo pipefail; source "$1"; hermes_exec_podman_interactive_command exec demo-container bash' _ "$ROOT/lib/shell/shared/common.sh" >/dev/null
 
 assert_file_contains 'exec -it demo-container bash' "$PODMAN_LOG" 'shared exec helper should use plain interactive Podman when auto mode does not need script'
 
 # This checks that explicit script mode fails clearly when `script` is not installed.
-if PATH="$FAKE_BIN" ROOT="$ROOT" HERMES_AGENT_FORCE_EXEC_TTY="1" HERMES_AGENT_PODMAN_TTY_WRAPPER="script" /bin/bash -lc 'set -euo pipefail; source "$1"; hermes_exec_podman_interactive_command exec demo-container bash' _ "$ROOT/lib/shell/shared/common.sh" >/dev/null 2>"$TMP_DIR/script-missing.stderr"; then
+if PATH="$FAKE_BIN" ROOT="$ROOT" HERMES_AGENT_FORCE_EXEC_TTY="1" HERMES_AGENT_PODMAN_TTY_WRAPPER="script" /bin/bash -c 'set -euo pipefail; source "$1"; hermes_exec_podman_interactive_command exec demo-container bash' _ "$ROOT/lib/shell/shared/common.sh" >/dev/null 2>"$TMP_DIR/script-missing.stderr"; then
   fail 'shared exec helper should fail when explicit script mode is requested but unavailable'
 fi
 

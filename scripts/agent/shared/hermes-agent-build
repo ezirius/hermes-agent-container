@@ -40,14 +40,8 @@ podman images --filter dangling=true --format '{{.ID}}' | sort -u >"$before_dang
 
 # This lets Podman stream its normal build output while saving the final image id for later.
 podman build \
-  --build-arg HERMES_AGENT_UID="$HERMES_AGENT_UID" \
-  --build-arg HERMES_AGENT_GID="$HERMES_AGENT_GID" \
-  --build-arg HERMES_AGENT_NODE_IMAGE="$HERMES_AGENT_NODE_IMAGE" \
-  --build-arg HERMES_AGENT_RUNTIME_IMAGE="$HERMES_AGENT_RUNTIME_IMAGE" \
+  --build-arg HERMES_AGENT_UPSTREAM_IMAGE="$HERMES_AGENT_UPSTREAM_IMAGE" \
   --build-arg HERMES_AGENT_RELEASE_TAG="$HERMES_AGENT_RELEASE_TAG" \
-  --build-arg HERMES_AGENT_DASHBOARD_PORT="$HERMES_AGENT_DASHBOARD_PORT" \
-  --build-arg HERMES_AGENT_CONTAINER_HOME="$HERMES_AGENT_CONTAINER_HOME" \
-  --build-arg HERMES_AGENT_CONTAINER_WORKSPACE="$HERMES_AGENT_CONTAINER_WORKSPACE" \
   --iidfile "$iidfile_path" \
   -f "$ROOT/config/containers/shared/Containerfile" \
   -t "$image_name" \

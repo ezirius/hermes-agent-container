@@ -45,12 +45,20 @@ hermes_image_name_regex() {
 # This builds the regex used to find containers for one workspace.
 hermes_container_filter_regex() {
   local workspace="$1"
+  local role="${2:-}"
   local escaped_basename escaped_workspace escaped_version
+  local escaped_role=""
 
   escaped_basename="$(hermes_regex_escape "$HERMES_AGENT_IMAGE_BASENAME")"
   escaped_workspace="$(hermes_regex_escape "$workspace")"
   escaped_version="$(hermes_regex_escape "$HERMES_AGENT_VERSION")"
-  printf '^%s-%s-%s-\n' "$escaped_basename" "$escaped_workspace" "$escaped_version"
+  if [[ -n "$role" ]]; then
+    escaped_role="$(hermes_regex_escape "$role")"
+    printf '^%s-%s-%s-%s-\n' "$escaped_basename" "$escaped_workspace" "$escaped_role" "$escaped_version"
+    return 0
+  fi
+
+  printf '^%s-%s-(gateway-|dashboard-)?%s-\n' "$escaped_basename" "$escaped_workspace" "$escaped_version"
 }
 
 # This matches one exact container name and nothing else.
@@ -513,7 +521,7 @@ hermes_running_container() {
   local workspace="$1"
   local prefix
 
-  prefix="$(hermes_container_filter_regex "$workspace")"
+  prefix="$(hermes_container_filter_regex "$workspace" gateway)"
   podman ps --format '{{.Names}}' --filter "name=${prefix}" | sort -r | head -n 1
 }
 
@@ -524,6 +532,15 @@ hermes_workspace_containers() {
 
   prefix="$(hermes_container_filter_regex "$workspace")"
   podman ps -aq --format '{{.Names}}' --filter "name=${prefix}" 2>/dev/null || true
+}
+
+# This lists all pods for one workspace, even when their containers are gone.
+hermes_workspace_pods() {
+  local workspace="$1"
+  local prefix
+
+  prefix="$(hermes_container_filter_regex "$workspace")"
+  podman pod ps -aq --format '{{.Name}}' --filter "name=${prefix}" 2>/dev/null || true
 }
 
 # This checks whether one exact container is running right now.
@@ -561,14 +578,14 @@ hermes_container_setup_is_complete() {
 hermes_container_gateway_is_healthy() {
   local container_name="$1"
 
-  podman exec "$container_name" bash -lc 'python -c '"'"'import json, os, sys; path=os.path.join(os.environ["HERMES_HOME"], "gateway_state.json"); data=json.load(open(path, encoding="utf-8")); sys.exit(0 if data.get("gateway_state") == "running" else 1)'"'"'' >/dev/null 2>&1
+  podman exec "$container_name" nu -c 'let state = (open ($env.HERMES_HOME | path join "gateway_state.json") | get gateway_state); if $state == "running" { exit 0 } else { exit 1 }' >/dev/null 2>&1
 }
 
 # This checks the local dashboard probe after setup is complete.
 hermes_container_dashboard_is_healthy() {
   local container_name="$1"
 
-  podman exec "$container_name" bash -lc 'curl -fsS "http://127.0.0.1:'"$HERMES_AGENT_DASHBOARD_PORT"'/" >/dev/null' >/dev/null 2>&1
+  podman exec "$container_name" bash -lc 'exec 3<>/dev/tcp/127.0.0.1/'"$HERMES_AGENT_DASHBOARD_PORT"'; printf "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n" >&3; IFS= read -r line <&3; case "$line" in HTTP/*" 2"*|HTTP/*" 3"*) exit 0 ;; *) exit 1 ;; esac' >/dev/null 2>&1
 }
 
 # This starts the gateway in the background inside an existing container.
@@ -606,6 +623,36 @@ hermes_wait_for_healthy_container() {
 
   for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
     if hermes_container_is_running "$container_name" && hermes_container_is_ready "$container_name"; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  return 1
+}
+
+# This waits until the gateway container has setup files and the gateway reports healthy.
+hermes_wait_for_gateway_container() {
+  local container_name="$1"
+  local attempt
+
+  for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if hermes_container_is_running "$container_name" && hermes_container_setup_is_complete "$container_name" && hermes_container_gateway_is_healthy "$container_name"; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  return 1
+}
+
+# This waits until the dashboard container is running and its local dashboard responds.
+hermes_wait_for_dashboard_container() {
+  local container_name="$1"
+  local attempt
+
+  for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if hermes_container_is_running "$container_name" && hermes_container_dashboard_is_healthy "$container_name"; then
       return 0
     fi
     sleep 1

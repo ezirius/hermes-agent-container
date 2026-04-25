@@ -154,7 +154,7 @@ Current stable paths in this repo are:
 ## Current Behavioral Rules
 
 - Repo-owned runtime and build settings live in `config/agent/shared/hermes-agent-settings-shared.conf`.
-- Container build configuration lives in `config/containers/shared/Containerfile`.
+- Container build configuration lives in `config/containers/shared/Containerfile` and derives from the official upstream Hermes Agent image.
 - Shared shell helpers live in `lib/shell/shared/common.sh`.
 - User-facing documentation lives in `docs/usage/shared/`.
 - Shell tests live in `tests/agent/shared/`.
@@ -162,7 +162,7 @@ Current stable paths in this repo are:
 - `scripts/agent/shared/hermes-agent-build` must only build from a clean, committed checkout.
 - Meaningful tracked changes, meaningful untracked files, and executable-bit changes all count as dirty for build safety.
 - Harmless host junk such as `.DS_Store` should not count as a dirty checkout by itself.
-- `scripts/agent/shared/hermes-agent-run` must only remove older workspace containers after the replacement container is proven to be running.
+- `scripts/agent/shared/hermes-agent-run` must only remove older workspace pods and containers after replacement gateway and dashboard containers are proven healthy.
 - Shared interactive Podman exec behavior lives in `lib/shell/shared/common.sh` and must preserve non-TTY stdin behavior as well as interactive-host behavior.
 - `tests/agent/shared/test-hermes-agent-layout.sh` is the layout guard for the normalized repository structure and key headline comments.
 
