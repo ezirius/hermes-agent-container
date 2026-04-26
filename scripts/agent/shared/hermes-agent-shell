@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-# This script opens bash by default, or runs an explicit command inside a running workspace container.
+# This script opens nushell by default, or runs an explicit command inside a running workspace container.
 
 # This finds the repo root so the script can reach shared helpers.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -38,5 +38,5 @@ if [[ -z "$container_name" ]]; then
   exit 1
 fi
 
-# This opens bash by default, or runs the explicit command vector when one was provided.
+# This opens nushell by default, or runs the explicit command vector when one was provided.
 hermes_exec_podman_interactive_command exec "$container_name" "${command[@]}"

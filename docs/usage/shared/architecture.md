@@ -1,6 +1,6 @@
 # Hermes Agent Architecture
 
-This repo keeps a small wrapper around a Hermes Agent container with three responsibility layers:
+This repo keeps a small wrapper around the official Hermes Agent container with three responsibility layers:
 
 - `config/agent/shared/hermes-agent-settings-shared.conf` owns runtime and build configuration.
 - `lib/shell/shared/common.sh` owns shared shell helpers for config loading, workspace parsing, and container lookup.
@@ -8,22 +8,28 @@ This repo keeps a small wrapper around a Hermes Agent container with three respo
 
 ## Layout
 
-- `config/containers/shared/Containerfile` builds the image and reflects the config contract through build args and runtime env vars.
-- `config/containers/shared/Containerfile` also builds the upstream Hermes frontend in a separate stage and copies the resulting `hermes_cli/web_dist` assets into the runtime source tree before `uv pip install /opt/hermes-src[web]` packages Hermes.
+- `config/containers/shared/Containerfile` derives from the official upstream `nousresearch/hermes-agent` image and adds repo-local customization packages.
+- `config/containers/shared/Containerfile` currently installs `nushell`; the official image owns Hermes, bash, git, frontend assets, and the upstream entrypoint.
+- The derived image starts as root so the upstream entrypoint can drop privileges to the Hermes runtime user after bootstrapping mounted state.
 - `lib/shell/shared/common.sh` is the only shared shell library path.
-- `scripts/agent/shared/hermes-agent-build` builds an image from config.
-- `scripts/agent/shared/hermes-agent-run` starts a selected workspace, mounts host paths into the container, recreates poisoned exact-match containers once, and prints startup diagnostics on failure.
-- `scripts/agent/shared/hermes-agent-shell` connects to an existing workspace container.
+- `scripts/agent/shared/hermes-agent-build` builds an `arm64` image from config, then retags it with a 12-character image-id suffix.
+- `scripts/agent/shared/hermes-agent-run` starts one selected workspace pod and container, mounts host paths into it, recreates a poisoned exact-match pod/container once, and prints startup diagnostics on failure.
+- Hermes container and pod names follow `<image-name>-<workspace>`, matching the OpenCode-derived order without a project or role suffix.
+- `scripts/agent/shared/hermes-agent-shell` connects to the existing workspace container and opens `nu` by default.
 - `tests/agent/shared/*` verify behavior and layout, using focused source-text assertions where they check stable build or runtime contract strings.
-- The container dashboard command must keep the service reachable through Podman port publishing, which currently requires `--host 0.0.0.0 --insecure` with Hermes 0.10.0, while the wrapper keeps the published host port bound to `127.0.0.1`.
-- If the runtime image is installed without those built frontend assets, Hermes cannot serve the portal dashboard and falls back to its missing-frontend error path.
+- The workspace pod owns Podman port publishing, while the wrapper keeps the published host port bound to `127.0.0.1`.
+- The run wrapper treats the container as ready when it is running and stable before attach; the browser opener waits for the published dashboard URL rather than probing Hermes internals.
+- The `.dockerignore` file follows the OpenCode template ignore policy instead of a Containerfile-only allowlist.
 
 ## Design Constraints
 
 - Config belongs in config files, not in scripts or shell libraries.
 - The host base path is rooted at `${HOME}`.
 - The host workspace dirname is `hermes-agent-general`.
+- The container Hermes data path is `/opt/data`, matching the official image.
 - The container workspace path is `/workspace/general`.
+- Containers use `--userns keep-id`; root-launched wrappers repair mounted host path ownership before container startup.
+- Setup and state bootstrapping stay delegated to the inherited upstream Hermes entrypoint.
 - Scripts should stay small and defer shared behavior to `lib/shell/shared/common.sh`.
 - Startup failures should expose enough container state and recent logs to diagnose dashboard boot problems directly from wrapper output.
 - Test helpers stay in the test tree under `tests/agent/shared/` so the repo keeps a consistent 3-level path shape.
