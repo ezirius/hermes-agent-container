@@ -1,5 +1,7 @@
 # Config-Driven Base Images Implementation Plan
 
+> Historical note: this plan is retained for context and does not describe the current Hermes runtime architecture. Current behavior derives from the official upstream Hermes Agent image and is documented in `docs/usage/shared/architecture.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Move the pinned Node and Ubuntu base image references into the shared repo config so the build stays reviewable, pinned, and configurable from one place.

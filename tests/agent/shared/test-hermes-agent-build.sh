@@ -50,7 +50,7 @@ list_real_smoke_images() {
   done | sort -u >"$output_path"
 }
 
-# This optional smoke case builds the real image and proves the setup-safe entrypoint stays alive.
+# This optional smoke case builds the real image and proves the inherited dashboard startup stays alive.
 run_real_image_smoke_check() {
   local before_images="$TMP_DIR/real-images.before"
   local after_images="$TMP_DIR/real-images.after"
@@ -143,13 +143,17 @@ cp "$CONFIG_PATH" "$CONFIG_BACKUP"
 FAKE_BIN="$TMP_DIR/fake-bin"
 mkdir -p "$FAKE_BIN"
 
-# This fake Podman records the build command, exposes before/after dangling-image snapshots, and writes a stable fake image id to the requested iidfile.
+# This fake Podman records the build, image-id lookup, retag, and cleanup commands without using a real image store.
 cat >"$FAKE_BIN/podman" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$HERMES_TEST_PODMAN_LOG"
 
-if [[ "${1:-}" == 'images' ]]; then
+if [[ "${1:-}" == 'image' && "${2:-}" == 'inspect' && "${3:-}" == '--format' ]]; then
+  printf 'sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890\n'
+elif [[ "${1:-}" == 'tag' ]]; then
+  exit 0
+elif [[ "${1:-}" == 'images' ]]; then
   case "$*" in
     *'--filter dangling=true --format {{.ID}}'*)
       phase_file="${HERMES_TEST_PODMAN_IMAGES_PHASE_FILE:-}"
@@ -201,12 +205,9 @@ elif [[ "${1:-}" == 'build' ]]; then
     esac
   done
 
-  if [[ -z "$iidfile_path" ]]; then
-    printf 'expected build to pass --iidfile\n' >&2
-    exit 1
+  if [[ -n "$iidfile_path" ]]; then
+    printf 'new-image-id\n' >"$iidfile_path"
   fi
-
-  printf 'new-image-id\n' >"$iidfile_path"
 fi
 EOF
 
@@ -241,14 +242,32 @@ case "$1 $2 ${3:-}" in
   'branch --show-current ')
     printf '%s\n' "${HERMES_TEST_GIT_BRANCH:-main}"
     ;;
+  'symbolic-ref --quiet --short')
+    case "${HERMES_TEST_GIT_MODE:-clean}" in
+      clean|dirty|no-commit|main-origin-synced|main-origin-ahead|main-origin-behind|main-origin-diverged|main-no-upstream|main-wrong-head|broken-worktree)
+        printf 'main\n'
+        ;;
+      local-only|feature-upstream)
+        printf 'feature-work\n'
+        ;;
+      *)
+        printf '%s\n' "${HERMES_TEST_GIT_BRANCH:-main}"
+        ;;
+    esac
+    ;;
   'rev-parse --abbrev-ref --symbolic-full-name')
     if [[ "${4:-}" != '@{upstream}' ]]; then
       printf 'unexpected git invocation: %s\n' "$*" >&2
       exit 1
     fi
 
-    if [[ "${HERMES_TEST_GIT_UPSTREAM_STATE:-configured}" == "missing" ]]; then
+    if [[ "${HERMES_TEST_GIT_UPSTREAM_STATE:-configured}" == "missing" || "${HERMES_TEST_GIT_MODE:-clean}" == 'local-only' || "${HERMES_TEST_GIT_MODE:-clean}" == 'main-no-upstream' ]]; then
       exit 1
+    fi
+
+    if [[ "${HERMES_TEST_GIT_MODE:-clean}" == 'feature-upstream' ]]; then
+      printf 'origin/feature-work\n'
+      exit 0
     fi
 
     printf '%s\n' "${HERMES_TEST_GIT_UPSTREAM_NAME:-origin/main}"
@@ -259,6 +278,26 @@ case "$1 $2 ${3:-}" in
     else
       printf '0\n'
     fi
+    ;;
+  'rev-list --left-right --count')
+    case "${HERMES_TEST_GIT_MODE:-clean}" in
+      clean|main-origin-synced|main-wrong-head)
+        printf '0\t0\n'
+        ;;
+      main-origin-ahead)
+        printf '1\t0\n'
+        ;;
+      main-origin-behind)
+        printf '0\t1\n'
+        ;;
+      main-origin-diverged)
+        printf '2\t3\n'
+        ;;
+      *)
+        printf 'unexpected rev-list mode: %s\n' "${HERMES_TEST_GIT_MODE:-clean}" >&2
+        exit 1
+        ;;
+    esac
     ;;
   'update-index -q --refresh')
     ;;
@@ -284,13 +323,53 @@ printf 'portable date helper required\n' >&2
 exit 1
 EOF
 
-chmod +x "$FAKE_BIN/podman" "$FAKE_BIN/git" "$FAKE_BIN/date"
+# This fake curl lets the test choose upstream release lookup results without network access.
+cat >"$FAKE_BIN/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ -n "${HERMES_TEST_CURL_LOG:-}" ]]; then
+  printf '%s\n' "$*" >>"$HERMES_TEST_CURL_LOG"
+fi
+
+case "$*" in
+  *'--connect-timeout 2 --max-time 5'*) ;;
+  *)
+    printf 'curl missing bounded timeout arguments: %s\n' "$*" >&2
+    exit 2
+    ;;
+esac
+
+case "${HERMES_TEST_LATEST_HERMES_VERSION:-same}" in
+  same)
+    printf '{"tag_name":"v2026.4.16"}\n'
+    ;;
+  newer)
+    printf '{"tag_name":"v2026.4.17"}\n'
+    ;;
+  older)
+    printf '{"tag_name":"v2026.4.15"}\n'
+    ;;
+  empty)
+    printf '{}\n'
+    ;;
+  fail)
+    exit 7
+    ;;
+  *)
+    printf '{"tag_name":"v%s"}\n' "$HERMES_TEST_LATEST_HERMES_VERSION"
+    ;;
+esac
+EOF
+
+chmod +x "$FAKE_BIN/podman" "$FAKE_BIN/git" "$FAKE_BIN/date" "$FAKE_BIN/curl"
 
 # This test config keeps the build inputs small and predictable.
 cat >"$CONFIG_PATH" <<'EOF'
 # Hermes Agent runtime and build configuration.
 HERMES_AGENT_IMAGE_BASENAME="hermes-agent"
 HERMES_AGENT_UPSTREAM_IMAGE="docker.io/nousresearch/hermes-agent"
+HERMES_AGENT_TARGET_ARCH="arm64"
 HERMES_AGENT_UID="1000"
 HERMES_AGENT_GID="1000"
 HERMES_AGENT_VERSION="0.10.0"
@@ -298,7 +377,6 @@ HERMES_AGENT_RELEASE_TAG="v2026.4.16"
 HERMES_AGENT_DASHBOARD_PORT="9234"
 HERMES_AGENT_CHAT_COMMAND="hermes"
 HERMES_AGENT_SHELL_COMMAND="nu"
-HERMES_AGENT_OPEN_COMMAND="open"
 HERMES_AGENT_BASE_PATH="${HOME}/tmp/hermes-agent"
 HERMES_AGENT_WORKSPACES="alpha:100 beta:200"
 HERMES_AGENT_CONTAINER_HOME="/opt/data"
@@ -313,41 +391,59 @@ source "$CONFIG_PATH"
 # These logs capture the fake command calls so the test can check behavior.
 PODMAN_LOG="$TMP_DIR/podman.log"
 GIT_LOG="$TMP_DIR/git.log"
+CURL_LOG="$TMP_DIR/curl.log"
 BUILD_STDOUT="$TMP_DIR/build.stdout"
+BUILD_STDERR="$TMP_DIR/build.stderr"
 PODMAN_IMAGES_PHASE_FILE="$TMP_DIR/podman-images.phase"
 printf 'before\n' >"$PODMAN_IMAGES_PHASE_FILE"
 
 # This clean case should build and should check commit state before building.
-PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_PODMAN_IMAGES_PHASE_FILE="$PODMAN_IMAGES_PHASE_FILE" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="clean" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >"$BUILD_STDOUT"
+PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_PODMAN_IMAGES_PHASE_FILE="$PODMAN_IMAGES_PHASE_FILE" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" HERMES_TEST_GIT_MODE="clean" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >"$BUILD_STDOUT" 2>"$BUILD_STDERR"
 
-# These checks prove the build used saved config values and asked git about checkout state.
-assert_file_contains 'Image ID: new-image-id' "$BUILD_STDOUT" 'build should print the image id with a label'
-if grep -Fxq -- 'new-image-id' "$BUILD_STDOUT"; then
-  fail 'build should not print the raw image id on its own line'
+# These checks prove the build used saved config values, retagged by image id, and asked git about checkout state.
+built_image_line="$(grep '^Built image:' "$BUILD_STDOUT" || true)"
+if [[ -z "$built_image_line" ]]; then
+  fail 'build should print the final image name with a Built image label'
 fi
-assert_file_contains 'rmi new-dangling-id' "$PODMAN_LOG" 'build should remove the exact new dangling builder image created by this build'
+built_image_name="${built_image_line#Built image: }"
+expected_image_regex='^hermes-agent-0\.10\.0-[0-9]{8}-[0-9]{6}-[0-9a-f]{12}$'
+if [[ ! "$built_image_name" =~ $expected_image_regex ]]; then
+  fail 'build should print the version, timestamp, and 12-character image id in the built image name'
+fi
+assert_file_contains 'image inspect --format {{.Id}} hermes-agent-0.10.0-' "$PODMAN_LOG" 'build should inspect the temporary image id after building'
+assert_file_contains 'api.github.com/repos/NousResearch/hermes-agent/releases/latest' "$CURL_LOG" 'build should check the latest upstream Hermes Agent release before build work'
+assert_file_not_contains 'newer Hermes Agent version available' "$BUILD_STDERR" 'build should not warn when the upstream release matches the pinned release tag'
+assert_file_contains 'tag hermes-agent-0.10.0-' "$PODMAN_LOG" 'build should retag the temporary image into the final image name'
+assert_file_contains 'rmi hermes-agent-0.10.0-' "$PODMAN_LOG" 'build should remove the temporary image tag after retagging'
+assert_file_not_contains 'Image ID:' "$BUILD_STDOUT" 'build should not print the old iidfile label'
+assert_file_not_contains '--iidfile' "$PODMAN_LOG" 'build should not use iidfile naming once final names include the image id'
+assert_file_not_contains 'rmi new-dangling-id' "$PODMAN_LOG" 'build should not remove dangling builder images under the temporary-tag flow'
 assert_file_not_contains 'rmi old-dangling-id' "$PODMAN_LOG" 'build should not remove pre-existing dangling images'
-assert_file_not_contains 'rmi new-image-id' "$PODMAN_LOG" 'build should not remove the final tagged runtime image'
 assert_file_not_contains 'image prune' "$PODMAN_LOG" 'build should not run a global image prune'
 
-# This multi-dangling case should refuse to guess which new dangling image belongs to this build.
-PODMAN_LOG_MULTI="$TMP_DIR/podman-multi.log"
-BUILD_STDOUT_MULTI="$TMP_DIR/build-multi.stdout"
-printf 'before\n' >"$PODMAN_IMAGES_PHASE_FILE"
-PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG_MULTI" HERMES_TEST_PODMAN_IMAGES_PHASE_FILE="$PODMAN_IMAGES_PHASE_FILE" HERMES_TEST_PODMAN_IMAGES_PHASE_AFTER='multi-after' HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="clean" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >"$BUILD_STDOUT_MULTI"
-assert_file_not_contains 'rmi new-dangling-id' "$PODMAN_LOG_MULTI" 'build should not remove a dangling image when more than one new dangling image appears during this build window'
-assert_file_not_contains 'rmi other-new-dangling-id' "$PODMAN_LOG_MULTI" 'build should not guess between multiple new dangling images'
+: >"$PODMAN_LOG"
+: >"$CURL_LOG"
+PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_LATEST_HERMES_VERSION='newer' HERMES_TEST_GIT_MODE="clean" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >"$TMP_DIR/build-newer.stdout" 2>"$TMP_DIR/build-newer.stderr"
+assert_file_contains 'warning: newer Hermes Agent version available (2026.4.17); continuing with pinned release v2026.4.16' "$TMP_DIR/build-newer.stderr" 'build should warn when upstream has a newer Hermes Agent release'
+assert_file_contains 'build -' "$PODMAN_LOG" 'build should continue after a newer-version warning'
+
+: >"$PODMAN_LOG"
+: >"$CURL_LOG"
+PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_LATEST_HERMES_VERSION='fail' HERMES_TEST_GIT_MODE="clean" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >"$TMP_DIR/build-curl-fail.stdout" 2>"$TMP_DIR/build-curl-fail.stderr"
+assert_file_not_contains 'newer Hermes Agent version available' "$TMP_DIR/build-curl-fail.stderr" 'build should not warn when the latest release lookup fails'
+assert_file_contains 'build -' "$PODMAN_LOG" 'build should continue when the latest release lookup fails'
+assert_file_contains '--arch arm64' "$PODMAN_LOG" 'build should pass the configured target architecture to Podman'
 assert_file_contains '--build-arg HERMES_AGENT_UPSTREAM_IMAGE=docker.io/nousresearch/hermes-agent' "$PODMAN_LOG" 'build should pass the official upstream image from config'
 assert_file_contains '--build-arg HERMES_AGENT_RELEASE_TAG=v2026.4.16' "$PODMAN_LOG" 'build should pass release tag from config'
-assert_file_contains '--iidfile' "$PODMAN_LOG" 'build should request an iidfile so podman output can keep streaming normally'
+assert_file_contains '--build-arg HERMES_AGENT_CONTAINER_WORKSPACE=/workspace/general' "$PODMAN_LOG" 'build should pass the configured image working directory into the Containerfile'
 assert_file_contains "-C $ROOT rev-parse --verify HEAD" "$GIT_LOG" 'build should check commit state for the repo root'
 assert_file_contains "-C $ROOT update-index -q --refresh" "$GIT_LOG" 'build should refresh the index before checking cleanliness'
 assert_file_contains "-C $ROOT diff --numstat" "$GIT_LOG" 'build should check unstaged content changes for the repo root'
 assert_file_contains "-C $ROOT diff --cached --numstat" "$GIT_LOG" 'build should check staged content changes for the repo root'
 assert_file_contains "-C $ROOT ls-files --others --exclude-standard" "$GIT_LOG" 'build should check meaningful untracked files for the repo root'
-assert_file_contains "-C $ROOT branch --show-current" "$GIT_LOG" 'build should check the current branch before enforcing push policy'
+assert_file_contains "-C $ROOT symbolic-ref --quiet --short HEAD" "$GIT_LOG" 'build should check the current branch before enforcing build policy'
 assert_file_contains "-C $ROOT rev-parse --abbrev-ref --symbolic-full-name @{upstream}" "$GIT_LOG" 'build should look up the upstream branch when building from main'
-assert_file_contains "-C $ROOT rev-list --count @{upstream}..HEAD" "$GIT_LOG" 'build should check whether local main is ahead of its upstream'
+assert_file_contains "-C $ROOT rev-list --left-right --count HEAD...@{upstream}" "$GIT_LOG" 'build should check ahead and behind counts when main tracks origin/main'
 # These checks lock in the official-image customization contract.
 containerfile_path="$ROOT/config/containers/shared/Containerfile"
 containerfile_text="$(<"$containerfile_path")"
@@ -372,6 +468,16 @@ assert_file_contains 'FROM ${HERMES_AGENT_UPSTREAM_IMAGE}:${HERMES_AGENT_RELEASE
 assert_file_contains 'apt-get update && apt-get install -y --no-install-recommends' "$ROOT/config/containers/shared/Containerfile" 'container build should use apt to install the local customization packages'
 assert_file_contains 'nushell' "$ROOT/config/containers/shared/Containerfile" 'container build should install nushell for the default workspace shell'
 assert_file_contains 'rm -rf /var/lib/apt/lists/*' "$ROOT/config/containers/shared/Containerfile" 'container build should clean apt lists after installing nushell'
+assert_file_contains 'USER root' "$ROOT/config/containers/shared/Containerfile" 'container build should preserve upstream root entrypoint behavior'
+assert_file_contains 'WORKDIR ${HERMES_AGENT_CONTAINER_WORKSPACE}' "$ROOT/config/containers/shared/Containerfile" 'container build should set the configured workspace as the image workdir'
+
+if grep -Fq 'ENTRYPOINT' "$ROOT/config/containers/shared/Containerfile"; then
+  fail 'container build should inherit the official upstream entrypoint'
+fi
+
+assert_file_contains '.worktrees/' "$ROOT/.dockerignore" 'dockerignore should ignore local worktree directories like the OpenCode template'
+assert_file_contains 'dist/' "$ROOT/.dockerignore" 'dockerignore should ignore local build output like the OpenCode template'
+assert_file_not_contains '!config/containers/shared/Containerfile' "$ROOT/.dockerignore" 'dockerignore should not use the old Containerfile-only allowlist'
 
 if grep -Eq 'npm ci|npm run build|uv pip install|curl -fsSL "https://github.com/NousResearch/hermes-agent' "$ROOT/config/containers/shared/Containerfile"; then
   fail 'container build should not rebuild Hermes or the upstream web frontend from source'
@@ -386,7 +492,7 @@ if grep -Fq 'COPY skills/' "$ROOT/config/containers/shared/Containerfile"; then
 fi
 
 if grep -Fq 'CMD ["bash", "-lc", "exec hermes dashboard --host 0.0.0.0 --port \"$HERMES_AGENT_DASHBOARD_PORT\" --no-open --insecure"]' "$ROOT/config/containers/shared/Containerfile"; then
-  fail 'runtime image should not keep the old dashboard-only default command once the entrypoint manages startup'
+  fail 'runtime image should not keep the old dashboard-only default command when it inherits upstream startup behavior'
 fi
 
 # This dirty case should stop the build before Podman is used.
@@ -404,27 +510,36 @@ fi
 # This checks that the no-commit failure message stays clear.
 assert_file_contains 'Build requires the current checkout to have at least one commit.' "$TMP_DIR/no-commit.stderr" 'build should explain missing-commit failures'
 
-# This main-branch case should stop the build when local main is ahead of upstream.
-if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="clean" HERMES_TEST_GIT_BRANCH="main" HERMES_TEST_GIT_UPSTREAM_STATE="configured" HERMES_TEST_GIT_AHEAD_STATE="ahead" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >/dev/null 2>"$TMP_DIR/main-ahead.stderr"; then
-  fail 'build should fail when local main is ahead of its upstream'
+# This main-branch case should stop the build when local main is ahead of origin/main.
+if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="main-origin-ahead" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >/dev/null 2>"$TMP_DIR/main-ahead.stderr"; then
+  fail 'build should fail when local main is ahead of origin/main'
 fi
 
-assert_file_contains 'Build from main requires all commits to be pushed to the remote first.' "$TMP_DIR/main-ahead.stderr" 'build should refuse to run from main when local commits are not pushed'
+assert_file_contains 'Build requires main to be pushed and in sync with origin/main.' "$TMP_DIR/main-ahead.stderr" 'build should refuse to run from main when local commits are not pushed'
+
+# This main-branch case should stop the build when local main is behind origin/main.
+if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="main-origin-behind" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >/dev/null 2>"$TMP_DIR/main-behind.stderr"; then
+  fail 'build should fail when local main is behind origin/main'
+fi
+
+assert_file_contains 'Build requires main to be pushed and in sync with origin/main.' "$TMP_DIR/main-behind.stderr" 'build should refuse to run from main when local commits are missing'
 
 # This main-branch case should stop the build when no upstream is configured.
-if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="clean" HERMES_TEST_GIT_BRANCH="main" HERMES_TEST_GIT_UPSTREAM_STATE="missing" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >/dev/null 2>"$TMP_DIR/main-no-upstream.stderr"; then
+if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="main-no-upstream" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >/dev/null 2>"$TMP_DIR/main-no-upstream.stderr"; then
   fail 'build should fail when main has no upstream configured'
 fi
 
-assert_file_contains 'Build from main requires a configured upstream remote.' "$TMP_DIR/main-no-upstream.stderr" 'build should refuse to run from main when no upstream remote is configured'
+assert_file_contains 'Build requires main to track origin/main.' "$TMP_DIR/main-no-upstream.stderr" 'build should refuse to run from main when no upstream remote is configured'
 
 # This non-main case should allow a clean committed checkout even with no upstream configured.
-PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="clean" HERMES_TEST_GIT_BRANCH="feature/test" HERMES_TEST_GIT_UPSTREAM_STATE="missing" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >"$TMP_DIR/non-main-no-upstream.stdout"
-assert_file_contains 'Image ID: new-image-id' "$TMP_DIR/non-main-no-upstream.stdout" 'build should allow a clean non-main branch even when no upstream is configured'
+PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="local-only" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >"$TMP_DIR/non-main-no-upstream.stdout"
+assert_file_contains 'Built image: hermes-agent-0.10.0-' "$TMP_DIR/non-main-no-upstream.stdout" 'build should allow a clean local-only non-main branch'
 
-# This non-main case should allow a clean committed checkout even when ahead of upstream.
-PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="clean" HERMES_TEST_GIT_BRANCH="feature/test" HERMES_TEST_GIT_UPSTREAM_STATE="configured" HERMES_TEST_GIT_AHEAD_STATE="ahead" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >"$TMP_DIR/non-main-ahead.stdout"
-assert_file_contains 'Image ID: new-image-id' "$TMP_DIR/non-main-ahead.stdout" 'build should allow a clean non-main branch even when it is ahead of upstream'
+# This non-main case should reject remote-tracking feature branches.
+if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="feature-upstream" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >/dev/null 2>"$TMP_DIR/non-main-upstream.stderr"; then
+  fail 'build should reject non-main branches with upstreams'
+fi
+assert_file_contains 'Build only allows remote-tracking builds from main. Use a clean committed local worktree branch or main tracking origin/main.' "$TMP_DIR/non-main-upstream.stderr" 'build should explain non-main upstream branch failures'
 
 # This broken-worktree case should explain cross-namespace gitdir failures clearly for a managed worktree path.
 mkdir -p "$TMP_DIR/.worktrees/fix-matrix-device-backport-2"
@@ -436,13 +551,13 @@ assert_file_contains 'This checkout is not a usable git worktree in this environ
 assert_file_contains 'Recreate or relink this worktree using relative gitdir paths before building.' "$TMP_DIR/broken-worktree.stderr" 'build helper should tell the user how to recover from a broken worktree link'
 assert_file_not_contains 'Build requires the current checkout to have at least one commit.' "$TMP_DIR/broken-worktree.stderr" 'build helper should not misclassify a broken worktree as a no-commit checkout'
 
-# This real file check proves the helper rewrites absolute worktree gitdir links to relative paths.
+# This real file check proves the build helper does not rewrite worktree gitdir links.
 WORKTREE_TMP="$TMP_DIR/worktree-paths"
 mkdir -p "$WORKTREE_TMP/.git/worktrees/feature" "$WORKTREE_TMP/.worktrees/feature"
 printf 'gitdir: /workspace/project/.git/worktrees/feature\n' >"$WORKTREE_TMP/.worktrees/feature/.git"
 
 rewritten_gitfile="$(bash -c 'set -euo pipefail; source "$1"; hermes_repair_relative_worktree_gitdir "$2"; cat "$2/.git"' _ "$ROOT/lib/shell/shared/common.sh" "$WORKTREE_TMP/.worktrees/feature")"
-assert_equals 'gitdir: ../../.git/worktrees/feature' "$rewritten_gitfile" 'build helper should rewrite managed worktree gitdir links to relative paths'
+assert_equals 'gitdir: /workspace/project/.git/worktrees/feature' "$rewritten_gitfile" 'build helper should leave managed worktree gitdir links untouched'
 
 printf 'gitdir: /foreign/repo/.git/worktrees/feature\n' >"$WORKTREE_TMP/.worktrees/feature/.git"
 

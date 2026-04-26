@@ -160,14 +160,20 @@ Current stable paths in this repo are:
 - Shell tests live in `tests/agent/shared/`.
 - The shell tests mutate the shared config file during execution, so they must be run sequentially.
 - `scripts/agent/shared/hermes-agent-build` must only build from a clean, committed checkout.
+- `scripts/agent/shared/hermes-agent-build` requires main to track `origin/main` and prints `Build requires main to be pushed and in sync with origin/main` when ahead, behind, or diverged.
+- Non-main remote-tracking branches must not be used for builds; use a clean committed local worktree branch or main tracking `origin/main`.
+- Local image names must include the 12-character image-id suffix after the timestamp.
+- Hermes container and pod names follow the OpenCode-derived `<image-name>-<workspace>` order.
 - Meaningful tracked changes, meaningful untracked files, and executable-bit changes all count as dirty for build safety.
 - Harmless host junk such as `.DS_Store` should not count as a dirty checkout by itself.
-- `scripts/agent/shared/hermes-agent-run` must only remove older workspace pods and containers after replacement gateway and dashboard containers are proven healthy.
+- `scripts/agent/shared/hermes-agent-run` must only remove older workspace pods and containers after the replacement container is running.
+- `scripts/agent/shared/hermes-agent-run` must use `--userns keep-id` for non-root runtime containers and repair mounted host path ownership while skipping rootless `keep-id` mode when launched as root.
+- `scripts/agent/shared/hermes-agent-run` delegates first-run setup and state bootstrapping to the upstream Hermes entrypoint.
 - Shared interactive Podman exec behavior lives in `lib/shell/shared/common.sh` and must preserve non-TTY stdin behavior as well as interactive-host behavior.
 - `tests/agent/shared/test-hermes-agent-layout.sh` is the layout guard for the normalized repository structure and key headline comments.
 
 ## Current Implementation Notes
 
-- Container lookup and stale cleanup are currently version-scoped in the shared shell helpers.
+- Container lookup and stale cleanup are workspace-scoped across Hermes image versions in the shared shell helpers.
 - Version-bump work should review `lib/shell/shared/common.sh`, `scripts/agent/shared/hermes-agent-run`, and `scripts/agent/shared/hermes-agent-shell` carefully so older workspace containers do not become unmanaged or invisible by accident.
 - Treat these notes as current implementation constraints, not as the ideal long-term design.

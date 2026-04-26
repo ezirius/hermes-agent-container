@@ -40,17 +40,34 @@ case "$1" in
       present)
         case "$*" in
           *beta*)
-            printf 'hermes-agent-beta-gateway-0.10.0-20260417-120000-123\n'
+            printf 'hermes-agent-0.10.0-20260417-120000-abcdef123456-beta\n'
             ;;
           *)
-            printf 'hermes-agent-alpha-gateway-0.10.0-20260417-120000-123\n'
+            printf 'hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha\n'
             ;;
         esac
         ;;
       multiple)
-        printf 'hermes-agent-beta-gateway-0.10.0-20260417-120000-123\n'
-        printf 'hermes-agent-beta-gateway-0.10.0-20260417-120500-456\n'
+        printf 'hermes-agent-0.10.0-20260417-120500-bcdef1234567-beta\n'
+        printf 'hermes-agent-0.10.0-20260417-120000-abcdef123456-beta\n'
         ;;
+      collision)
+        printf 'hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-prod\n'
+        printf 'hermes-agent-0.10.0-20260417-120500-bcdef1234567-alpha\n'
+        ;;
+      mount-mismatch)
+        printf 'hermes-agent-0.10.0-20260417-120500-bcdef1234567-beta\n'
+        printf 'hermes-agent-0.10.0-20260417-120000-abcdef123456-beta\n'
+        ;;
+    esac
+    ;;
+  inspect)
+    container_name="${*: -1}"
+    case "${HERMES_TEST_CONTAINER_MODE:-present}:$container_name" in
+      mount-mismatch:*120500*) printf '%s : /workspace/general\n' "${HOME}/tmp/hermes-agent/not-beta/hermes-agent-general" ;;
+      *:*-alpha-prod) printf '%s : /workspace/general\n' "${HOME}/tmp/hermes-agent/alpha-prod/hermes-agent-general" ;;
+      *:*-alpha) printf '%s : /workspace/general\n' "${HOME}/tmp/hermes-agent/alpha/hermes-agent-general" ;;
+      *:*-beta) printf '%s : /workspace/general\n' "${HOME}/tmp/hermes-agent/beta/hermes-agent-general" ;;
     esac
     ;;
   exec)
@@ -71,7 +88,6 @@ HERMES_AGENT_RELEASE_TAG="v2026.4.16"
 HERMES_AGENT_DASHBOARD_PORT="9234"
 HERMES_AGENT_CHAT_COMMAND="hermes"
 HERMES_AGENT_SHELL_COMMAND="nu"
-HERMES_AGENT_OPEN_COMMAND="open"
 HERMES_AGENT_BASE_PATH="${HOME}/tmp/hermes-agent"
 HERMES_AGENT_WORKSPACES="alpha:100 beta:200"
 HERMES_AGENT_CONTAINER_HOME="/opt/data"
@@ -88,27 +104,27 @@ printf 'beta\n' | PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" ba
 
 # These checks prove the shell command looked up the right container and attached to it.
 assert_file_contains 'Selection:' "$SHELL_STDERR" 'shell should show an explicit selection prompt'
-assert_file_contains '--filter name=^hermes-agent-beta-gateway-' "$PODMAN_LOG" 'shell should filter running gateway containers by chosen workspace'
-assert_file_contains 'exec -i hermes-agent-beta-gateway-0.10.0-20260417-120000-123 nu' "$PODMAN_LOG" 'shell should exec configured nushell command in the gateway container'
+assert_file_contains '--filter name=^hermes-agent-[0-9][0-9.]*-[0-9]{8}-[0-9]{6}-[0-9a-f]{12}-beta$' "$PODMAN_LOG" 'shell should filter running containers by chosen workspace'
+assert_file_contains 'exec -i hermes-agent-0.10.0-20260417-120000-abcdef123456-beta nu' "$PODMAN_LOG" 'shell should exec configured nushell command in the workspace container'
 
 # This checks that one workspace argument skips the picker and still opens nushell.
 : >"$PODMAN_LOG"
 PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha >/dev/null 2>"$SHELL_STDERR"
 
-assert_file_contains 'exec -i hermes-agent-alpha-gateway-0.10.0-20260417-120000-123 nu' "$PODMAN_LOG" 'shell should accept a workspace argument and still open nushell'
+assert_file_contains 'exec -i hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha nu' "$PODMAN_LOG" 'shell should accept a workspace argument and still open nushell'
 assert_file_not_contains 'Selection:' "$SHELL_STDERR" 'shell should not show the picker when a workspace argument is provided'
 
 # This checks that an explicit in-container command passes through unchanged.
 : >"$PODMAN_LOG"
 PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha hermes auth list >/dev/null 2>"$SHELL_STDERR"
 
-assert_file_contains 'exec -i hermes-agent-alpha-gateway-0.10.0-20260417-120000-123 hermes auth list' "$PODMAN_LOG" 'shell should forward an explicit command vector after the workspace name'
+assert_file_contains 'exec -i hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha hermes auth list' "$PODMAN_LOG" 'shell should forward an explicit command vector after the workspace name'
 
 # This checks that a non-Hermes command also passes through unchanged.
 : >"$PODMAN_LOG"
 PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha python -V >/dev/null 2>"$SHELL_STDERR"
 
-assert_file_contains 'exec -i hermes-agent-alpha-gateway-0.10.0-20260417-120000-123 python -V' "$PODMAN_LOG" 'shell should forward non-Hermes commands after the workspace name'
+assert_file_contains 'exec -i hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha python -V' "$PODMAN_LOG" 'shell should forward non-Hermes commands after the workspace name'
 
 # This checks that a typed workspace still has to be one of the configured ones.
 if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" gamma >/dev/null 2>"$TMP_DIR/unconfigured.stderr"; then
@@ -121,7 +137,19 @@ assert_file_contains 'Workspace gamma is not configured.' "$TMP_DIR/unconfigured
 : >"$PODMAN_LOG"
 printf 'beta\n' | PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_CONTAINER_MODE="multiple" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" >/dev/null
 
-assert_file_contains 'exec -i hermes-agent-beta-gateway-0.10.0-20260417-120500-456 nu' "$PODMAN_LOG" 'shell should choose the newest running gateway container when multiple match'
+assert_file_contains 'exec -i hermes-agent-0.10.0-20260417-120500-bcdef1234567-beta nu' "$PODMAN_LOG" 'shell should choose the newest running workspace container when multiple match'
+
+# This checks that shell ignores colliding hyphenated workspace names.
+: >"$PODMAN_LOG"
+PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_CONTAINER_MODE="collision" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha >/dev/null 2>"$SHELL_STDERR"
+
+assert_file_contains 'exec -i hermes-agent-0.10.0-20260417-120500-bcdef1234567-alpha nu' "$PODMAN_LOG" 'shell should ignore alpha-prod when alpha is requested'
+
+# This checks that shell skips matching names with the wrong workspace mount.
+: >"$PODMAN_LOG"
+PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_CONTAINER_MODE="mount-mismatch" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" beta >/dev/null 2>"$SHELL_STDERR"
+
+assert_file_contains 'exec -i hermes-agent-0.10.0-20260417-120000-abcdef123456-beta nu' "$PODMAN_LOG" 'shell should skip running containers whose workspace mount does not match the requested workspace'
 
 # This checks that the script explains the failure when no container exists.
 if printf 'alpha\n' | PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_CONTAINER_MODE="missing" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" >/dev/null 2>"$TMP_DIR/missing.stderr"; then

@@ -4,6 +4,10 @@ ARG HERMES_AGENT_RELEASE_TAG
 
 FROM ${HERMES_AGENT_UPSTREAM_IMAGE}:${HERMES_AGENT_RELEASE_TAG}
 
-# Install only the local shell customization; the official image already provides Hermes and bash.
+ARG HERMES_AGENT_CONTAINER_WORKSPACE
+
+# Install only the local shell customization; upstream starts as root so its entrypoint can drop privileges.
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends nushell && rm -rf /var/lib/apt/lists/*
+
+WORKDIR ${HERMES_AGENT_CONTAINER_WORKSPACE}
