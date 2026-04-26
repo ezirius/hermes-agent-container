@@ -380,6 +380,13 @@ if ROOT="$ROOT" bash -c 'set -euo pipefail; source "$1"; HERMES_AGENT_BASE_PATH=
 fi
 assert_file_contains 'Managed host path parent must not be a symlink:' "$TMP_DIR/symlink-parent.stderr" 'managed path validation should explain parent symlink rejection'
 
+SYMLINK_ROOT="$TMP_DIR/symlink-root"
+SYMLINK_TARGET="$TMP_DIR/symlink-root-target"
+mkdir -p "$SYMLINK_TARGET/alpha"
+ln -s "$SYMLINK_TARGET" "$SYMLINK_ROOT"
+
+ROOT="$ROOT" bash -c 'set -euo pipefail; source "$1"; HERMES_AGENT_BASE_PATH="$2"; hermes_reject_symlinked_managed_path "$(hermes_host_home_dir alpha)"' _ "$ROOT/lib/shell/shared/common.sh" "$SYMLINK_ROOT" || fail 'managed path validation should allow a symlinked configured base path'
+
 # This checks that helper-only callers can resolve workspace offsets without preloading first.
 offset_output="$(ROOT="$ROOT" bash -c 'set -euo pipefail; source "$1"; hermes_workspace_offset alpha' _ "$ROOT/lib/shell/shared/common.sh" 2>"$TMP_DIR/offset.stderr")" || fail 'workspace offset helper should load configured workspaces when needed'
 assert_equals '100' "$offset_output" 'workspace offset helper should resolve configured offsets without explicit preload'
@@ -617,6 +624,10 @@ assert_file_contains 'Unsupported option: --bad' "$TMP_DIR/bad-option.stderr" 'r
 PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" -- alpha >"$RUN_STDOUT" 2>"$RUN_STDERR"
 assert_file_contains 'run -d --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha' "$PODMAN_LOG" 'run should allow -- to end option parsing before the workspace argument'
 
+: >"$PODMAN_LOG"
+PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" 1 >"$RUN_STDOUT" 2>"$RUN_STDERR"
+assert_file_contains 'run -d --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha' "$PODMAN_LOG" 'run should accept numeric workspace arguments as picker indexes'
+
 if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" alpha beta >/dev/null 2>"$TMP_DIR/too-many.stderr"; then
   fail 'run should reject more than one workspace argument'
 fi
@@ -627,5 +638,6 @@ if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_
   fail 'run should reject unconfigured workspace names'
 fi
 assert_file_contains 'Workspace gamma is not configured.' "$TMP_DIR/workspace.stderr" 'run should explain unconfigured workspaces'
+assert_equals '1' "$(grep -Fc 'Workspace gamma is not configured.' "$TMP_DIR/workspace.stderr")" 'run should report unconfigured workspace names once'
 
 printf 'hermes-agent-run behavior checks passed\n'

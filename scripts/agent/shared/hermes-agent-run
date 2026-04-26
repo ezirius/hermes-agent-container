@@ -47,8 +47,7 @@ fi
 
 # This chooses the workspace from the argument when present, otherwise from the picker.
 if [[ $# -eq 1 ]]; then
-  workspace="$1"
-  hermes_validate_workspace_name "$workspace"
+  workspace="$(hermes_resolve_workspace_arg "$1")"
 else
   workspace="$(hermes_pick_workspace)"
 fi

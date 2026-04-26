@@ -530,6 +530,31 @@ hermes_pick_workspace() {
   done
 }
 
+# This resolves a CLI workspace argument as either a picker index or a configured workspace name.
+hermes_resolve_workspace_arg() {
+  local selection="$1"
+  local index
+
+  if [[ "$selection" =~ ^[0-9]+$ ]]; then
+    if (( selection >= 1 && selection <= ${#HERMES_AGENT_WORKSPACE_NAMES[@]} )); then
+      printf '%s\n' "${HERMES_AGENT_WORKSPACE_NAMES[$((selection - 1))]}"
+      return 0
+    fi
+  else
+    hermes_validate_workspace_name "$selection"
+  fi
+
+  for index in "${!HERMES_AGENT_WORKSPACE_NAMES[@]}"; do
+    if [[ "$selection" == "${HERMES_AGENT_WORKSPACE_NAMES[$index]}" ]]; then
+      printf '%s\n' "$selection"
+      return 0
+    fi
+  done
+
+  printf 'Workspace %s is not configured.\n' "$selection" >&2
+  exit 1
+}
+
 # This looks up the saved port offset for one workspace.
 hermes_workspace_offset() {
   local workspace="$1"
@@ -651,6 +676,12 @@ hermes_validate_safe_host_dirnames() {
 hermes_reject_symlinked_managed_path() {
   local path="$1"
   local parent
+  local base_path
+
+  base_path="$(hermes_expand_home_path "$HERMES_AGENT_BASE_PATH")"
+  while [[ "$base_path" != '/' && "$base_path" == */ ]]; do
+    base_path="${base_path%/}"
+  done
 
   if [[ -L "$path" ]]; then
     printf 'Managed host path must not be a symlink: %s\n' "$path" >&2
@@ -658,7 +689,7 @@ hermes_reject_symlinked_managed_path() {
   fi
 
   parent="${path%/*}"
-  while [[ -n "$parent" && "$parent" != '/' ]]; do
+  while [[ -n "$parent" && "$parent" != '/' && "$parent" != "$base_path" ]]; do
     if [[ -L "$parent" ]]; then
       printf 'Managed host path parent must not be a symlink: %s\n' "$parent" >&2
       exit 1
