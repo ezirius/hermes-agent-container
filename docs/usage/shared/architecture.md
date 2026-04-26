@@ -29,6 +29,8 @@ This repo keeps a small wrapper around the official Hermes Agent container with 
 - The container Hermes data path is `/opt/data`, matching the official image.
 - The container workspace path is `/workspace/general`.
 - Containers use `--userns keep-id`; root-launched wrappers repair mounted host path ownership before container startup.
+- The wrapper rejects symlinked managed host paths before root ownership repair.
+- Reused dashboard pods must expose exactly one loopback publish binding.
 - Setup and state bootstrapping stay delegated to the inherited upstream Hermes entrypoint.
 - Scripts should stay small and defer shared behavior to `lib/shell/shared/common.sh`.
 - Startup failures should expose enough container state and recent logs to diagnose dashboard boot problems directly from wrapper output.

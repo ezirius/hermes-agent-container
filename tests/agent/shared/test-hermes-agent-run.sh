@@ -83,6 +83,9 @@ case "$1" in
           pod-inspect-external) printf '{"9234/tcp":[{"HostIp":"0.0.0.0","HostPort":"9334"}]}' ;;
           pod-inspect-wrong) printf '{"9234/tcp":[{"HostIp":"127.0.0.1","HostPort":"9999"}]}' ;;
           pod-inspect-mixed) printf '{"9234/tcp":[{"HostIp":"127.0.0.1","HostPort":"9334"},{"HostIp":"0.0.0.0","HostPort":"9334"}]}' ;;
+          pod-inspect-extra-lan) printf '{"9234/tcp":[{"HostIp":"127.0.0.1","HostPort":"9334"},{"HostIp":"192.168.1.5","HostPort":"9334"}]}' ;;
+          pod-inspect-extra-ipv6) printf '{"9234/tcp":[{"HostIp":"127.0.0.1","HostPort":"9334"},{"HostIp":"::","HostPort":"9334"}]}' ;;
+          pod-inspect-extra-loopback-port) printf '{"9234/tcp":[{"HostIp":"127.0.0.1","HostPort":"9334"},{"HostIp":"127.0.0.1","HostPort":"9999"}]}' ;;
           *) printf '{}' ;;
         esac
         ;;
@@ -102,6 +105,8 @@ case "$1" in
       if [[ "${HERMES_TEST_STALE_MODE:-present}" == 'present' ]]; then
         printf 'old-gateway\nold-dashboard\n'
       elif [[ "${HERMES_TEST_STALE_MODE:-present}" == 'same-name' ]]; then
+        printf 'hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha\n'
+      elif [[ "${HERMES_TEST_STALE_MODE:-present}" == 'same-name-wrong-mount' ]]; then
         printf 'hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha\n'
       elif [[ "${HERMES_TEST_STALE_MODE:-present}" == 'old-version' ]]; then
         printf 'hermes-agent-0.9.9-20260401-010101-aaaaaaaaaaaa-alpha\n'
@@ -146,7 +151,7 @@ case "$1" in
       wrong-loopback) printf '127.0.0.1:9999\n' ;;
       external) printf '0.0.0.0:9334\n' ;;
       missing) ;;
-      pod-inspect-correct|pod-inspect-external|pod-inspect-wrong|pod-inspect-mixed) exit 125 ;;
+      pod-inspect-correct|pod-inspect-external|pod-inspect-wrong|pod-inspect-mixed|pod-inspect-extra-lan|pod-inspect-extra-ipv6|pod-inspect-extra-loopback-port) exit 125 ;;
     esac
     ;;
   inspect)
@@ -161,7 +166,13 @@ case "$1" in
           fi
           ;;
         *-beta) printf '%s : /workspace/general\n' "$HERMES_TEST_BASE_PATH/beta/hermes-agent-general" ;;
-        *) printf '%s : /workspace/general\n' "$HERMES_TEST_BASE_PATH/alpha/hermes-agent-general" ;;
+        *)
+          if [[ "${HERMES_TEST_STALE_MODE:-present}" == 'same-name-wrong-mount' ]]; then
+            printf '%s : /workspace/general\n' "$HERMES_TEST_BASE_PATH/not-alpha/hermes-agent-general"
+          else
+            printf '%s : /workspace/general\n' "$HERMES_TEST_BASE_PATH/alpha/hermes-agent-general"
+          fi
+          ;;
       esac
     else
       printf 'status=running running=true exit_code=0\n'
@@ -334,6 +345,41 @@ if ROOT="$ROOT" bash -c 'set -euo pipefail; source "$1"; HERMES_AGENT_BASE_PATH=
 fi
 assert_file_contains 'HERMES_AGENT_BASE_PATH must not contain parent-directory components.' "$TMP_DIR/parent-base-path.stderr" 'host base path validation should explain parent-directory rejection'
 
+if ROOT="$ROOT" bash -c 'set -euo pipefail; source "$1"; HERMES_AGENT_HOST_HOME_DIRNAME="../escape"; hermes_validate_safe_host_dirnames' _ "$ROOT/lib/shell/shared/common.sh" >/dev/null 2>"$TMP_DIR/bad-home-dirname.stderr"; then
+  fail 'host home dirname validation should reject parent-directory components'
+fi
+assert_file_contains 'HERMES_AGENT_HOST_HOME_DIRNAME must be a single safe directory name.' "$TMP_DIR/bad-home-dirname.stderr" 'host home dirname validation should explain parent-directory rejection'
+
+if ROOT="$ROOT" bash -c 'set -euo pipefail; source "$1"; HERMES_AGENT_HOST_WORKSPACE_DIRNAME="nested/path"; hermes_validate_safe_host_dirnames' _ "$ROOT/lib/shell/shared/common.sh" >/dev/null 2>"$TMP_DIR/bad-workspace-dirname.stderr"; then
+  fail 'host workspace dirname validation should reject slashes'
+fi
+assert_file_contains 'HERMES_AGENT_HOST_WORKSPACE_DIRNAME must be a single safe directory name.' "$TMP_DIR/bad-workspace-dirname.stderr" 'host workspace dirname validation should explain slash rejection'
+
+SYMLINK_BASE="$TMP_DIR/symlink-base"
+mkdir -p "$SYMLINK_BASE/alpha" "$TMP_DIR/symlink-target"
+ln -s "$TMP_DIR/symlink-target" "$SYMLINK_BASE/alpha/hermes-agent-home"
+
+if ROOT="$ROOT" bash -c 'set -euo pipefail; source "$1"; HERMES_AGENT_BASE_PATH="$2"; hermes_reject_symlinked_managed_path "$(hermes_host_home_dir alpha)"' _ "$ROOT/lib/shell/shared/common.sh" "$SYMLINK_BASE" >/dev/null 2>"$TMP_DIR/symlink-home.stderr"; then
+  fail 'managed path validation should reject symlinked host home paths'
+fi
+assert_file_contains 'Managed host path must not be a symlink:' "$TMP_DIR/symlink-home.stderr" 'managed path validation should explain symlink rejection'
+
+rm -f "$SYMLINK_BASE/alpha/hermes-agent-home"
+ln -s "$TMP_DIR/symlink-target" "$SYMLINK_BASE/alpha/hermes-agent-general"
+
+if ROOT="$ROOT" bash -c 'set -euo pipefail; source "$1"; HERMES_AGENT_BASE_PATH="$2"; hermes_reject_symlinked_managed_path "$(hermes_host_workspace_dir alpha)"' _ "$ROOT/lib/shell/shared/common.sh" "$SYMLINK_BASE" >/dev/null 2>"$TMP_DIR/symlink-workspace.stderr"; then
+  fail 'managed path validation should reject symlinked host workspace paths'
+fi
+assert_file_contains 'Managed host path must not be a symlink:' "$TMP_DIR/symlink-workspace.stderr" 'managed path validation should explain workspace symlink rejection'
+
+rm -rf "$SYMLINK_BASE/alpha"
+ln -s "$TMP_DIR/symlink-target" "$SYMLINK_BASE/alpha"
+
+if ROOT="$ROOT" bash -c 'set -euo pipefail; source "$1"; HERMES_AGENT_BASE_PATH="$2"; hermes_reject_symlinked_managed_path "$(hermes_host_home_dir alpha)"' _ "$ROOT/lib/shell/shared/common.sh" "$SYMLINK_BASE" >/dev/null 2>"$TMP_DIR/symlink-parent.stderr"; then
+  fail 'managed path validation should reject symlinked workspace parent paths'
+fi
+assert_file_contains 'Managed host path parent must not be a symlink:' "$TMP_DIR/symlink-parent.stderr" 'managed path validation should explain parent symlink rejection'
+
 # This checks that helper-only callers can resolve workspace offsets without preloading first.
 offset_output="$(ROOT="$ROOT" bash -c 'set -euo pipefail; source "$1"; hermes_workspace_offset alpha' _ "$ROOT/lib/shell/shared/common.sh" 2>"$TMP_DIR/offset.stderr")" || fail 'workspace offset helper should load configured workspaces when needed'
 assert_equals '100' "$offset_output" 'workspace offset helper should resolve configured offsets without explicit preload'
@@ -434,6 +480,12 @@ assert_file_not_contains '--userns keep-id' "$PODMAN_LOG" 'run should not pass r
 PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_STALE_MODE='same-name' HERMES_TEST_POD_MODE='present' HERMES_TEST_STALE_POD_MODE='missing' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" alpha >"$RUN_STDOUT" 2>"$RUN_STDERR"
 assert_file_not_contains 'http://127.0.0.1:9334' "$OPEN_LOG" 'run should not reopen the browser when both matching pods and containers are reused unchanged'
 
+# This checks that exact-name containers with stale mounts are removed before recreation.
+: >"$PODMAN_LOG"
+PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_STALE_MODE='same-name-wrong-mount' HERMES_TEST_POD_MODE='present' HERMES_TEST_STALE_POD_MODE='missing' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" alpha >"$RUN_STDOUT" 2>"$RUN_STDERR"
+assert_file_contains 'rm -f hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha' "$PODMAN_LOG" 'run should remove exact-name containers whose workspace mount no longer matches'
+assert_file_contains 'run -d --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha' "$PODMAN_LOG" 'run should recreate exact-name wrong-mount containers after removal'
+
 # This checks that a reused exact pod with the wrong loopback port is replaced before runtime creation.
 : >"$PODMAN_LOG"
 PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_STALE_MODE='missing' HERMES_TEST_POD_MODE='present' HERMES_TEST_STALE_POD_MODE='missing' HERMES_TEST_PORT_MODE='wrong-loopback' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" alpha >"$RUN_STDOUT" 2>"$RUN_STDERR"
@@ -451,6 +503,19 @@ assert_file_not_contains 'pod rm -f hermes-agent-0.10.0-20260417-120000-abcdef12
 PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_STALE_MODE='same-name' HERMES_TEST_POD_MODE='present' HERMES_TEST_STALE_POD_MODE='missing' HERMES_TEST_PORT_MODE='pod-inspect-mixed' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" alpha >"$RUN_STDOUT" 2>"$RUN_STDERR"
 assert_file_contains 'rm -f hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha' "$PODMAN_LOG" 'run should remove exact containers when pod inspect shows extra unsafe dashboard bindings'
 assert_file_contains 'pod rm -f hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha' "$PODMAN_LOG" 'run should remove exact pods when pod inspect shows extra unsafe dashboard bindings'
+
+: >"$PODMAN_LOG"
+PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_STALE_MODE='same-name' HERMES_TEST_POD_MODE='present' HERMES_TEST_STALE_POD_MODE='missing' HERMES_TEST_PORT_MODE='pod-inspect-extra-lan' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" alpha >"$RUN_STDOUT" 2>"$RUN_STDERR"
+assert_file_contains 'rm -f hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha' "$PODMAN_LOG" 'run should remove exact containers when pod inspect shows an extra LAN dashboard binding'
+assert_file_contains 'pod rm -f hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha' "$PODMAN_LOG" 'run should remove exact pods when pod inspect shows an extra LAN dashboard binding'
+
+: >"$PODMAN_LOG"
+PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_STALE_MODE='same-name' HERMES_TEST_POD_MODE='present' HERMES_TEST_STALE_POD_MODE='missing' HERMES_TEST_PORT_MODE='pod-inspect-extra-ipv6' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" alpha >"$RUN_STDOUT" 2>"$RUN_STDERR"
+assert_file_contains 'pod rm -f hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha' "$PODMAN_LOG" 'run should remove exact pods when pod inspect shows an extra IPv6 dashboard binding'
+
+: >"$PODMAN_LOG"
+PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_STALE_MODE='same-name' HERMES_TEST_POD_MODE='present' HERMES_TEST_STALE_POD_MODE='missing' HERMES_TEST_PORT_MODE='pod-inspect-extra-loopback-port' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" alpha >"$RUN_STDOUT" 2>"$RUN_STDERR"
+assert_file_contains 'pod rm -f hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha' "$PODMAN_LOG" 'run should remove exact pods when pod inspect shows an extra loopback dashboard port'
 
 # This checks that externally published exact pods are replaced before reuse.
 : >"$PODMAN_LOG"

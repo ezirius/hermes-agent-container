@@ -630,6 +630,45 @@ hermes_validate_safe_host_base_path() {
   fi
 }
 
+# This checks that a configured host dirname stays inside the managed workspace path.
+hermes_validate_safe_host_dirname() {
+  local variable_name="$1"
+  local dirname_value="$2"
+
+  if [[ -z "$dirname_value" || "$dirname_value" == '.' || "$dirname_value" == '..' || "$dirname_value" == */* ]]; then
+    printf '%s must be a single safe directory name.\n' "$variable_name" >&2
+    exit 1
+  fi
+}
+
+# This checks both host dirname settings before path creation or mounts.
+hermes_validate_safe_host_dirnames() {
+  hermes_validate_safe_host_dirname 'HERMES_AGENT_HOST_HOME_DIRNAME' "$HERMES_AGENT_HOST_HOME_DIRNAME"
+  hermes_validate_safe_host_dirname 'HERMES_AGENT_HOST_WORKSPACE_DIRNAME' "$HERMES_AGENT_HOST_WORKSPACE_DIRNAME"
+}
+
+# This rejects symlinked managed paths before root ownership repair can recurse through them.
+hermes_reject_symlinked_managed_path() {
+  local path="$1"
+  local parent
+
+  if [[ -L "$path" ]]; then
+    printf 'Managed host path must not be a symlink: %s\n' "$path" >&2
+    exit 1
+  fi
+
+  parent="${path%/*}"
+  while [[ -n "$parent" && "$parent" != '/' ]]; do
+    if [[ -L "$parent" ]]; then
+      printf 'Managed host path parent must not be a symlink: %s\n' "$parent" >&2
+      exit 1
+    fi
+
+    [[ "$parent" == */* ]] || break
+    parent="${parent%/*}"
+  done
+}
+
 # This returns the host-side Hermes state path for one workspace.
 hermes_host_home_dir() {
   local workspace="$1"

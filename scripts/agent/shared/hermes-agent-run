@@ -55,6 +55,7 @@ fi
 
 # This rejects broad base paths before any host directory or ownership work.
 hermes_validate_safe_host_base_path
+hermes_validate_safe_host_dirnames
 
 # This builds the host paths and names around the selected workspace.
 host_home="$(hermes_host_home_dir "$workspace")"
@@ -73,6 +74,10 @@ runtime_started=0
 matching_container=""
 recreated_exact_match_container=0
 runtime_userns_args=(--userns keep-id)
+
+# This rejects symlinked managed mount paths before creation or ownership repair.
+hermes_reject_symlinked_managed_path "$host_home"
+hermes_reject_symlinked_managed_path "$host_workspace"
 
 # This checks whether an existing pod publishes the dashboard on the expected host loopback port.
 dashboard_port_matches_expected() {
@@ -104,6 +109,14 @@ pod_exists() {
 
   matched_pod="$(podman pod ps --format '{{.Name}}' --filter "name=$(hermes_container_name_regex "$pod_name")" | head -n 1)"
   [[ "$matched_pod" == "$pod_name" ]]
+}
+
+# This checks whether the exact runtime container name already exists in any state.
+exact_container_exists() {
+  local matched_container
+
+  matched_container="$(podman ps -aq --format '{{.Names}}' --filter "name=$(hermes_container_name_regex "$container_name")" | head -n 1)"
+  [[ "$matched_container" == "$container_name" ]]
 }
 
 # This creates the runtime container with the current image, mounts, and dashboard command.
@@ -152,6 +165,13 @@ if [[ "$reuse_pod" == "1" ]] && ! dashboard_port_matches_expected; then
   podman pod rm -f "$pod_name" >/dev/null 2>&1 || true
   reuse_container=0
   reuse_pod=0
+  matching_container=""
+fi
+
+# This clears exact-name stale mount conflicts before creating the replacement container.
+if exact_container_exists && ! hermes_container_workspace_matches "$container_name" "$workspace"; then
+  podman rm -f "$container_name" >/dev/null 2>&1 || true
+  reuse_container=0
   matching_container=""
 fi
 

@@ -91,3 +91,4 @@ When startup still fails, the wrapper prints a short container state summary plu
 - Do not hard-code workspace names, offsets, paths, or ports in scripts or shell libraries.
 - Keep `HERMES_AGENT_CONTAINER_WORKSPACE` fixed at `/workspace/general` so only host-side workspace names vary.
 - Keep `HERMES_AGENT_WORKSPACES` entries in `name:offset` format with numeric offsets.
+- Host dirname settings must be single safe directory names, not paths.
