@@ -472,7 +472,12 @@ if (( arg_line >= first_from_line )); then
 fi
 
 assert_file_contains 'FROM ${HERMES_AGENT_UPSTREAM_IMAGE}:${HERMES_AGENT_RELEASE_TAG}' "$ROOT/config/containers/shared/Containerfile" 'container build should derive from the official upstream Hermes Agent image'
-assert_file_contains 'apt-get update && apt-get install -y --no-install-recommends' "$ROOT/config/containers/shared/Containerfile" 'container build should use apt to install the local customization packages'
+assert_file_contains 'apt-get update' "$ROOT/config/containers/shared/Containerfile" 'container build should refresh apt package indexes'
+assert_file_contains 'https://apt.fury.io/nushell/gpg.key' "$ROOT/config/containers/shared/Containerfile" 'container build should trust the official Nushell Debian package key'
+assert_file_contains '/etc/apt/keyrings/fury-nushell.gpg' "$ROOT/config/containers/shared/Containerfile" 'container build should store the Nushell package key in an apt keyring'
+assert_file_contains '/etc/apt/sources.list.d/fury-nushell.list' "$ROOT/config/containers/shared/Containerfile" 'container build should add the official Nushell Debian package source'
+assert_file_contains 'https://apt.fury.io/nushell/ /' "$ROOT/config/containers/shared/Containerfile" 'container build should install Nushell from the official Debian package source'
+assert_file_contains 'apt-get install -y --no-install-recommends nushell' "$ROOT/config/containers/shared/Containerfile" 'container build should use apt to install the local customization package'
 assert_file_contains 'nushell' "$ROOT/config/containers/shared/Containerfile" 'container build should install nushell for the default workspace shell'
 assert_file_contains 'rm -rf /var/lib/apt/lists/*' "$ROOT/config/containers/shared/Containerfile" 'container build should clean apt lists after installing nushell'
 assert_file_contains 'USER root' "$ROOT/config/containers/shared/Containerfile" 'container build should preserve upstream root entrypoint behavior'

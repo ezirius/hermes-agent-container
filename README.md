@@ -49,7 +49,7 @@ Container build configuration lives in:
 config/containers/shared/Containerfile
 ```
 
-The image build starts from the official upstream `nousresearch/hermes-agent` image for `arm64` and only adds repo-local customization packages. Today that customization is `nushell`, which is the default shell opened by `hermes-agent-shell`.
+The image build starts from the official upstream `nousresearch/hermes-agent` image for `arm64` and only adds repo-local customization packages. Today that customization is `nushell` from the official Nushell Debian package source, which is the default shell opened by `hermes-agent-shell`.
 
 Successful builds use an image-id suffix in the final local tag: `hermes-agent-<version>-<YYYYMMDD-HHMMSS>-<12-character-image-id>`.
 

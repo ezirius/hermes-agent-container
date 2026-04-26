@@ -31,7 +31,7 @@ Examples:
 
 The dashboard is opened on the host after the container starts.
 
-The image build uses the official upstream Hermes Agent image and only layers local customizations on top. The official image owns Hermes, the frontend assets, bash, git, and the upstream entrypoint; this repo currently adds `nushell` and targets `arm64`.
+The image build uses the official upstream Hermes Agent image and only layers local customizations on top. The official image owns Hermes, the frontend assets, bash, git, and the upstream entrypoint; this repo currently adds `nushell` from the official Nushell Debian package source and targets `arm64`.
 
 `hermes-agent-build` and `hermes-agent-run` check the latest upstream release. If a newer release exists, they print `newer Hermes Agent version available` and continue with the pinned release from config.
 

@@ -9,7 +9,7 @@ This repo keeps a small wrapper around the official Hermes Agent container with 
 ## Layout
 
 - `config/containers/shared/Containerfile` derives from the official upstream `nousresearch/hermes-agent` image and adds repo-local customization packages.
-- `config/containers/shared/Containerfile` currently installs `nushell`; the official image owns Hermes, bash, git, frontend assets, and the upstream entrypoint.
+- `config/containers/shared/Containerfile` currently installs `nushell` from the official Nushell Debian package source; the official image owns Hermes, bash, git, frontend assets, and the upstream entrypoint.
 - The derived image starts as root so the upstream entrypoint can drop privileges to the Hermes runtime user after bootstrapping mounted state.
 - `lib/shell/shared/common.sh` is the only shared shell library path.
 - `scripts/agent/shared/hermes-agent-build` builds an `arm64` image from config, then retags it with a 12-character image-id suffix.
