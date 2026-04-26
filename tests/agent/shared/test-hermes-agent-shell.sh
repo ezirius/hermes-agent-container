@@ -12,10 +12,13 @@ source "$ROOT/tests/agent/shared/test-asserts.sh"
 CONFIG_PATH="$ROOT/config/agent/shared/hermes-agent-settings-shared.conf"
 CONFIG_BACKUP="$(mktemp)"
 TMP_DIR="$(mktemp -d)"
+backup_created=0
 
 # This puts the real config back and removes the temporary test files.
 cleanup() {
-  cp "$CONFIG_BACKUP" "$CONFIG_PATH"
+  if [[ "$backup_created" == '1' ]]; then
+    cp "$CONFIG_BACKUP" "$CONFIG_PATH"
+  fi
   rm -rf "$TMP_DIR"
 }
 
@@ -23,6 +26,7 @@ trap cleanup EXIT
 
 # This saves the real config before the test writes its own version.
 cp "$CONFIG_PATH" "$CONFIG_BACKUP"
+backup_created=1
 
 # This folder holds fake commands so the test can watch what the script would do.
 FAKE_BIN="$TMP_DIR/fake-bin"

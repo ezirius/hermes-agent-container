@@ -134,6 +134,7 @@ Current stable paths in this repo are:
 - `scripts/agent/shared/hermes-agent-run`
 - `scripts/agent/shared/hermes-agent-shell`
 - `tests/agent/shared/test-asserts.sh`
+- `tests/agent/shared/test-all.sh`
 - `tests/agent/shared/test-hermes-agent-build.sh`
 - `tests/agent/shared/test-hermes-agent-layout.sh`
 - `tests/agent/shared/test-hermes-agent-run.sh`

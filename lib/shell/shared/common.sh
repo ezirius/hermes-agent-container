@@ -383,7 +383,11 @@ hermes_require_build_ready_branch() {
   local checkout_root="$1"
   local current_branch counts ahead behind upstream_ref
 
-  current_branch="$(hermes_git_current_branch "$checkout_root")"
+  if ! current_branch="$(hermes_git_current_branch "$checkout_root" 2>/dev/null)" || [[ -z "$current_branch" ]]; then
+    printf 'Build requires a named branch; detached HEAD is not supported.\n' >&2
+    exit 1
+  fi
+
   if [[ "$current_branch" != 'main' ]]; then
     if hermes_git_branch_has_upstream "$checkout_root"; then
       printf 'Build only allows remote-tracking builds from main. Use a clean committed local worktree branch or main tracking origin/main.\n' >&2
@@ -550,10 +554,21 @@ hermes_workspace_offset() {
 # This returns the host dashboard port for one configured workspace.
 hermes_workspace_published_port() {
   local workspace="$1"
-  local port_offset
+  local port_offset published_port
+
+  if [[ ! "$HERMES_AGENT_DASHBOARD_PORT" =~ ^[0-9]+$ ]] || (( HERMES_AGENT_DASHBOARD_PORT < 1 || HERMES_AGENT_DASHBOARD_PORT > 65535 )); then
+    printf 'HERMES_AGENT_DASHBOARD_PORT must be a numeric port from 1 to 65535.\n' >&2
+    exit 1
+  fi
 
   port_offset="$(hermes_workspace_offset "$workspace")"
-  printf '%s\n' "$((HERMES_AGENT_DASHBOARD_PORT + port_offset))"
+  published_port="$((HERMES_AGENT_DASHBOARD_PORT + port_offset))"
+  if (( published_port < 1 || published_port > 65535 )); then
+    printf 'Published dashboard port for %s must be from 1 to 65535.\n' "$workspace" >&2
+    exit 1
+  fi
+
+  printf '%s\n' "$published_port"
 }
 
 # This returns the host dashboard URL for one configured workspace.
@@ -580,6 +595,39 @@ hermes_expand_home_path() {
       printf '%s\n' "$path"
       ;;
   esac
+}
+
+# This rejects broad host base paths before the wrapper creates or repairs mounts.
+hermes_validate_safe_host_base_path() {
+  local base_path home_path
+
+  base_path="$(hermes_expand_home_path "$HERMES_AGENT_BASE_PATH")"
+  home_path="$HOME"
+
+  while [[ "$base_path" != '/' && "$base_path" == */ ]]; do
+    base_path="${base_path%/}"
+  done
+
+  while [[ "$home_path" != '/' && "$home_path" == */ ]]; do
+    home_path="${home_path%/}"
+  done
+
+  case "$base_path" in
+    '..'|../*|*/..|*/../*)
+      printf 'HERMES_AGENT_BASE_PATH must not contain parent-directory components.\n' >&2
+      exit 1
+      ;;
+  esac
+
+  if [[ -z "$base_path" || "$base_path" == '/' ]]; then
+    printf 'HERMES_AGENT_BASE_PATH must point to a managed subdirectory, not /.\n' >&2
+    exit 1
+  fi
+
+  if [[ "$base_path" == "$home_path" ]]; then
+    printf 'HERMES_AGENT_BASE_PATH must point to a managed subdirectory, not the home directory itself.\n' >&2
+    exit 1
+  fi
 }
 
 # This returns the host-side Hermes state path for one workspace.

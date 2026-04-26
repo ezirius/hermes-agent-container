@@ -75,6 +75,8 @@ The wrapper normalizes both forms before matching the newest local Hermes Agent 
 
 When `hermes-agent-run` starts replacement pods for a workspace, it does not remove existing workspace pods or containers until the replacement container has started successfully.
 
+Exact matching pods with the wrong dashboard publish contract are removed before same-name recreation because Podman cannot create a replacement pod with the same name while the old pod still exists.
+
 If the selected workspace already has a matching pod and container for the newest image, the wrapper reuses them. If the matching container is stopped, the wrapper starts it before attaching to the Hermes CLI in the workspace container.
 
 If an exact matching container dies before attach, the wrapper removes the pod and recreates it once with the current dashboard publish contract before giving up.

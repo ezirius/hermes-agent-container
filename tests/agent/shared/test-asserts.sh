@@ -53,3 +53,27 @@ assert_file_not_contains() {
     fail "$message: unexpected [$needle] in $file_path"
   fi
 }
+
+# This checks that two file snippets both exist and appear in the expected order.
+assert_file_contains_in_order() {
+  local first_text="$1"
+  local second_text="$2"
+  local file_path="$3"
+  local message="${4:-expected file snippets to appear in order}"
+  local file_text=""
+  local after_first_text=""
+
+  file_text="$(<"$file_path")"
+  if [[ "$file_text" != *"$first_text"* ]]; then
+    fail "$message: missing [$first_text] in $file_path"
+  fi
+
+  if [[ "$file_text" != *"$second_text"* ]]; then
+    fail "$message: missing [$second_text] in $file_path"
+  fi
+
+  after_first_text="${file_text#*"$first_text"}"
+  if [[ "$after_first_text" != *"$second_text"* ]]; then
+    fail "$message: [$first_text] must appear before [$second_text] in $file_path"
+  fi
+}

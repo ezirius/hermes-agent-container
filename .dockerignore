@@ -1,6 +1,7 @@
 .git
 .git/
 .worktrees/
+hermes-agent-container-worktrees/
 
 .DS_Store
 __pycache__/

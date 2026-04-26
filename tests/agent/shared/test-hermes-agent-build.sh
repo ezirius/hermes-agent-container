@@ -14,6 +14,7 @@ CONFIG_BACKUP="$(mktemp)"
 TMP_DIR="$(mktemp -d)"
 REAL_SMOKE_IMAGE_NAME=""
 REAL_SMOKE_CONTAINER_NAME=""
+backup_created=0
 
 # This checks that two required snippets both exist and appear in the expected textual order.
 assert_text_appears_in_order() {
@@ -130,7 +131,9 @@ cleanup() {
     podman rmi -f "$REAL_SMOKE_IMAGE_NAME" >/dev/null 2>&1 || true
   fi
 
-  cp "$CONFIG_BACKUP" "$CONFIG_PATH"
+  if [[ "$backup_created" == '1' ]]; then
+    cp "$CONFIG_BACKUP" "$CONFIG_PATH"
+  fi
   rm -rf "$TMP_DIR"
 }
 
@@ -138,6 +141,7 @@ trap cleanup EXIT
 
 # This saves the real config before the test writes its own version.
 cp "$CONFIG_PATH" "$CONFIG_BACKUP"
+backup_created=1
 
 # This folder holds fake commands so the test can watch what the script would do.
 FAKE_BIN="$TMP_DIR/fake-bin"
@@ -249,6 +253,9 @@ case "$1 $2 ${3:-}" in
         ;;
       local-only|feature-upstream)
         printf 'feature-work\n'
+        ;;
+      detached)
+        exit 1
         ;;
       *)
         printf '%s\n' "${HERMES_TEST_GIT_BRANCH:-main}"
@@ -496,19 +503,31 @@ if grep -Fq 'CMD ["bash", "-lc", "exec hermes dashboard --host 0.0.0.0 --port \"
 fi
 
 # This dirty case should stop the build before Podman is used.
+: >"$PODMAN_LOG"
 if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="dirty" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >/dev/null 2>"$TMP_DIR/dirty.stderr"; then
   fail 'build should fail when the current checkout is dirty'
 fi
 
 assert_file_contains 'Build requires a clean checkout with all changes committed.' "$TMP_DIR/dirty.stderr" 'build should explain dirty checkout failures'
+assert_file_not_contains 'build -' "$PODMAN_LOG" 'dirty checkout failures should stop before Podman build'
+assert_file_not_contains 'tag hermes-agent-' "$PODMAN_LOG" 'dirty checkout failures should stop before Podman tag'
 
 # This no-commit case should stop the build before Podman is used.
+: >"$PODMAN_LOG"
 if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="no-commit" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >/dev/null 2>"$TMP_DIR/no-commit.stderr"; then
   fail 'build should fail when the current checkout has no commits'
 fi
 
 # This checks that the no-commit failure message stays clear.
 assert_file_contains 'Build requires the current checkout to have at least one commit.' "$TMP_DIR/no-commit.stderr" 'build should explain missing-commit failures'
+assert_file_not_contains 'build -' "$PODMAN_LOG" 'no-commit failures should stop before Podman build'
+
+# This detached-HEAD case should fail with a clear build-policy message.
+if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="detached" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >/dev/null 2>"$TMP_DIR/detached.stderr"; then
+  fail 'build should fail when the checkout is detached'
+fi
+
+assert_file_contains 'Build requires a named branch; detached HEAD is not supported.' "$TMP_DIR/detached.stderr" 'build should explain detached HEAD failures'
 
 # This main-branch case should stop the build when local main is ahead of origin/main.
 if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="main-origin-ahead" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >/dev/null 2>"$TMP_DIR/main-ahead.stderr"; then
@@ -523,6 +542,13 @@ if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_L
 fi
 
 assert_file_contains 'Build requires main to be pushed and in sync with origin/main.' "$TMP_DIR/main-behind.stderr" 'build should refuse to run from main when local commits are missing'
+
+# This main-branch case should stop the build when local main has diverged from origin/main.
+if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="main-origin-diverged" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >/dev/null 2>"$TMP_DIR/main-diverged.stderr"; then
+  fail 'build should fail when local main has diverged from origin/main'
+fi
+
+assert_file_contains 'Build requires main to be pushed and in sync with origin/main.' "$TMP_DIR/main-diverged.stderr" 'build should refuse to run from main when history diverged'
 
 # This main-branch case should stop the build when no upstream is configured.
 if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="main-no-upstream" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >/dev/null 2>"$TMP_DIR/main-no-upstream.stderr"; then

@@ -53,6 +53,9 @@ else
   workspace="$(hermes_pick_workspace)"
 fi
 
+# This rejects broad base paths before any host directory or ownership work.
+hermes_validate_safe_host_base_path
+
 # This builds the host paths and names around the selected workspace.
 host_home="$(hermes_host_home_dir "$workspace")"
 host_workspace="$(hermes_host_workspace_dir "$workspace")"
@@ -73,10 +76,20 @@ runtime_userns_args=(--userns keep-id)
 
 # This checks whether an existing pod publishes the dashboard on the expected host loopback port.
 dashboard_port_matches_expected() {
-  local published
+  local published pod_bindings expected_binding
 
   published="$(podman port "$pod_name" "$HERMES_AGENT_DASHBOARD_PORT/tcp" 2>/dev/null || true)"
-  [[ "$published" == "127.0.0.1:$host_port" ]]
+  if [[ "$published" == "127.0.0.1:$host_port" ]]; then
+    return 0
+  fi
+
+  pod_bindings="$(podman pod inspect --format '{{json .InfraConfig.PortBindings}}' "$pod_name" 2>/dev/null || true)"
+  if [[ "$pod_bindings" == *'"HostIp":"0.0.0.0"'* || "$pod_bindings" == *'"HostIp":""'* ]]; then
+    return 1
+  fi
+
+  expected_binding="\"$HERMES_AGENT_DASHBOARD_PORT/tcp\":[{\"HostIp\":\"127.0.0.1\",\"HostPort\":\"$host_port\"}]"
+  [[ "$pod_bindings" == *"$expected_binding"* ]]
 }
 
 # This creates the workspace pod and publishes the dashboard on host loopback.
