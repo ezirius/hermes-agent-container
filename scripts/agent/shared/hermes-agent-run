@@ -246,4 +246,4 @@ while true; do
   break
 done
 
-hermes_exec_podman_interactive_command exec --workdir "$HERMES_AGENT_CONTAINER_WORKSPACE" "$container_name" "$HERMES_AGENT_CHAT_COMMAND"
+hermes_exec_podman_interactive_command exec --workdir "$HERMES_AGENT_CONTAINER_WORKSPACE" "$container_name" /opt/hermes/docker/entrypoint.sh
