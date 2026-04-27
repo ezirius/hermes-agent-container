@@ -58,7 +58,7 @@ Containers launched by normal users are created with `--userns keep-id` so mount
 
 The dashboard port is derived from `HERMES_AGENT_DASHBOARD_PORT` plus the selected workspace offset from `HERMES_AGENT_WORKSPACES`.
 
-Workspace pod names use the OpenCode-derived `<image-name>-<workspace>` order. Role containers inside each pod use `<image-name>-<workspace>-gateway` and `<image-name>-<workspace>-dashboard`.
+Workspace pod names use the OpenCode-derived `<image-name>-<workspace>` order. Role containers inside each pod use `<image-name>-<workspace>-gateway` and `<image-name>-<workspace>-dashboard`, and the Podman infra container uses `<image-name>-<workspace>-infrastructure`.
 
 Setup and Hermes state bootstrapping are delegated to the upstream Hermes entrypoint inherited by the derived image.
 
@@ -78,6 +78,8 @@ When `hermes-agent-run` starts replacement pods for a workspace, it does not rem
 Exact matching pods with the wrong dashboard publish contract are removed before same-name recreation because Podman cannot create a replacement pod with the same name while the old pod still exists.
 
 If the selected workspace already has a matching pod and gateway container for the newest image, the wrapper reuses them. If the matching gateway container is stopped, the wrapper starts it before attaching to the Hermes CLI in the workspace container.
+
+When reusing an exact matching pod, the wrapper renames Podman's generated infra container to the canonical `<image-name>-<workspace>-infrastructure` name if needed.
 
 If an exact matching container dies before attach, the wrapper removes the pod and recreates it once with the current dashboard publish contract before giving up.
 

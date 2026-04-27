@@ -64,6 +64,7 @@ old_pods="$(hermes_workspace_pods "$workspace")"
 
 host_port="$(hermes_workspace_published_port "$workspace")"
 pod_name="$(hermes_pod_name "$image_name" "$workspace")"
+infra_container_name="$(hermes_infra_container_name "$image_name" "$workspace")"
 gateway_container_name="$(hermes_role_container_name "$image_name" "$workspace" gateway)"
 dashboard_container_name="$(hermes_role_container_name "$image_name" "$workspace" dashboard)"
 container_name="$gateway_container_name"
@@ -100,7 +101,22 @@ dashboard_port_matches_expected() {
 
 # This creates the workspace pod and publishes the dashboard on host loopback.
 create_pod() {
-  podman pod create "${runtime_userns_args[@]}" --name "$pod_name" -p "127.0.0.1:$host_port:$HERMES_AGENT_DASHBOARD_PORT" >/dev/null
+  podman pod create "${runtime_userns_args[@]}" --name "$pod_name" --infra-name "$infra_container_name" -p "127.0.0.1:$host_port:$HERMES_AGENT_DASHBOARD_PORT" >/dev/null
+}
+
+# This renames reused pods' infra containers when Podman generated a random name.
+ensure_infra_container_name() {
+  local infra_container_id current_infra_name
+
+  infra_container_id="$(podman pod inspect --format '{{.InfraContainerID}}' "$pod_name" 2>/dev/null || true)"
+  [[ -n "$infra_container_id" ]] || return 0
+
+  current_infra_name="$(podman inspect --type container --format '{{.Name}}' "$infra_container_id" 2>/dev/null || true)"
+  current_infra_name="${current_infra_name#/}"
+  [[ -n "$current_infra_name" ]] || return 0
+
+  [[ "$current_infra_name" != "$infra_container_name" ]] || return 0
+  podman rename "$infra_container_id" "$infra_container_name" >/dev/null
 }
 
 # This checks whether a pod with the exact name already exists.
@@ -192,6 +208,11 @@ if [[ "$reuse_pod" == "1" ]] && ! dashboard_port_matches_expected; then
   reuse_container=0
   reuse_pod=0
   matching_container=""
+fi
+
+# This repairs random infra container names before reusing a matching pod.
+if [[ "$reuse_pod" == "1" ]]; then
+  ensure_infra_container_name
 fi
 
 # This clears exact-name stale mount conflicts before creating the replacement container.

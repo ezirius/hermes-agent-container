@@ -78,6 +78,11 @@ case "$1" in
         esac
         ;;
       inspect)
+        if [[ "$*" == *'{{.InfraContainerID}}'* ]]; then
+          printf '58ed0c7f0326\n'
+          exit 0
+        fi
+
         case "${HERMES_TEST_PORT_MODE:-correct}" in
           pod-inspect-correct) printf '{"9234/tcp":[{"HostIp":"127.0.0.1","HostPort":"9334"}]}' ;;
           pod-inspect-external) printf '{"9234/tcp":[{"HostIp":"0.0.0.0","HostPort":"9334"}]}' ;;
@@ -155,7 +160,12 @@ case "$1" in
     esac
     ;;
   inspect)
-    if [[ "$*" == *'{{range .Mounts}}'* ]]; then
+    if [[ "$*" == *'{{.Name}}'* ]]; then
+      case "${HERMES_TEST_INFRA_NAME_MODE:-random}" in
+        matching) printf 'hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-infrastructure\n' ;;
+        *) printf '58ed0c7f0326-infra\n' ;;
+      esac
+    elif [[ "$*" == *'{{range .Mounts}}'* ]]; then
       container_name="${*: -1}"
       case "$container_name" in
         *-alpha-gateway)
@@ -182,6 +192,8 @@ case "$1" in
     ;;
   logs)
     printf '(no recent logs)\n'
+    ;;
+  rename)
     ;;
 esac
 EOF
@@ -440,7 +452,7 @@ printf '2\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG=
 assert_file_contains 'Selection:' "$RUN_STDERR" 'run should show an explicit selection prompt'
 assert_file_contains 'api.github.com/repos/NousResearch/hermes-agent/releases/latest' "$CURL_LOG" 'run should check the latest upstream Hermes Agent release before container work'
 assert_file_not_contains 'newer Hermes Agent version available' "$RUN_STDERR" 'run should not warn when the upstream release matches the pinned release tag'
-assert_file_contains 'pod create --userns keep-id --name hermes-agent-0.10.0-20260417-120000-abcdef123456-beta -p 127.0.0.1:9434:9234' "$PODMAN_LOG" 'run should put keep-id user namespace on the workspace pod for non-root runs'
+assert_file_contains 'pod create --userns keep-id --name hermes-agent-0.10.0-20260417-120000-abcdef123456-beta --infra-name hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-infrastructure -p 127.0.0.1:9434:9234' "$PODMAN_LOG" 'run should put keep-id user namespace and a deterministic infra name on the workspace pod for non-root runs'
 assert_file_contains 'run -d --name hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-dashboard' "$PODMAN_LOG" 'run should create a dashboard role container for the workspace'
 assert_file_contains 'run -d --name hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-gateway' "$PODMAN_LOG" 'run should create a gateway role container for the workspace'
 assert_file_contains 'gateway run' "$PODMAN_LOG" 'run should start the gateway role with the official Hermes gateway command'
@@ -489,6 +501,12 @@ assert_file_not_contains '--userns keep-id' "$PODMAN_LOG" 'run should not pass r
 : >"$OPEN_LOG"
 PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_STALE_MODE='same-name' HERMES_TEST_POD_MODE='present' HERMES_TEST_STALE_POD_MODE='missing' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" alpha >"$RUN_STDOUT" 2>"$RUN_STDERR"
 assert_file_not_contains 'http://127.0.0.1:9334' "$OPEN_LOG" 'run should not reopen the browser when both matching pods and containers are reused unchanged'
+assert_file_contains 'rename 58ed0c7f0326 hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-infrastructure' "$PODMAN_LOG" 'run should rename existing random infra containers before reusing a pod'
+
+# This checks that matching infra container names are left unchanged on reuse.
+: >"$PODMAN_LOG"
+PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_STALE_MODE='same-name' HERMES_TEST_POD_MODE='present' HERMES_TEST_STALE_POD_MODE='missing' HERMES_TEST_INFRA_NAME_MODE='matching' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" alpha >"$RUN_STDOUT" 2>"$RUN_STDERR"
+assert_file_not_contains 'rename 58ed0c7f0326 hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-infrastructure' "$PODMAN_LOG" 'run should not rename infra containers that already have the expected name'
 
 # This checks that exact-name containers with stale mounts are removed before recreation.
 : >"$PODMAN_LOG"
@@ -501,7 +519,7 @@ assert_file_contains 'run -d --name hermes-agent-0.10.0-20260417-120000-abcdef12
 : >"$PODMAN_LOG"
 PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_STALE_MODE='missing' HERMES_TEST_POD_MODE='present' HERMES_TEST_STALE_POD_MODE='missing' HERMES_TEST_PORT_MODE='wrong-loopback' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" alpha >"$RUN_STDOUT" 2>"$RUN_STDERR"
 assert_file_contains 'pod rm -f hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha' "$PODMAN_LOG" 'run should remove exact pods that publish the wrong loopback port'
-assert_file_contains 'pod create --userns keep-id --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha -p 127.0.0.1:9334:9234' "$PODMAN_LOG" 'run should recreate exact pods with the expected loopback publish contract'
+assert_file_contains 'pod create --userns keep-id --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha --infra-name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-infrastructure -p 127.0.0.1:9334:9234' "$PODMAN_LOG" 'run should recreate exact pods with the expected loopback publish and infra-name contract'
 
 # This checks that real pod inspection can keep a correctly published exact pod reusable.
 : >"$PODMAN_LOG"
