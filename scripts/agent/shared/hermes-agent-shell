@@ -41,6 +41,42 @@ fi
 host_home="$(hermes_host_home_dir "$workspace")"
 host_workspace="$(hermes_host_workspace_dir "$workspace")"
 container_name="$(hermes_cli_container_name "$image_name" "$workspace")"
+launch_lock_file="$host_home/.hermes-agent-shell-launch.lock"
+
+# This returns a stable process start marker for lock ownership checks when the host can provide one.
+process_start_marker() {
+  local pid="$1"
+
+  if [[ -r "/proc/$pid/stat" ]]; then
+    awk '{print $22}' "/proc/$pid/stat"
+    return 0
+  fi
+
+  ps -p "$pid" -o lstart= 2>/dev/null | tr -s ' ' '_'
+}
+
+# This checks whether a recorded lock owner is still a live process rather than a zombie.
+process_is_live() {
+  local pid="$1"
+  local state
+
+  if [[ -r "/proc/$pid/status" ]]; then
+    state="$(grep '^State:' "/proc/$pid/status" 2>/dev/null || true)"
+    [[ "$state" != *$'\tZ '* && "$state" != *$'\tZ\t'* && "$state" != *$'\tZ ('* ]] || return 1
+  fi
+
+  kill -0 "$pid" 2>/dev/null
+}
+
+launch_lock_started="$(process_start_marker "$$")"
+launch_lock_token="$$|${launch_lock_started}|${ROOT}|${workspace}"
+
+# This releases the per-workspace launch lock when the shell command finishes.
+cleanup_launch_lock() {
+  if [[ -f "$launch_lock_file" ]] && [[ "$(<"$launch_lock_file")" == "$launch_lock_token" ]]; then
+    rm -f "$launch_lock_file" >/dev/null 2>&1 || true
+  fi
+}
 
 # This rejects unsafe managed paths before mounting them into the CLI container.
 hermes_validate_safe_host_base_path
@@ -49,8 +85,61 @@ hermes_reject_symlinked_managed_path "$host_home"
 hermes_reject_symlinked_managed_path "$host_workspace"
 mkdir -p "$host_home" "$host_workspace"
 
+# This serializes launch work so one shell session cannot race another and kill it.
+if ! ( set -o noclobber; printf '%s\n' "$launch_lock_token" >"$launch_lock_file" ) 2>/dev/null; then
+  existing_lock=''
+  lock_pid=''
+  lock_started=''
+  lock_root=''
+  lock_workspace=''
+  current_started=''
+  if [[ -f "$launch_lock_file" ]]; then
+    existing_lock="$(<"$launch_lock_file")"
+    IFS='|' read -r lock_pid lock_started lock_root lock_workspace <<< "$existing_lock"
+  fi
+
+  if [[ -n "$lock_pid" ]] && process_is_live "$lock_pid"; then
+    current_started="$(process_start_marker "$lock_pid")"
+  fi
+
+  if [[ -n "$lock_pid" ]] && process_is_live "$lock_pid" && [[ "$current_started" == "$lock_started" ]] && [[ "$lock_root" == "$ROOT" ]] && [[ "$lock_workspace" == "$workspace" ]]; then
+    printf 'Another Hermes CLI launch is already in progress for %s.\n' "$workspace" >&2
+    exit 1
+  fi
+
+  if [[ -f "$launch_lock_file" ]] && [[ "$(<"$launch_lock_file")" == "$existing_lock" ]]; then
+    rm -f "$launch_lock_file" >/dev/null 2>&1 || true
+  fi
+
+  if ! ( set -o noclobber; printf '%s\n' "$launch_lock_token" >"$launch_lock_file" ) 2>/dev/null; then
+    printf 'Another Hermes CLI launch is already in progress for %s.\n' "$workspace" >&2
+    exit 1
+  fi
+fi
+
+trap cleanup_launch_lock EXIT
+
+# This preserves live or unrelated exact-name containers but clears stale same-workspace collisions.
+existing_container="$(podman ps -aq --format '{{.Names}}' --filter "name=$(hermes_container_name_regex "$container_name")" | head -n 1)"
+if [[ "$existing_container" == "$container_name" ]]; then
+  if ! hermes_container_workspace_matches "$container_name" "$workspace"; then
+    printf 'Hermes CLI container name already in use with a different workspace mount for %s.\n' "$workspace" >&2
+    exit 1
+  fi
+
+  if hermes_container_is_running "$container_name"; then
+    printf 'Hermes CLI container already running for %s.\n' "$workspace" >&2
+    exit 1
+  fi
+
+  if ! podman rm "$container_name" >/dev/null 2>&1; then
+    printf 'Failed to remove stale Hermes CLI container %s.\n' "$container_name" >&2
+    exit 1
+  fi
+fi
+
 # This opens nushell by default, or runs the explicit command vector in a no-port CLI container.
-hermes_exec_podman_interactive_command run \
+hermes_run_podman_interactive_command run \
   --rm \
   --name "$container_name" \
   --workdir "$HERMES_AGENT_CONTAINER_WORKSPACE" \
@@ -58,3 +147,5 @@ hermes_exec_podman_interactive_command run \
   -v "$host_workspace:$HERMES_AGENT_CONTAINER_WORKSPACE" \
   "$image_name" \
   "${command[@]}"
+
+exit $?

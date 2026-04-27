@@ -301,6 +301,8 @@ while true; do
   break
 done
 
+podman rm "$cli_container_name" >/dev/null 2>&1 || true
+
 hermes_exec_podman_interactive_command run \
   --rm \
   --name "$cli_container_name" \

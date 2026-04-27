@@ -17,6 +17,7 @@ This repo keeps a small wrapper around the official Hermes Agent container with 
 - Hermes pod names follow `<image-name>-<workspace>`; role containers inside the pod use `<image-name>-<workspace>-gateway` and `<image-name>-<workspace>-dashboard`, and infra containers use `<image-name>-<workspace>-infrastructure`.
 - `scripts/agent/shared/hermes-agent-run` and `scripts/agent/shared/hermes-agent-shell` open interactive commands through ephemeral CLI containers named `<image-name>-<workspace>-cli`.
 - Ephemeral CLI containers share the same `/opt/data` and `/workspace/general` mounts as the persistent runtime containers, but they do not join the workspace pod and do not publish ports.
+- The wrapper clears stale same-workspace exact-name CLI containers before launch, while active or mount-mismatched exact-name containers fail with wrapper-owned errors instead of being removed implicitly.
 - `tests/agent/shared/*` verify behavior and layout, using focused source-text assertions where they check stable build or runtime contract strings.
 - The workspace pod owns Podman port publishing, while the wrapper keeps the published host port bound to `127.0.0.1`.
 - The run wrapper treats the container as ready when it is running and stable before attach; the browser opener waits for the published dashboard URL rather than probing Hermes internals.

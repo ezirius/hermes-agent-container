@@ -110,6 +110,11 @@ case "$1" in
     ;;
   ps)
     if [[ "$2" == '-aq' ]]; then
+      if [[ "${HERMES_TEST_CLI_COLLISION_MODE:-}" == 'exact' && "$*" == *'alpha-cli'* ]]; then
+        printf 'hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli\n'
+        exit 0
+      fi
+
       if [[ "${HERMES_TEST_STALE_MODE:-present}" == 'present' ]]; then
         printf 'old-gateway\nold-dashboard\n'
       elif [[ "${HERMES_TEST_STALE_MODE:-present}" == 'same-name' ]]; then
@@ -136,6 +141,12 @@ case "$1" in
   run)
     if [[ -n "${HERMES_TEST_EVENT_LOG:-}" ]]; then
       printf 'attach %s\n' "$*" >>"$HERMES_TEST_EVENT_LOG"
+    fi
+    if [[ "${HERMES_TEST_CLI_COLLISION_MODE:-}" == 'exact' && "$*" == *'alpha-cli'* ]]; then
+      if ! grep -Fqx -- 'rm hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli' "$HERMES_TEST_PODMAN_LOG"; then
+        printf 'Error: container name "hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli" is already in use\n' >&2
+        exit 125
+      fi
     fi
     printf 'new-container\n'
     ;;
@@ -605,6 +616,12 @@ fi
 assert_file_contains 'Hermes Agent container failed to stay running' "$TMP_DIR/start-fail.stderr" 'run should report startup failure after a failed container start'
 assert_file_contains 'Container state:' "$TMP_DIR/start-fail.stderr" 'run should print container state diagnostics after a failed container start'
 assert_file_contains 'Recent container logs:' "$TMP_DIR/start-fail.stderr" 'run should print recent logs after a failed container start'
+
+# This checks that run removes a stale exact CLI container before opening Hermes.
+: >"$PODMAN_LOG"
+PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_CLI_COLLISION_MODE='exact' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" alpha >"$RUN_STDOUT" 2>"$RUN_STDERR"
+assert_file_contains 'rm hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli' "$PODMAN_LOG" 'run should remove a stale exact CLI container before opening Hermes'
+assert_file_contains_in_order 'rm hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli' 'run -i --rm --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'run should clear stale CLI name collisions before attach'
 
 # This checks that a poisoned exact-match runtime is removed and recreated once before final diagnostics.
 : >"$PODMAN_LOG"

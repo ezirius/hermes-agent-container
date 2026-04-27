@@ -47,6 +47,19 @@ case "$1" in
     esac
     ;;
   ps)
+    if [[ "$2" == '-aq' ]]; then
+      case "${HERMES_TEST_CLI_COLLISION_MODE:-}" in
+        exact|mount-mismatch|running)
+          printf 'hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli\n'
+          exit 0
+          ;;
+      esac
+    fi
+
+    if [[ "${HERMES_TEST_CLI_COLLISION_MODE:-}" == 'running' && "$*" == *'alpha-cli'* ]]; then
+      printf 'hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli\n'
+      exit 0
+    fi
     case "${HERMES_TEST_CONTAINER_MODE:-present}" in
       present)
         case "$*" in
@@ -74,6 +87,12 @@ case "$1" in
     ;;
   inspect)
     container_name="${*: -1}"
+    case "${HERMES_TEST_CLI_COLLISION_MODE:-}:$container_name" in
+      exact:*-alpha-cli) printf '%s : /workspace/general\n' "${HOME}/tmp/hermes-agent/alpha/hermes-agent-general" ; exit 0 ;;
+      mount-mismatch:*-alpha-cli) printf '%s : /workspace/general\n' "${HOME}/tmp/hermes-agent/not-alpha/hermes-agent-general" ; exit 0 ;;
+      running:*-alpha-cli) printf '%s : /workspace/general\n' "${HOME}/tmp/hermes-agent/alpha/hermes-agent-general" ; exit 0 ;;
+    esac
+
     case "${HERMES_TEST_CONTAINER_MODE:-present}:$container_name" in
       mount-mismatch:*120500*) printf '%s : /workspace/general\n' "${HOME}/tmp/hermes-agent/not-beta/hermes-agent-general" ;;
       *:*-alpha-prod-gateway) printf '%s : /workspace/general\n' "${HOME}/tmp/hermes-agent/alpha-prod/hermes-agent-general" ;;
@@ -83,7 +102,16 @@ case "$1" in
     ;;
   exec)
     ;;
+  rm)
+    ;;
   run)
+    if [[ "${HERMES_TEST_CLI_COLLISION_MODE:-}" == 'exact' ]]; then
+      expected_name='hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli'
+      if ! grep -Fqx -- "rm ${expected_name}" "$HERMES_TEST_PODMAN_LOG"; then
+        printf 'Error: container name "%s" is already in use\n' "$expected_name" >&2
+        exit 125
+      fi
+    fi
     printf 'new-cli-container\n'
     ;;
 esac
@@ -132,6 +160,52 @@ PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/
 
 assert_file_not_contains 'Selection:' "$SHELL_STDERR" 'shell should not show the picker when a workspace argument is provided'
 assert_file_contains 'run -i --rm --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'shell should accept a workspace argument and open an ephemeral CLI container'
+
+# This checks that a stale exact CLI container name is removed before launching a replacement.
+: >"$PODMAN_LOG"
+PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_CLI_COLLISION_MODE='exact' bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha >/dev/null 2>"$SHELL_STDERR"
+
+assert_file_contains 'rm hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli' "$PODMAN_LOG" 'shell should remove a stale exact CLI container name before opening a replacement'
+assert_file_contains 'run -i --rm --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'shell should launch a replacement CLI container after removing the stale exact name'
+
+# This checks that shell refuses to kill a still-running exact CLI container.
+: >"$PODMAN_LOG"
+if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_CLI_COLLISION_MODE='running' bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha >/dev/null 2>"$TMP_DIR/running-cli.stderr"; then
+  fail 'shell should fail when the exact CLI container name is already running'
+fi
+
+assert_file_contains 'Hermes CLI container already running for alpha.' "$TMP_DIR/running-cli.stderr" 'shell should explain live CLI container name collisions'
+assert_file_not_contains 'rm hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli' "$PODMAN_LOG" 'shell should not remove a still-running CLI container'
+
+# This checks that shell does not remove an exact-name CLI container with the wrong workspace mount.
+: >"$PODMAN_LOG"
+if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_CLI_COLLISION_MODE='mount-mismatch' bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha >/dev/null 2>"$TMP_DIR/wrong-mount-cli.stderr"; then
+  fail 'shell should fail when the exact CLI name belongs to a different workspace mount'
+fi
+
+assert_file_contains 'Hermes CLI container name already in use with a different workspace mount for alpha.' "$TMP_DIR/wrong-mount-cli.stderr" 'shell should explain exact-name CLI mount collisions'
+assert_file_not_contains 'rm hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli' "$PODMAN_LOG" 'shell should not remove an exact-name CLI container with a different workspace mount'
+
+# This checks that shell recovers from a stale launch lock left by a dead process.
+printf '999999|stale|%s|alpha\n' "$ROOT" >"$HOME/tmp/hermes-agent/alpha/hermes-agent-home/.hermes-agent-shell-launch.lock"
+: >"$PODMAN_LOG"
+PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha >/dev/null 2>"$SHELL_STDERR"
+
+assert_file_contains 'run -i --rm --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'shell should recover from a stale launch lock and still start the CLI container'
+
+# This checks that shell respects an active launch lock for the same worktree and workspace.
+sleep 30 &
+lock_pid="$!"
+lock_started="$(awk '{print $22}' "/proc/$lock_pid/stat")"
+printf '%s|%s|%s|alpha\n' "$lock_pid" "$lock_started" "$ROOT" >"$HOME/tmp/hermes-agent/alpha/hermes-agent-home/.hermes-agent-shell-launch.lock"
+: >"$PODMAN_LOG"
+if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha >/dev/null 2>"$TMP_DIR/active-lock.stderr"; then
+  kill "$lock_pid" >/dev/null 2>&1 || true
+  fail 'shell should fail when another launch lock is still active'
+fi
+kill "$lock_pid" >/dev/null 2>&1 || true
+
+assert_file_contains 'Another Hermes CLI launch is already in progress for alpha.' "$TMP_DIR/active-lock.stderr" 'shell should explain active launch locks'
 
 # This checks that an explicit in-container command passes through unchanged.
 : >"$PODMAN_LOG"

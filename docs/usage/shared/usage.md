@@ -54,7 +54,7 @@ The persistent workspace pod holds gateway and dashboard role containers. Those 
 - Host home path -> `/opt/data`
 - Host workspace path -> `/workspace/general`
 
-Interactive CLI containers created by `hermes-agent-run` and `hermes-agent-shell` use the same mappings and `--workdir /workspace/general`, but they are ephemeral `--rm` containers outside the workspace pod and do not publish ports.
+Interactive CLI containers created by `hermes-agent-run` and `hermes-agent-shell` use the same mappings and `--workdir /workspace/general`, but they are ephemeral `--rm` containers outside the workspace pod and do not publish ports. They use the exact name `<image-name>-<workspace>-cli`, remove stale same-workspace exact-name containers before launch, and fail clearly when that exact name is already active or belongs to a different workspace mount.
 
 Containers launched by normal users are created with `--userns keep-id` so mounted workspace paths follow the invoking host user. If the wrapper is launched as root, it repairs the host home and workspace directory ownership before starting containers and skips rootless `keep-id` mode.
 
