@@ -533,7 +533,7 @@ assert_file_contains 'pod rm -f old-gateway-pod' "$PODMAN_LOG" 'run should remov
 assert_file_contains 'pod rm -f old-dashboard-pod' "$PODMAN_LOG" 'run should remove stale dashboard pods even when their containers are gone'
 assert_file_contains 'http://127.0.0.1:9434' "$OPEN_LOG" 'run should open the derived dashboard URL'
 assert_file_contains 'http://127.0.0.1:9434' "$CURL_LOG" 'run should wait for the published dashboard URL before opening the browser'
-assert_file_contains 'create --name hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-cli --workdir /workspace/general' "$PODMAN_LOG" 'run should create the temporary CLI container name first'
+assert_file_contains 'create -i --name hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-cli --workdir /workspace/general' "$PODMAN_LOG" 'run should keep stdin open when the attach path is non-interactive'
 assert_file_contains 'rename abcdef1234567890fedcba0987654321abcdef1234567890fedcba0987654321 hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-cli-abcdef123456' "$PODMAN_LOG" 'run should rename the CLI container using the first 12 chars of the real container id'
 assert_file_contains 'hermes-agent-0.10.0-20260417-120000-abcdef123456 hermes' "$PODMAN_LOG" 'run should create the CLI container with the Hermes command'
 assert_file_contains 'start -ai hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-cli-abcdef123456' "$PODMAN_LOG" 'run should attach by starting the renamed CLI container'
@@ -546,6 +546,11 @@ assert_file_not_contains 'exec -i --workdir /workspace/general hermes-agent-0.10
 PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_HOST_UID='0' HERMES_TEST_HOST_GID='0' SUDO_UID='4242' SUDO_GID='4343' HERMES_TEST_CHOWN_LOG="$CHOWN_LOG" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" alpha >"$RUN_STDOUT" 2>"$RUN_STDERR"
 assert_file_contains '-R 4242:4343' "$CHOWN_LOG" 'run should restore caller ownership when sudo creates mount directories'
 assert_file_not_contains '--userns keep-id' "$PODMAN_LOG" 'run should not pass rootless keep-id mode when launched as root'
+
+# This checks that forced-interactive runs create the CLI attach container with tty and stdin enabled.
+: >"$PODMAN_LOG"
+PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_AGENT_FORCE_EXEC_TTY='1' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" alpha >"$RUN_STDOUT" 2>"$RUN_STDERR"
+assert_file_contains 'create -i -t --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'run should create interactive CLI attach containers with tty and stdin enabled'
 
 # This checks that direct root runs preserve root ownership.
 : >"$CHOWN_LOG"
@@ -624,7 +629,7 @@ assert_file_contains 'pod rm -f hermes-agent-0.10.0-20260417-120000-abcdef123456
 : >"$OPEN_LOG"
 : >"$CURL_LOG"
 PATH="$FAKE_BIN:$PATH" HERMES_TEST_UNAME='Darwin' HERMES_TEST_CURL_READY_MODE='never' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" alpha >"$RUN_STDOUT" 2>"$RUN_STDERR"
-assert_file_contains 'create --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'run should still create the temporary CLI container when published dashboard URL never becomes ready'
+assert_file_contains 'create -i --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'run should still create the temporary CLI container with stdin open when published dashboard URL never becomes ready'
 test ! -s "$OPEN_LOG" || fail 'run should not open browser before published dashboard URL is ready'
 
 # This checks that blocking macOS browser open does not block attach.
@@ -648,14 +653,14 @@ assert_file_contains 'Recent container logs:' "$TMP_DIR/start-fail.stderr" 'run 
 : >"$PODMAN_LOG"
 PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_CLI_COLLISION_MODE='exact' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" alpha >"$RUN_STDOUT" 2>"$RUN_STDERR"
 assert_file_contains 'rm hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli' "$PODMAN_LOG" 'run should remove a stale exact CLI container before opening Hermes'
-assert_file_contains_in_order 'rm hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli' 'create --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'run should clear stale CLI name collisions before create'
+assert_file_contains_in_order 'rm hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli' 'create -i --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'run should clear stale CLI name collisions before create'
 assert_file_contains 'rename abcdef1234567890fedcba0987654321abcdef1234567890fedcba0987654321 hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli-abcdef123456' "$PODMAN_LOG" 'run should rename the replacement CLI container after create'
 
 # This checks that run removes a leftover renamed CLI session container before creating a new one.
 : >"$PODMAN_LOG"
 PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_RENAMED_CLI_MODE='leftover' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" alpha >"$RUN_STDOUT" 2>"$RUN_STDERR"
 assert_file_contains 'rm -f hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli-abcdef123456' "$PODMAN_LOG" 'run should remove a leftover renamed CLI session container before creating a new one'
-assert_file_contains_in_order 'rm -f hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli-abcdef123456' 'create --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'run should remove leftover renamed CLI sessions before creating the next CLI container'
+assert_file_contains_in_order 'rm -f hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli-abcdef123456' 'create -i --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'run should remove leftover renamed CLI sessions before creating the next CLI container'
 
 # This checks that run refuses to kill a still-running renamed CLI session container.
 : >"$PODMAN_LOG"
