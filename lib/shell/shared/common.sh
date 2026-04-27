@@ -95,6 +95,23 @@ hermes_cli_container_name() {
   printf '%s-%s-cli\n' "$image_name" "$workspace"
 }
 
+# This builds the final renamed CLI container name from the temporary name and container id.
+hermes_cli_session_container_name() {
+  local temporary_name="$1"
+  local container_id="$2"
+  local short_id
+
+  short_id="${container_id#sha256:}"
+  short_id="${short_id:0:12}"
+  printf '%s-%s\n' "$temporary_name" "$short_id"
+}
+
+# This matches renamed CLI session containers for one temporary workspace CLI name.
+hermes_cli_session_container_regex() {
+  local temporary_name="$1"
+  printf '^%s-[0-9a-f]{12}$\n' "$(hermes_regex_escape "$temporary_name")"
+}
+
 # This builds the canonical Hermes gateway container name for one image and workspace.
 hermes_container_name() {
   local image_name="$1"
@@ -292,6 +309,45 @@ hermes_run_podman_interactive_command() {
   fi
 
   podman "$subcommand" -i "$@"
+}
+
+# This runs an attached Podman start command while preserving shared TTY wrapper behavior.
+hermes_run_podman_attached_start_command() {
+  local wrap_status
+
+  if hermes_use_interactive_tty; then
+    if hermes_should_wrap_podman_tty_with_script; then
+      wrap_status=0
+    else
+      wrap_status=$?
+    fi
+
+    if [[ "$wrap_status" == "0" ]]; then
+      local command=(podman start -ai "$@")
+      if [[ "${OSTYPE:-}" == darwin* ]]; then
+        script -q /dev/null "${command[@]}"
+        return $?
+      fi
+
+      local quoted=()
+      local arg
+      local command_string
+      for arg in "${command[@]}"; do
+        printf -v arg '%q' "$arg"
+        quoted+=("$arg")
+      done
+      command_string="${quoted[*]}"
+      script -q -e -c "$command_string" /dev/null
+      return $?
+    elif [[ "$wrap_status" == "2" ]]; then
+      return 2
+    fi
+
+    podman start -ai "$@"
+    return $?
+  fi
+
+  podman start -ai "$@"
 }
 
 # This treats host junk files like .DS_Store as harmless so they do not block a build.

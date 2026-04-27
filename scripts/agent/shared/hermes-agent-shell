@@ -42,6 +42,8 @@ host_home="$(hermes_host_home_dir "$workspace")"
 host_workspace="$(hermes_host_workspace_dir "$workspace")"
 container_name="$(hermes_cli_container_name "$image_name" "$workspace")"
 launch_lock_file="$host_home/.hermes-agent-shell-launch.lock"
+session_container_name=""
+cleanup_container_name=""
 
 # This returns a stable process start marker for lock ownership checks when the host can provide one.
 process_start_marker() {
@@ -75,6 +77,10 @@ launch_lock_token="$$|${launch_lock_started}|${ROOT}|${workspace}"
 cleanup_launch_lock() {
   if [[ -f "$launch_lock_file" ]] && [[ "$(<"$launch_lock_file")" == "$launch_lock_token" ]]; then
     rm -f "$launch_lock_file" >/dev/null 2>&1 || true
+  fi
+
+  if [[ -n "$cleanup_container_name" ]]; then
+    podman rm -f "$cleanup_container_name" >/dev/null 2>&1 || true
   fi
 }
 
@@ -138,14 +144,34 @@ if [[ "$existing_container" == "$container_name" ]]; then
   fi
 fi
 
-# This opens nushell by default, or runs the explicit command vector in a no-port CLI container.
-hermes_run_podman_interactive_command run \
-  --rm \
+# This reclaims leftover renamed CLI session containers from interrupted prior launches.
+while IFS= read -r leftover_session_container; do
+  [[ -n "$leftover_session_container" ]] || continue
+  if hermes_container_workspace_matches "$leftover_session_container" "$workspace"; then
+    if hermes_container_is_running "$leftover_session_container"; then
+      printf 'Hermes CLI session container already running for %s: %s\n' "$workspace" "$leftover_session_container" >&2
+      exit 1
+    fi
+
+    podman rm -f "$leftover_session_container" >/dev/null 2>&1 || true
+  fi
+done < <(podman ps -aq --format '{{.Names}}' --filter "name=$(hermes_cli_session_container_regex "$container_name")")
+
+# This creates the temporary CLI container so the wrapper can rename it using the real container id.
+container_id="$(podman create \
   --name "$container_name" \
   --workdir "$HERMES_AGENT_CONTAINER_WORKSPACE" \
   -v "$host_home:$HERMES_AGENT_CONTAINER_HOME" \
   -v "$host_workspace:$HERMES_AGENT_CONTAINER_WORKSPACE" \
   "$image_name" \
-  "${command[@]}"
+  "${command[@]}")"
+
+cleanup_container_name="$container_name"
+session_container_name="$(hermes_cli_session_container_name "$container_name" "$container_id")"
+podman rename "$container_id" "$session_container_name" >/dev/null
+cleanup_container_name="$session_container_name"
+
+# This attaches to the renamed CLI container and starts the requested command there.
+hermes_run_podman_attached_start_command "$session_container_name"
 
 exit $?
