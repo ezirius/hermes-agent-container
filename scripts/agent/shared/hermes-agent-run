@@ -147,7 +147,7 @@ create_gateway_container() {
     -v "$host_home:$HERMES_AGENT_CONTAINER_HOME" \
     -v "$host_workspace:$HERMES_AGENT_CONTAINER_WORKSPACE" \
     "$image_name" \
-    sleep infinity)"
+    gateway run)"
   runtime_created=1
   printf 'Gateway container ID: %s\n' "$container_id"
 }

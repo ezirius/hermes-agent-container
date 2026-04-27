@@ -443,6 +443,8 @@ assert_file_not_contains 'newer Hermes Agent version available' "$RUN_STDERR" 'r
 assert_file_contains 'pod create --userns keep-id --name hermes-agent-0.10.0-20260417-120000-abcdef123456-beta -p 127.0.0.1:9434:9234' "$PODMAN_LOG" 'run should put keep-id user namespace on the workspace pod for non-root runs'
 assert_file_contains 'run -d --name hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-dashboard' "$PODMAN_LOG" 'run should create a dashboard role container for the workspace'
 assert_file_contains 'run -d --name hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-gateway' "$PODMAN_LOG" 'run should create a gateway role container for the workspace'
+assert_file_contains 'gateway run' "$PODMAN_LOG" 'run should start the gateway role with the official Hermes gateway command'
+assert_file_not_contains 'sleep infinity' "$PODMAN_LOG" 'run should not keep the gateway role alive with a placeholder command'
 assert_file_contains_in_order 'run -d --name hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-gateway' 'rm -f old-gateway' "$PODMAN_LOG" 'run should remove stale containers after replacement creation'
 assert_file_contains_in_order 'ps --format {{.Names}} --filter name=^hermes-agent-0\.10\.0-20260417-120000-abcdef123456-beta-gateway$' 'rm -f old-gateway' "$PODMAN_LOG" 'run should remove stale containers after a running gateway check'
 assert_file_contains '--pod hermes-agent-0.10.0-20260417-120000-abcdef123456-beta' "$PODMAN_LOG" 'run should place role containers in the workspace pod'
