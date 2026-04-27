@@ -158,7 +158,13 @@ while IFS= read -r leftover_session_container; do
 done < <(podman ps -aq --format '{{.Names}}' --filter "name=$(hermes_cli_session_container_regex "$container_name")")
 
 # This creates the temporary CLI container so the wrapper can rename it using the real container id.
+create_interactive_args=()
+while IFS= read -r -d '' create_arg; do
+  create_interactive_args+=("$create_arg")
+done < <(hermes_podman_create_interactive_args)
+
 container_id="$(podman create \
+  "${create_interactive_args[@]}" \
   --name "$container_name" \
   --workdir "$HERMES_AGENT_CONTAINER_WORKSPACE" \
   -v "$host_home:$HERMES_AGENT_CONTAINER_HOME" \

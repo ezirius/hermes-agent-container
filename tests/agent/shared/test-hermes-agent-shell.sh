@@ -175,12 +175,12 @@ SHELL_STDERR="$TMP_DIR/shell.stderr"
 rm -f "$HOME/tmp/hermes-agent/alpha/hermes-agent-home/.hermes-agent-shell-launch.lock"
 rm -f "$HOME/tmp/hermes-agent/beta/hermes-agent-home/.hermes-agent-shell-launch.lock"
 
-# This is the normal case where beta opens an ephemeral CLI container.
+# This is the normal case where beta opens an ephemeral CLI container without a terminal on stdin.
 printf 'beta\n' | PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" >/dev/null 2>"$SHELL_STDERR"
 
 # These checks prove the shell command uses a no-port, no-pod CLI container with the workspace mounts.
 assert_file_contains 'Selection:' "$SHELL_STDERR" 'shell should show an explicit selection prompt'
-assert_file_contains 'create --name hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-cli --workdir /workspace/general' "$PODMAN_LOG" 'shell should create the CLI container with the temporary exact name first'
+assert_file_contains 'create -i --name hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-cli --workdir /workspace/general' "$PODMAN_LOG" 'shell should keep stdin open when the picker path is non-interactive'
 assert_file_contains "$HOME/tmp/hermes-agent/beta/hermes-agent-home:/opt/data" "$PODMAN_LOG" 'shell should mount the Hermes data path into the CLI container'
 assert_file_contains "$HOME/tmp/hermes-agent/beta/hermes-agent-general:/workspace/general" "$PODMAN_LOG" 'shell should mount the workspace path into the CLI container'
 assert_file_contains 'rename abcdef1234567890fedcba0987654321abcdef1234567890fedcba0987654321 hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-cli-abcdef123456' "$PODMAN_LOG" 'shell should rename the CLI container to include the first 12 chars of the real container id'
@@ -196,7 +196,7 @@ assert_file_not_contains 'exec -i hermes-agent-0.10.0-20260417-120000-abcdef1234
 PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha >/dev/null 2>"$SHELL_STDERR"
 
 assert_file_not_contains 'Selection:' "$SHELL_STDERR" 'shell should not show the picker when a workspace argument is provided'
-assert_file_contains 'create --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'shell should accept a workspace argument and create the temporary CLI container'
+assert_file_contains 'create -i --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'shell should accept a workspace argument and keep stdin open when stdin is non-interactive'
 assert_file_contains 'start -ai hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli-abcdef123456' "$PODMAN_LOG" 'shell should attach through the renamed CLI container when a workspace argument is provided'
 
 # This checks that a rename failure cleans up the temporary CLI container name.
@@ -215,7 +215,7 @@ fi
 PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_CLI_COLLISION_MODE='exact' bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha >/dev/null 2>"$SHELL_STDERR"
 
 assert_file_contains 'rm hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli' "$PODMAN_LOG" 'shell should remove a stale exact CLI container name before opening a replacement'
-assert_file_contains 'create --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'shell should create a replacement temporary CLI container after removing the stale exact name'
+assert_file_contains 'create -i --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'shell should create a replacement temporary CLI container with stdin open after removing the stale exact name'
 assert_file_contains 'rename abcdef1234567890fedcba0987654321abcdef1234567890fedcba0987654321 hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli-abcdef123456' "$PODMAN_LOG" 'shell should rename the replacement CLI container after create'
 
 # This checks that shell removes a leftover renamed CLI session container before launching a new one.
@@ -223,7 +223,7 @@ assert_file_contains 'rename abcdef1234567890fedcba0987654321abcdef1234567890fed
 PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_RENAMED_CLI_MODE='leftover' bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha >/dev/null 2>"$SHELL_STDERR"
 
 assert_file_contains 'rm -f hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli-abcdef123456' "$PODMAN_LOG" 'shell should remove a leftover renamed CLI session container before launching a new one'
-assert_file_contains_in_order 'rm -f hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli-abcdef123456' 'create --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'shell should remove leftover renamed CLI session containers before creating the next CLI container'
+assert_file_contains_in_order 'rm -f hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli-abcdef123456' 'create -i --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'shell should remove leftover renamed CLI session containers before creating the next CLI container'
 
 # This checks that shell refuses to kill a still-running renamed CLI session container.
 : >"$PODMAN_LOG"
@@ -256,7 +256,7 @@ printf '999999|stale|%s|alpha\n' "$ROOT" >"$HOME/tmp/hermes-agent/alpha/hermes-a
 : >"$PODMAN_LOG"
 PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha >/dev/null 2>"$SHELL_STDERR"
 
-assert_file_contains 'create --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'shell should recover from a stale launch lock and still create the temporary CLI container'
+assert_file_contains 'create -i --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'shell should recover from a stale launch lock and still create the temporary CLI container with stdin open'
 
 # This checks that shell respects an active launch lock for the same worktree and workspace.
 sleep 30 &
@@ -276,7 +276,7 @@ assert_file_contains 'Another Hermes CLI launch is already in progress for alpha
 : >"$PODMAN_LOG"
 PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha hermes auth list >/dev/null 2>"$SHELL_STDERR"
 
-assert_file_contains 'create --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'shell should create the temporary CLI container for explicit commands'
+assert_file_contains 'create -i --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'shell should create the temporary CLI container for explicit commands with stdin open'
 assert_file_contains 'hermes-agent-0.10.0-20260417-120000-abcdef123456 hermes auth list' "$PODMAN_LOG" 'shell should forward an explicit command vector into the created CLI container'
 assert_file_contains 'start -ai hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli-abcdef123456' "$PODMAN_LOG" 'shell should start the renamed CLI container for explicit commands'
 
@@ -298,8 +298,14 @@ assert_file_contains 'Workspace gamma is not configured.' "$TMP_DIR/unconfigured
 : >"$PODMAN_LOG"
 printf 'beta\n' | PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_IMAGE_MODE="localhost" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" >/dev/null
 
-assert_file_contains 'create --name hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-cli' "$PODMAN_LOG" 'shell should normalize localhost image names before naming temporary CLI containers'
-assert_file_contains 'rename abcdef1234567890fedcba0987654321abcdef1234567890fedcba0987654321 hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-cli-abcdef123456' "$PODMAN_LOG" 'shell should rename normalized-image CLI containers using the returned container id'
+assert_file_contains 'create -i --name hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-cli' "$PODMAN_LOG" 'shell should normalize localhost image names before creating temporary CLI containers with stdin open'
+
+# This checks that forced-interactive shell launches create the CLI container with tty and stdin enabled.
+: >"$PODMAN_LOG"
+PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_AGENT_FORCE_EXEC_TTY='1' bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha >/dev/null 2>"$SHELL_STDERR"
+
+assert_file_contains 'create -i -t --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'shell should create interactive CLI containers with tty and stdin enabled'
+assert_file_contains 'rename abcdef1234567890fedcba0987654321abcdef1234567890fedcba0987654321 hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli-abcdef123456' "$PODMAN_LOG" 'shell should rename interactive CLI containers using the returned container id'
 
 # This checks that the script explains the failure when no local image exists.
 if printf 'alpha\n' | PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_IMAGE_MODE="missing" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" >/dev/null 2>"$TMP_DIR/missing.stderr"; then
@@ -307,6 +313,12 @@ if printf 'alpha\n' | PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG
 fi
 
 assert_file_contains 'No built Hermes Agent image found. Run scripts/agent/shared/hermes-agent-build first.' "$TMP_DIR/missing.stderr" 'shell should explain missing local images'
+
+# This checks that the shell create path keeps stdin open but skips tty mode when input is not a terminal.
+: >"$PODMAN_LOG"
+PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha cat </dev/null >/dev/null 2>"$SHELL_STDERR"
+
+assert_file_contains 'create -i --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'shell should create non-interactive CLI containers with stdin open but without tty mode'
 
 # This checks that the shared exec helper drops `-t` when stdin is not a real terminal.
 cat >"$FAKE_BIN/podman" <<'EOF'

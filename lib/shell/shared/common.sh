@@ -350,6 +350,16 @@ hermes_run_podman_attached_start_command() {
   podman start -ai "$@"
 }
 
+# This returns the Podman create flags needed to preserve stdin and tty behavior across attached start.
+hermes_podman_create_interactive_args() {
+  if hermes_use_interactive_tty; then
+    printf '%s\0' -i -t
+    return 0
+  fi
+
+  printf '%s\0' -i
+}
+
 # This treats host junk files like .DS_Store as harmless so they do not block a build.
 hermes_is_ignorable_host_untracked_path() {
   local path="$1"
