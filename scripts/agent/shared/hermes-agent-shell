@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-# This script opens nushell by default, or runs an explicit command inside a running workspace container.
+# This script opens nushell by default, or runs an explicit command in an ephemeral CLI container.
 
 # This finds the repo root so the script can reach shared helpers.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -29,14 +29,32 @@ else
   fi
 fi
 
-# This looks for the chosen workspace container after the command mode is decided.
-container_name="$(hermes_running_container "$workspace")"
+# This finds the newest local image the shell script is allowed to use.
+image_name="$(hermes_latest_image)"
 
-# This gives a clear message when the chosen workspace is not running yet.
-if [[ -z "$container_name" ]]; then
-  printf 'No running Hermes Agent container found for %s. Run scripts/agent/shared/hermes-agent-run first.\n' "$workspace" >&2
+if [[ -z "$image_name" ]]; then
+  printf 'No built Hermes Agent image found. Run scripts/agent/shared/hermes-agent-build first.\n' >&2
   exit 1
 fi
 
-# This opens nushell by default, or runs the explicit command vector when one was provided.
-hermes_exec_podman_interactive_command exec "$container_name" "${command[@]}"
+# This builds the host paths and CLI container name around the selected workspace.
+host_home="$(hermes_host_home_dir "$workspace")"
+host_workspace="$(hermes_host_workspace_dir "$workspace")"
+container_name="$(hermes_cli_container_name "$image_name" "$workspace")"
+
+# This rejects unsafe managed paths before mounting them into the CLI container.
+hermes_validate_safe_host_base_path
+hermes_validate_safe_host_dirnames
+hermes_reject_symlinked_managed_path "$host_home"
+hermes_reject_symlinked_managed_path "$host_workspace"
+mkdir -p "$host_home" "$host_workspace"
+
+# This opens nushell by default, or runs the explicit command vector in a no-port CLI container.
+hermes_exec_podman_interactive_command run \
+  --rm \
+  --name "$container_name" \
+  --workdir "$HERMES_AGENT_CONTAINER_WORKSPACE" \
+  -v "$host_home:$HERMES_AGENT_CONTAINER_HOME" \
+  -v "$host_workspace:$HERMES_AGENT_CONTAINER_WORKSPACE" \
+  "$image_name" \
+  "${command[@]}"

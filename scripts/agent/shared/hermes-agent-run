@@ -67,6 +67,7 @@ pod_name="$(hermes_pod_name "$image_name" "$workspace")"
 infra_container_name="$(hermes_infra_container_name "$image_name" "$workspace")"
 gateway_container_name="$(hermes_role_container_name "$image_name" "$workspace" gateway)"
 dashboard_container_name="$(hermes_role_container_name "$image_name" "$workspace" dashboard)"
+cli_container_name="$(hermes_cli_container_name "$image_name" "$workspace")"
 container_name="$gateway_container_name"
 dashboard_url="$(hermes_workspace_published_url "$workspace")"
 reuse_container=0
@@ -300,4 +301,11 @@ while true; do
   break
 done
 
-hermes_exec_podman_interactive_command exec --workdir "$HERMES_AGENT_CONTAINER_WORKSPACE" "$container_name" /opt/hermes/docker/entrypoint.sh
+hermes_exec_podman_interactive_command run \
+  --rm \
+  --name "$cli_container_name" \
+  --workdir "$HERMES_AGENT_CONTAINER_WORKSPACE" \
+  -v "$host_home:$HERMES_AGENT_CONTAINER_HOME" \
+  -v "$host_workspace:$HERMES_AGENT_CONTAINER_WORKSPACE" \
+  "$image_name" \
+  "$HERMES_AGENT_CHAT_COMMAND"

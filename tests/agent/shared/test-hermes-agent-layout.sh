@@ -109,7 +109,7 @@ grep -q '^WORKDIR ${HERMES_AGENT_CONTAINER_WORKSPACE}$' "$ROOT/config/containers
 grep -q '^# This file holds the shared shell helpers used by the wrapper scripts\.$' "$ROOT/lib/shell/shared/common.sh"
 grep -q '^# This script builds a fresh Hermes Agent image from the saved repo settings\.$' "$ROOT/scripts/agent/shared/hermes-agent-build"
 grep -q '^# This script starts a saved workspace container, then opens Hermes\.$' "$ROOT/scripts/agent/shared/hermes-agent-run"
-grep -q '^# This script opens nushell by default, or runs an explicit command inside a running workspace container\.$' "$ROOT/scripts/agent/shared/hermes-agent-shell"
+grep -q '^# This script opens nushell by default, or runs an explicit command in an ephemeral CLI container\.$' "$ROOT/scripts/agent/shared/hermes-agent-shell"
 
 # This makes sure scripts and helpers do not quietly hard-code workspace-specific settings.
 if grep -R -E 'HERMES_AGENT_PORT_OFFSET_|\bezirius\b|\bnala\b|hermes-agent-workspace' "$ROOT/scripts/agent/shared" "$ROOT/lib/shell/shared" >/dev/null; then

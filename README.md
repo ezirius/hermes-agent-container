@@ -33,7 +33,7 @@ tests/agent/shared/test-hermes-agent-shell.sh
 
 - Build the image: `scripts/agent/shared/hermes-agent-build`
 - Start a configured workspace: `scripts/agent/shared/hermes-agent-run`
-- Open nushell in a running workspace container: `scripts/agent/shared/hermes-agent-shell`
+- Open nushell in an ephemeral workspace CLI container: `scripts/agent/shared/hermes-agent-shell`
 
 ## Configuration
 
@@ -53,7 +53,7 @@ The image build starts from the official upstream `nousresearch/hermes-agent` im
 
 Successful builds use an image-id suffix in the final local tag: `hermes-agent-<version>-<YYYYMMDD-HHMMSS>-<12-character-image-id>`.
 
-Runtime pods use `<image-name>-<workspace>`. Role containers inside each pod use `<image-name>-<workspace>-gateway` and `<image-name>-<workspace>-dashboard`.
+Runtime pods use `<image-name>-<workspace>`. Role containers inside each pod use `<image-name>-<workspace>-gateway` and `<image-name>-<workspace>-dashboard`. Interactive CLI containers are ephemeral and use `<image-name>-<workspace>-cli` without joining the pod or publishing ports.
 
 ## Documentation
 

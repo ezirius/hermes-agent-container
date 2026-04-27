@@ -134,6 +134,9 @@ case "$1" in
     esac
     ;;
   run)
+    if [[ -n "${HERMES_TEST_EVENT_LOG:-}" ]]; then
+      printf 'attach %s\n' "$*" >>"$HERMES_TEST_EVENT_LOG"
+    fi
     printf 'new-container\n'
     ;;
   start)
@@ -497,7 +500,9 @@ assert_file_contains 'pod rm -f old-gateway-pod' "$PODMAN_LOG" 'run should remov
 assert_file_contains 'pod rm -f old-dashboard-pod' "$PODMAN_LOG" 'run should remove stale dashboard pods even when their containers are gone'
 assert_file_contains 'http://127.0.0.1:9434' "$OPEN_LOG" 'run should open the derived dashboard URL'
 assert_file_contains 'http://127.0.0.1:9434' "$CURL_LOG" 'run should wait for the published dashboard URL before opening the browser'
-assert_file_contains 'exec -i --workdir /workspace/general hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-gateway /opt/hermes/docker/entrypoint.sh' "$PODMAN_LOG" 'run should attach through the gateway role container so Hermes runs from its virtualenv'
+assert_file_contains 'run -i --rm --name hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-cli --workdir /workspace/general' "$PODMAN_LOG" 'run should attach through an ephemeral CLI container for the selected workspace'
+assert_file_contains 'hermes-agent-0.10.0-20260417-120000-abcdef123456 hermes' "$PODMAN_LOG" 'run should start Hermes CLI through the derived image entrypoint'
+assert_file_not_contains 'exec -i --workdir /workspace/general hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-gateway /opt/hermes/docker/entrypoint.sh' "$PODMAN_LOG" 'run should not attach through the persistent gateway container'
 
 # This checks that sudo-launched root runs restore caller ownership.
 : >"$CHOWN_LOG"
@@ -581,7 +586,7 @@ assert_file_contains 'pod rm -f hermes-agent-0.10.0-20260417-120000-abcdef123456
 : >"$OPEN_LOG"
 : >"$CURL_LOG"
 PATH="$FAKE_BIN:$PATH" HERMES_TEST_UNAME='Darwin' HERMES_TEST_CURL_READY_MODE='never' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" alpha >"$RUN_STDOUT" 2>"$RUN_STDERR"
-assert_file_contains 'exec -i --workdir /workspace/general hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-gateway /opt/hermes/docker/entrypoint.sh' "$PODMAN_LOG" 'run should still attach through the gateway entrypoint when published dashboard URL never becomes ready'
+assert_file_contains 'run -i --rm --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'run should still attach through an ephemeral CLI container when published dashboard URL never becomes ready'
 test ! -s "$OPEN_LOG" || fail 'run should not open browser before published dashboard URL is ready'
 
 # This checks that blocking macOS browser open does not block attach.
@@ -590,7 +595,7 @@ test ! -s "$OPEN_LOG" || fail 'run should not open browser before published dash
 : >"$EVENT_LOG"
 PATH="$FAKE_BIN:$PATH" HERMES_TEST_UNAME='Darwin' HERMES_TEST_OPEN_BLOCK='1' HERMES_TEST_EVENT_LOG="$EVENT_LOG" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" alpha >"$RUN_STDOUT" 2>"$RUN_STDERR"
 wait_for_file_contains 'open-start http://127.0.0.1:9334' "$EVENT_LOG" 'run should start macOS browser opener'
-wait_for_file_contains 'attach exec -i --workdir /workspace/general hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-gateway /opt/hermes/docker/entrypoint.sh' "$EVENT_LOG" 'run should attach through the gateway entrypoint while browser opener is detached'
+wait_for_file_contains 'attach run -i --rm --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$EVENT_LOG" 'run should attach through an ephemeral CLI container while browser opener is detached'
 
 # This checks that failed starts still reach the wrapper's startup diagnostics.
 : >"$PODMAN_LOG"

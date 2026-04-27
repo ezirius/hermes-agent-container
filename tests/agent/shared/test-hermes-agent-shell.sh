@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-# This test checks that the shell script finds the right running container for one workspace.
+# This test checks that the shell script opens an ephemeral CLI container for one workspace.
 
 # This finds the repo root so the test can reach the script, config, and helpers.
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -32,13 +32,20 @@ backup_created=1
 FAKE_BIN="$TMP_DIR/fake-bin"
 mkdir -p "$FAKE_BIN"
 
-# This fake Podman returns controlled running-container answers for each test case.
+# This fake Podman returns controlled image and container answers for each test case.
 cat >"$FAKE_BIN/podman" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$HERMES_TEST_PODMAN_LOG"
 
 case "$1" in
+  images)
+    case "${HERMES_TEST_IMAGE_MODE:-present}" in
+      missing) ;;
+      localhost) printf 'localhost/hermes-agent-0.10.0-20260417-120000-abcdef123456\n' ;;
+      *) printf 'hermes-agent-0.10.0-20260417-120000-abcdef123456\n' ;;
+    esac
+    ;;
   ps)
     case "${HERMES_TEST_CONTAINER_MODE:-present}" in
       present)
@@ -76,6 +83,9 @@ case "$1" in
     ;;
   exec)
     ;;
+  run)
+    printf 'new-cli-container\n'
+    ;;
 esac
 EOF
 
@@ -103,32 +113,37 @@ EOF
 PODMAN_LOG="$TMP_DIR/podman.log"
 SHELL_STDERR="$TMP_DIR/shell.stderr"
 
-# This is the normal case where beta has one running container.
+# This is the normal case where beta opens an ephemeral CLI container.
 printf 'beta\n' | PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" >/dev/null 2>"$SHELL_STDERR"
 
-# These checks prove the shell command looked up the right container and attached to it.
+# These checks prove the shell command uses a no-port, no-pod CLI container with the workspace mounts.
 assert_file_contains 'Selection:' "$SHELL_STDERR" 'shell should show an explicit selection prompt'
-assert_file_contains '--filter name=^hermes-agent-[0-9][0-9.]*-[0-9]{8}-[0-9]{6}-[0-9a-f]{12}-beta-gateway$' "$PODMAN_LOG" 'shell should filter running gateway containers by chosen workspace'
-assert_file_contains 'exec -i hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-gateway nu' "$PODMAN_LOG" 'shell should exec configured nushell command in the workspace gateway container'
+assert_file_contains 'run -i --rm --name hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-cli --workdir /workspace/general' "$PODMAN_LOG" 'shell should run an ephemeral CLI container for the chosen workspace'
+assert_file_contains "$HOME/tmp/hermes-agent/beta/hermes-agent-home:/opt/data" "$PODMAN_LOG" 'shell should mount the Hermes data path into the CLI container'
+assert_file_contains "$HOME/tmp/hermes-agent/beta/hermes-agent-general:/workspace/general" "$PODMAN_LOG" 'shell should mount the workspace path into the CLI container'
+assert_file_contains 'hermes-agent-0.10.0-20260417-120000-abcdef123456 nu' "$PODMAN_LOG" 'shell should run the configured shell command in the CLI container by default'
+assert_file_not_contains '--pod' "$PODMAN_LOG" 'shell CLI container should not join the runtime pod'
+assert_file_not_contains '-p ' "$PODMAN_LOG" 'shell CLI container should not publish ports'
+assert_file_not_contains 'exec -i hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-gateway nu' "$PODMAN_LOG" 'shell should not exec into the persistent gateway container'
 
 # This checks that one workspace argument skips the picker and still opens nushell.
 : >"$PODMAN_LOG"
 PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha >/dev/null 2>"$SHELL_STDERR"
 
-assert_file_contains 'exec -i hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-gateway nu' "$PODMAN_LOG" 'shell should accept a workspace argument and still open nushell'
 assert_file_not_contains 'Selection:' "$SHELL_STDERR" 'shell should not show the picker when a workspace argument is provided'
+assert_file_contains 'run -i --rm --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'shell should accept a workspace argument and open an ephemeral CLI container'
 
 # This checks that an explicit in-container command passes through unchanged.
 : >"$PODMAN_LOG"
 PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha hermes auth list >/dev/null 2>"$SHELL_STDERR"
 
-assert_file_contains 'exec -i hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-gateway hermes auth list' "$PODMAN_LOG" 'shell should forward an explicit command vector after the workspace name'
+assert_file_contains 'hermes-agent-0.10.0-20260417-120000-abcdef123456 hermes auth list' "$PODMAN_LOG" 'shell should forward an explicit command vector after the workspace name'
 
 # This checks that a non-Hermes command also passes through unchanged.
 : >"$PODMAN_LOG"
 PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha python -V >/dev/null 2>"$SHELL_STDERR"
 
-assert_file_contains 'exec -i hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-gateway python -V' "$PODMAN_LOG" 'shell should forward non-Hermes commands after the workspace name'
+assert_file_contains 'hermes-agent-0.10.0-20260417-120000-abcdef123456 python -V' "$PODMAN_LOG" 'shell should forward non-Hermes commands after the workspace name'
 
 # This checks that a typed workspace still has to be one of the configured ones.
 if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" gamma >/dev/null 2>"$TMP_DIR/unconfigured.stderr"; then
@@ -137,30 +152,18 @@ fi
 
 assert_file_contains 'Workspace gamma is not configured.' "$TMP_DIR/unconfigured.stderr" 'shell should reject unconfigured workspace arguments before looking up containers'
 
-# This checks that the newest running container wins when more than one matches.
+# This checks that localhost-prefixed local images are normalized before CLI container naming.
 : >"$PODMAN_LOG"
-printf 'beta\n' | PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_CONTAINER_MODE="multiple" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" >/dev/null
+printf 'beta\n' | PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_IMAGE_MODE="localhost" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" >/dev/null
 
-assert_file_contains 'exec -i hermes-agent-0.10.0-20260417-120500-bcdef1234567-beta-gateway nu' "$PODMAN_LOG" 'shell should choose the newest running workspace gateway container when multiple match'
+assert_file_contains 'run -i --rm --name hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-cli' "$PODMAN_LOG" 'shell should normalize localhost image names before naming CLI containers'
 
-# This checks that shell ignores colliding hyphenated workspace names.
-: >"$PODMAN_LOG"
-PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_CONTAINER_MODE="collision" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha >/dev/null 2>"$SHELL_STDERR"
-
-assert_file_contains 'exec -i hermes-agent-0.10.0-20260417-120500-bcdef1234567-alpha-gateway nu' "$PODMAN_LOG" 'shell should ignore alpha-prod when alpha is requested'
-
-# This checks that shell skips matching names with the wrong workspace mount.
-: >"$PODMAN_LOG"
-PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_CONTAINER_MODE="mount-mismatch" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" beta >/dev/null 2>"$SHELL_STDERR"
-
-assert_file_contains 'exec -i hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-gateway nu' "$PODMAN_LOG" 'shell should skip running containers whose workspace mount does not match the requested workspace'
-
-# This checks that the script explains the failure when no container exists.
-if printf 'alpha\n' | PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_CONTAINER_MODE="missing" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" >/dev/null 2>"$TMP_DIR/missing.stderr"; then
-  fail 'shell should fail when no container exists for workspace'
+# This checks that the script explains the failure when no local image exists.
+if printf 'alpha\n' | PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_IMAGE_MODE="missing" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" >/dev/null 2>"$TMP_DIR/missing.stderr"; then
+  fail 'shell should fail when no local image exists'
 fi
 
-assert_file_contains 'No running Hermes Agent container found for alpha.' "$TMP_DIR/missing.stderr" 'shell should explain missing workspace container'
+assert_file_contains 'No built Hermes Agent image found. Run scripts/agent/shared/hermes-agent-build first.' "$TMP_DIR/missing.stderr" 'shell should explain missing local images'
 
 # This checks that the shared exec helper drops `-t` when stdin is not a real terminal.
 cat >"$FAKE_BIN/podman" <<'EOF'

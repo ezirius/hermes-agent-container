@@ -8,7 +8,7 @@ The shared scripts are intended to work on both macOS and Linux hosts.
 
 - Build the image: `scripts/agent/shared/hermes-agent-build`
 - Start a configured workspace: `scripts/agent/shared/hermes-agent-run`
-- Open nushell in a running workspace container: `scripts/agent/shared/hermes-agent-shell`
+- Open nushell in an ephemeral workspace CLI container: `scripts/agent/shared/hermes-agent-shell`
 
 Command forms:
 
@@ -19,7 +19,7 @@ Command forms:
 - `scripts/agent/shared/hermes-agent-shell`
   - no args: show the workspace picker, then open `nu`
   - one arg: use that workspace directly, then open `nu`
-  - extra args after the workspace: run the explicit command inside that workspace container
+  - extra args after the workspace: run the explicit command inside an ephemeral CLI container for that workspace
 
 Examples:
 
@@ -37,8 +37,8 @@ The image build uses the official upstream Hermes Agent image and only layers lo
 
 - On macOS, the wrapper prefers `open` when it is available.
 - On Linux, the wrapper prefers `xdg-open` and falls back to `gio open` when `xdg-open` fails.
-- If no supported opener exists, or the opener fails, the container still starts and the script still attaches to the Hermes CLI.
-- The workspace container starts Hermes with `--host 0.0.0.0` so the published host port can reach the dashboard.
+- If no supported opener exists, or the opener fails, the persistent runtime still starts and the script still opens an ephemeral Hermes CLI container.
+- The dashboard container starts Hermes with `--host 0.0.0.0` so the published host port can reach the dashboard.
 - The wrapper binds the published dashboard port to `127.0.0.1` on the host to keep that insecure dashboard local to the developer machine by default.
 - Risk: Hermes marks this mode insecure because the dashboard exposes API keys and config without robust authentication. Only run this wrapper on a trusted local host and do not re-publish or forward the mapped loopback port to untrusted networks.
 
@@ -49,10 +49,12 @@ For a selected workspace named `WORKSPACE`, the run script creates these host pa
 - Host home path: `${HOME}/Documents/Ezirius/.applications-data/.containers-artificial-intelligence/WORKSPACE/hermes-agent-home`
 - Host workspace path: `${HOME}/Documents/Ezirius/.applications-data/.containers-artificial-intelligence/WORKSPACE/hermes-agent-general`
 
-The workspace pod holds one container. That container uses these mappings:
+The persistent workspace pod holds gateway and dashboard role containers. Those containers use these mappings:
 
 - Host home path -> `/opt/data`
 - Host workspace path -> `/workspace/general`
+
+Interactive CLI containers created by `hermes-agent-run` and `hermes-agent-shell` use the same mappings and `--workdir /workspace/general`, but they are ephemeral `--rm` containers outside the workspace pod and do not publish ports.
 
 Containers launched by normal users are created with `--userns keep-id` so mounted workspace paths follow the invoking host user. If the wrapper is launched as root, it repairs the host home and workspace directory ownership before starting containers and skips rootless `keep-id` mode.
 
@@ -77,7 +79,7 @@ When `hermes-agent-run` starts replacement pods for a workspace, it does not rem
 
 Exact matching pods with the wrong dashboard publish contract are removed before same-name recreation because Podman cannot create a replacement pod with the same name while the old pod still exists.
 
-If the selected workspace already has a matching pod and gateway container for the newest image, the wrapper reuses them. If the matching gateway container is stopped, the wrapper starts it before attaching to the Hermes CLI in the workspace container.
+If the selected workspace already has a matching pod and gateway container for the newest image, the wrapper reuses them. If the matching gateway container is stopped, the wrapper starts it before opening the ephemeral Hermes CLI container.
 
 When reusing an exact matching pod, the wrapper renames Podman's generated infra container to the canonical `<image-name>-<workspace>-infrastructure` name if needed.
 

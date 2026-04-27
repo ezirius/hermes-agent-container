@@ -87,6 +87,14 @@ hermes_infra_container_name() {
   printf '%s-%s-infrastructure\n' "$image_name" "$workspace"
 }
 
+# This builds the canonical ephemeral CLI container name for one image and workspace.
+hermes_cli_container_name() {
+  local image_name="$1"
+  local workspace="$2"
+
+  printf '%s-%s-cli\n' "$image_name" "$workspace"
+}
+
 # This builds the canonical Hermes gateway container name for one image and workspace.
 hermes_container_name() {
   local image_name="$1"
