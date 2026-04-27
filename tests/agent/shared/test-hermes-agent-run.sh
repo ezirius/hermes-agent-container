@@ -79,7 +79,10 @@ case "$1" in
         ;;
       inspect)
         if [[ "$*" == *'{{.InfraContainerID}}'* ]]; then
-          printf '58ed0c7f0326\n'
+          case "${*: -1}" in
+            hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha) printf 'fbeaa551b980\n' ;;
+            *) printf '58ed0c7f0326\n' ;;
+          esac
           exit 0
         fi
 
@@ -161,9 +164,19 @@ case "$1" in
     ;;
   inspect)
     if [[ "$*" == *'{{.Name}}'* ]]; then
-      case "${HERMES_TEST_INFRA_NAME_MODE:-random}" in
-        matching) printf 'hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-infrastructure\n' ;;
-        *) printf '58ed0c7f0326-infra\n' ;;
+      case "${*: -1}" in
+        fbeaa551b980)
+          case "${HERMES_TEST_INFRA_NAME_MODE:-random}" in
+            matching) printf 'hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-infrastructure\n' ;;
+            *) printf 'fbeaa551b980-infra\n' ;;
+          esac
+          ;;
+        *)
+          case "${HERMES_TEST_INFRA_NAME_MODE:-random}" in
+            matching) printf 'hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-infrastructure\n' ;;
+            *) printf '58ed0c7f0326-infra\n' ;;
+          esac
+          ;;
       esac
     elif [[ "$*" == *'{{range .Mounts}}'* ]]; then
       container_name="${*: -1}"
@@ -194,6 +207,10 @@ case "$1" in
     printf '(no recent logs)\n'
     ;;
   rename)
+    if [[ "${HERMES_TEST_RENAME_MODE:-ok}" == 'fail' ]]; then
+      printf 'rename failed\n' >&2
+      exit 9
+    fi
     ;;
 esac
 EOF
@@ -501,12 +518,19 @@ assert_file_not_contains '--userns keep-id' "$PODMAN_LOG" 'run should not pass r
 : >"$OPEN_LOG"
 PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_STALE_MODE='same-name' HERMES_TEST_POD_MODE='present' HERMES_TEST_STALE_POD_MODE='missing' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" alpha >"$RUN_STDOUT" 2>"$RUN_STDERR"
 assert_file_not_contains 'http://127.0.0.1:9334' "$OPEN_LOG" 'run should not reopen the browser when both matching pods and containers are reused unchanged'
-assert_file_contains 'rename 58ed0c7f0326 hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-infrastructure' "$PODMAN_LOG" 'run should rename existing random infra containers before reusing a pod'
+assert_file_contains 'rename fbeaa551b980 hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-infrastructure' "$PODMAN_LOG" 'run should rename the exact current pod infra container to the canonical current image workspace name'
 
 # This checks that matching infra container names are left unchanged on reuse.
 : >"$PODMAN_LOG"
 PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_STALE_MODE='same-name' HERMES_TEST_POD_MODE='present' HERMES_TEST_STALE_POD_MODE='missing' HERMES_TEST_INFRA_NAME_MODE='matching' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" alpha >"$RUN_STDOUT" 2>"$RUN_STDERR"
-assert_file_not_contains 'rename 58ed0c7f0326 hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-infrastructure' "$PODMAN_LOG" 'run should not rename infra containers that already have the expected name'
+assert_file_not_contains 'rename fbeaa551b980 hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-infrastructure' "$PODMAN_LOG" 'run should not rename infra containers that already have the expected name'
+
+# This checks that exact infra rename failures get a clear wrapper-owned message.
+: >"$PODMAN_LOG"
+if PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_STALE_MODE='same-name' HERMES_TEST_POD_MODE='present' HERMES_TEST_STALE_POD_MODE='missing' HERMES_TEST_RENAME_MODE='fail' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" alpha >"$RUN_STDOUT" 2>"$TMP_DIR/infra-rename.stderr"; then
+  fail 'run should fail when exact pod infra container rename fails'
+fi
+assert_file_contains 'Failed to rename Hermes pod infra container fbeaa551b980 to hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-infrastructure.' "$TMP_DIR/infra-rename.stderr" 'run should explain exact infra rename failures'
 
 # This checks that exact-name containers with stale mounts are removed before recreation.
 : >"$PODMAN_LOG"

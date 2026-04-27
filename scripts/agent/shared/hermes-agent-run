@@ -116,7 +116,10 @@ ensure_infra_container_name() {
   [[ -n "$current_infra_name" ]] || return 0
 
   [[ "$current_infra_name" != "$infra_container_name" ]] || return 0
-  podman rename "$infra_container_id" "$infra_container_name" >/dev/null
+  if ! podman rename "$infra_container_id" "$infra_container_name" >/dev/null; then
+    printf 'Failed to rename Hermes pod infra container %s to %s.\n' "$infra_container_id" "$infra_container_name" >&2
+    exit 1
+  fi
 }
 
 # This checks whether a pod with the exact name already exists.
