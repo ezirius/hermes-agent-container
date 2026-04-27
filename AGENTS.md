@@ -171,7 +171,7 @@ Current stable paths in this repo are:
 - `scripts/agent/shared/hermes-agent-run` must use `--userns keep-id` for non-root runtime containers and repair mounted host path ownership while skipping rootless `keep-id` mode when launched as root.
 - `scripts/agent/shared/hermes-agent-run` delegates first-run setup and state bootstrapping to the upstream Hermes entrypoint.
 - Hermes pod names follow `<image-name>-<workspace>`; role containers inside the pod use `<image-name>-<workspace>-gateway` and `<image-name>-<workspace>-dashboard`, and infra containers use `<image-name>-<workspace>-infrastructure`.
-- Interactive CLI containers are created first as the temporary exact name `<image-name>-<workspace>-cli`, then renamed to `<image-name>-<workspace>-cli-<12char-container-id>` before attach. They share the same `/opt/data` and `/workspace/general` mounts as the persistent runtime, do not join the workspace pod, do not publish ports, and may only remove stale same-workspace temporary exact-name or renamed session containers.
+- Interactive CLI containers use the exact name `<image-name>-<workspace>-cli`, share the same `/opt/data` and `/workspace/general` mounts as the persistent runtime, do not join the workspace pod, do not publish ports, and may only remove stale stopped same-workspace exact-name containers.
 - Shared interactive Podman exec behavior lives in `lib/shell/shared/common.sh` and must preserve non-TTY stdin behavior as well as interactive-host behavior.
 - `tests/agent/shared/test-hermes-agent-layout.sh` is the layout guard for the normalized repository structure and key headline comments.
 

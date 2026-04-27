@@ -95,23 +95,6 @@ hermes_cli_container_name() {
   printf '%s-%s-cli\n' "$image_name" "$workspace"
 }
 
-# This builds the final renamed CLI container name from the temporary name and container id.
-hermes_cli_session_container_name() {
-  local temporary_name="$1"
-  local container_id="$2"
-  local short_id
-
-  short_id="${container_id#sha256:}"
-  short_id="${short_id:0:12}"
-  printf '%s-%s\n' "$temporary_name" "$short_id"
-}
-
-# This matches renamed CLI session containers for one temporary workspace CLI name.
-hermes_cli_session_container_regex() {
-  local temporary_name="$1"
-  printf '^%s-[0-9a-f]{12}$\n' "$(hermes_regex_escape "$temporary_name")"
-}
-
 # This builds the canonical Hermes gateway container name for one image and workspace.
 hermes_container_name() {
   local image_name="$1"

@@ -309,37 +309,38 @@ while true; do
   break
 done
 
-podman rm "$cli_container_name" >/dev/null 2>&1 || true
-
-while IFS= read -r leftover_session_container; do
-  [[ -n "$leftover_session_container" ]] || continue
-  if hermes_container_workspace_matches "$leftover_session_container" "$workspace"; then
-    if hermes_container_is_running "$leftover_session_container"; then
-      printf 'Hermes CLI session container already running for %s: %s\n' "$workspace" "$leftover_session_container" >&2
-      exit 1
-    fi
-
-    podman rm -f "$leftover_session_container" >/dev/null 2>&1 || true
+existing_cli_container="$(podman ps -aq --format '{{.Names}}' --filter "name=$(hermes_container_name_regex "$cli_container_name")" | head -n 1)"
+if [[ "$existing_cli_container" == "$cli_container_name" ]]; then
+  if ! hermes_container_workspace_matches "$cli_container_name" "$workspace"; then
+    printf 'Hermes CLI container name already in use with a different workspace mount for %s.\n' "$workspace" >&2
+    exit 1
   fi
-done < <(podman ps -aq --format '{{.Names}}' --filter "name=$(hermes_cli_session_container_regex "$cli_container_name")")
+
+  if hermes_container_is_running "$cli_container_name"; then
+    printf 'Hermes CLI container already running for %s.\n' "$workspace" >&2
+    exit 1
+  fi
+
+  if ! podman rm "$cli_container_name" >/dev/null 2>&1; then
+    printf 'Failed to remove stale Hermes CLI container %s.\n' "$cli_container_name" >&2
+    exit 1
+  fi
+fi
 
 create_interactive_args=()
 while IFS= read -r -d '' create_arg; do
   create_interactive_args+=("$create_arg")
 done < <(hermes_podman_create_interactive_args)
 
-container_id="$(podman create \
+podman create \
   "${create_interactive_args[@]}" \
   --name "$cli_container_name" \
   --workdir "$HERMES_AGENT_CONTAINER_WORKSPACE" \
   -v "$host_home:$HERMES_AGENT_CONTAINER_HOME" \
   -v "$host_workspace:$HERMES_AGENT_CONTAINER_WORKSPACE" \
   "$image_name" \
-  "$HERMES_AGENT_CHAT_COMMAND")"
+  "$HERMES_AGENT_CHAT_COMMAND" >/dev/null
 
 cleanup_cli_container_name="$cli_container_name"
 trap cleanup_cli_container EXIT
-session_cli_container_name="$(hermes_cli_session_container_name "$cli_container_name" "$container_id")"
-podman rename "$container_id" "$session_cli_container_name" >/dev/null
-cleanup_cli_container_name="$session_cli_container_name"
-hermes_run_podman_attached_start_command "$session_cli_container_name"
+hermes_run_podman_attached_start_command "$cli_container_name"

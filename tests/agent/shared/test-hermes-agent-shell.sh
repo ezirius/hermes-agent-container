@@ -183,10 +183,9 @@ assert_file_contains 'Selection:' "$SHELL_STDERR" 'shell should show an explicit
 assert_file_contains 'create -i --name hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-cli --workdir /workspace/general' "$PODMAN_LOG" 'shell should keep stdin open when the picker path is non-interactive'
 assert_file_contains "$HOME/tmp/hermes-agent/beta/hermes-agent-home:/opt/data" "$PODMAN_LOG" 'shell should mount the Hermes data path into the CLI container'
 assert_file_contains "$HOME/tmp/hermes-agent/beta/hermes-agent-general:/workspace/general" "$PODMAN_LOG" 'shell should mount the workspace path into the CLI container'
-assert_file_contains 'rename abcdef1234567890fedcba0987654321abcdef1234567890fedcba0987654321 hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-cli-abcdef123456' "$PODMAN_LOG" 'shell should rename the CLI container to include the first 12 chars of the real container id'
 assert_file_contains 'hermes-agent-0.10.0-20260417-120000-abcdef123456 nu' "$PODMAN_LOG" 'shell should create the CLI container with the configured shell command'
-assert_file_contains 'start -ai hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-cli-abcdef123456' "$PODMAN_LOG" 'shell should attach by starting the renamed CLI container'
-assert_file_contains 'rm -f hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-cli-abcdef123456' "$PODMAN_LOG" 'shell should remove the renamed CLI container after the session ends'
+assert_file_contains 'start -ai hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-cli' "$PODMAN_LOG" 'shell should attach by starting the exact CLI container'
+assert_file_not_contains 'rename abcdef1234567890fedcba0987654321abcdef1234567890fedcba0987654321 hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-cli-abcdef123456' "$PODMAN_LOG" 'shell should not rename CLI containers to include a container-id suffix'
 assert_file_not_contains '--pod' "$PODMAN_LOG" 'shell CLI container should not join the runtime pod'
 assert_file_not_contains '-p ' "$PODMAN_LOG" 'shell CLI container should not publish ports'
 assert_file_not_contains 'exec -i hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-gateway nu' "$PODMAN_LOG" 'shell should not exec into the persistent gateway container'
@@ -197,18 +196,7 @@ PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/
 
 assert_file_not_contains 'Selection:' "$SHELL_STDERR" 'shell should not show the picker when a workspace argument is provided'
 assert_file_contains 'create -i --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'shell should accept a workspace argument and keep stdin open when stdin is non-interactive'
-assert_file_contains 'start -ai hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli-abcdef123456' "$PODMAN_LOG" 'shell should attach through the renamed CLI container when a workspace argument is provided'
-
-# This checks that a rename failure cleans up the temporary CLI container name.
-: >"$PODMAN_LOG"
-if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_CLI_RENAME_MODE='fail' bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha >/dev/null 2>"$TMP_DIR/rename-fail.stderr"; then
-  fail 'shell should fail when renaming the CLI container fails'
-fi
-
-assert_file_contains 'rename failed' "$TMP_DIR/rename-fail.stderr" 'shell should surface CLI rename failures'
-if ! grep -Fxq -- 'rm -f hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli' "$PODMAN_LOG"; then
-  fail 'shell should clean up the temporary CLI container when rename fails'
-fi
+assert_file_contains 'start -ai hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli' "$PODMAN_LOG" 'shell should attach through the exact CLI container when a workspace argument is provided'
 
 # This checks that a stale exact CLI container name is removed before launching a replacement.
 : >"$PODMAN_LOG"
@@ -216,22 +204,7 @@ PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_CLI_COLL
 
 assert_file_contains 'rm hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli' "$PODMAN_LOG" 'shell should remove a stale exact CLI container name before opening a replacement'
 assert_file_contains 'create -i --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'shell should create a replacement temporary CLI container with stdin open after removing the stale exact name'
-assert_file_contains 'rename abcdef1234567890fedcba0987654321abcdef1234567890fedcba0987654321 hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli-abcdef123456' "$PODMAN_LOG" 'shell should rename the replacement CLI container after create'
-
-# This checks that shell removes a leftover renamed CLI session container before launching a new one.
-: >"$PODMAN_LOG"
-PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_RENAMED_CLI_MODE='leftover' bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha >/dev/null 2>"$SHELL_STDERR"
-
-assert_file_contains 'rm -f hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli-abcdef123456' "$PODMAN_LOG" 'shell should remove a leftover renamed CLI session container before launching a new one'
-assert_file_contains_in_order 'rm -f hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli-abcdef123456' 'create -i --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'shell should remove leftover renamed CLI session containers before creating the next CLI container'
-
-# This checks that shell refuses to kill a still-running renamed CLI session container.
-: >"$PODMAN_LOG"
-if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_RENAMED_CLI_MODE='running-leftover' bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha >/dev/null 2>"$TMP_DIR/running-leftover.stderr"; then
-  fail 'shell should fail when a renamed CLI session container is still running'
-fi
-
-assert_file_contains 'Hermes CLI session container already running for alpha: hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli-abcdef123456' "$TMP_DIR/running-leftover.stderr" 'shell should explain running renamed CLI session collisions'
+assert_file_contains 'start -ai hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli' "$PODMAN_LOG" 'shell should start the exact CLI container after replacing a stale stopped one'
 
 # This checks that shell refuses to kill a still-running exact CLI container.
 : >"$PODMAN_LOG"
@@ -278,14 +251,14 @@ PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/
 
 assert_file_contains 'create -i --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'shell should create the temporary CLI container for explicit commands with stdin open'
 assert_file_contains 'hermes-agent-0.10.0-20260417-120000-abcdef123456 hermes auth list' "$PODMAN_LOG" 'shell should forward an explicit command vector into the created CLI container'
-assert_file_contains 'start -ai hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli-abcdef123456' "$PODMAN_LOG" 'shell should start the renamed CLI container for explicit commands'
+assert_file_contains 'start -ai hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli' "$PODMAN_LOG" 'shell should start the exact CLI container for explicit commands'
 
 # This checks that a non-Hermes command also passes through unchanged.
 : >"$PODMAN_LOG"
 PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha python -V >/dev/null 2>"$SHELL_STDERR"
 
 assert_file_contains 'hermes-agent-0.10.0-20260417-120000-abcdef123456 python -V' "$PODMAN_LOG" 'shell should forward non-Hermes commands into the created CLI container'
-assert_file_contains 'start -ai hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli-abcdef123456' "$PODMAN_LOG" 'shell should start the renamed CLI container for non-Hermes commands'
+assert_file_contains 'start -ai hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli' "$PODMAN_LOG" 'shell should start the exact CLI container for non-Hermes commands'
 
 # This checks that a typed workspace still has to be one of the configured ones.
 if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" gamma >/dev/null 2>"$TMP_DIR/unconfigured.stderr"; then
@@ -305,7 +278,7 @@ assert_file_contains 'create -i --name hermes-agent-0.10.0-20260417-120000-abcde
 PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_AGENT_FORCE_EXEC_TTY='1' bash "$ROOT/scripts/agent/shared/hermes-agent-shell" alpha >/dev/null 2>"$SHELL_STDERR"
 
 assert_file_contains 'create -i -t --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli --workdir /workspace/general' "$PODMAN_LOG" 'shell should create interactive CLI containers with tty and stdin enabled'
-assert_file_contains 'rename abcdef1234567890fedcba0987654321abcdef1234567890fedcba0987654321 hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli-abcdef123456' "$PODMAN_LOG" 'shell should rename interactive CLI containers using the returned container id'
+assert_file_not_contains 'rename abcdef1234567890fedcba0987654321abcdef1234567890fedcba0987654321 hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-cli-abcdef123456' "$PODMAN_LOG" 'shell should not rename interactive CLI containers'
 
 # This checks that the script explains the failure when no local image exists.
 if printf 'alpha\n' | PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_IMAGE_MODE="missing" bash "$ROOT/scripts/agent/shared/hermes-agent-shell" >/dev/null 2>"$TMP_DIR/missing.stderr"; then

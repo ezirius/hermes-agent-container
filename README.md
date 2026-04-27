@@ -53,7 +53,7 @@ The image build starts from the official upstream `nousresearch/hermes-agent` im
 
 Successful builds use an image-id suffix in the final local tag: `hermes-agent-<version>-<YYYYMMDD-HHMMSS>-<12-character-image-id>`.
 
-Runtime pods use `<image-name>-<workspace>`. Role containers inside each pod use `<image-name>-<workspace>-gateway` and `<image-name>-<workspace>-dashboard`. Interactive CLI containers are created first as the temporary exact name `<image-name>-<workspace>-cli`, renamed to `<image-name>-<workspace>-cli-<12char-container-id>` before attach, stay outside the pod, publish no ports, and are cleaned up by the wrapper on exit.
+Runtime pods use `<image-name>-<workspace>`. Role containers inside each pod use `<image-name>-<workspace>-gateway` and `<image-name>-<workspace>-dashboard`. Interactive CLI containers use the exact name `<image-name>-<workspace>-cli`, stay outside the pod, publish no ports, and the wrapper removes stale stopped same-workspace exact-name containers before launch.
 
 ## Documentation
 
