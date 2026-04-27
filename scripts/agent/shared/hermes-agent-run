@@ -77,6 +77,14 @@ runtime_started=0
 matching_container=""
 recreated_exact_match_container=0
 runtime_userns_args=(--userns keep-id)
+cleanup_cli_container_name=""
+
+# This removes the managed run CLI session container when the wrapper exits.
+cleanup_cli_container() {
+  if [[ -n "$cleanup_cli_container_name" ]]; then
+    podman rm -f "$cleanup_cli_container_name" >/dev/null 2>&1 || true
+  fi
+}
 
 # This rejects symlinked managed mount paths before creation or ownership repair.
 hermes_reject_symlinked_managed_path "$host_home"
@@ -303,11 +311,29 @@ done
 
 podman rm "$cli_container_name" >/dev/null 2>&1 || true
 
-hermes_exec_podman_interactive_command run \
-  --rm \
+while IFS= read -r leftover_session_container; do
+  [[ -n "$leftover_session_container" ]] || continue
+  if hermes_container_workspace_matches "$leftover_session_container" "$workspace"; then
+    if hermes_container_is_running "$leftover_session_container"; then
+      printf 'Hermes CLI session container already running for %s: %s\n' "$workspace" "$leftover_session_container" >&2
+      exit 1
+    fi
+
+    podman rm -f "$leftover_session_container" >/dev/null 2>&1 || true
+  fi
+done < <(podman ps -aq --format '{{.Names}}' --filter "name=$(hermes_cli_session_container_regex "$cli_container_name")")
+
+container_id="$(podman create \
   --name "$cli_container_name" \
   --workdir "$HERMES_AGENT_CONTAINER_WORKSPACE" \
   -v "$host_home:$HERMES_AGENT_CONTAINER_HOME" \
   -v "$host_workspace:$HERMES_AGENT_CONTAINER_WORKSPACE" \
   "$image_name" \
-  "$HERMES_AGENT_CHAT_COMMAND"
+  "$HERMES_AGENT_CHAT_COMMAND")"
+
+cleanup_cli_container_name="$cli_container_name"
+trap cleanup_cli_container EXIT
+session_cli_container_name="$(hermes_cli_session_container_name "$cli_container_name" "$container_id")"
+podman rename "$container_id" "$session_cli_container_name" >/dev/null
+cleanup_cli_container_name="$session_cli_container_name"
+hermes_run_podman_attached_start_command "$session_cli_container_name"

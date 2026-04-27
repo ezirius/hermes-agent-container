@@ -15,9 +15,9 @@ This repo keeps a small wrapper around the official Hermes Agent container with 
 - `scripts/agent/shared/hermes-agent-build` builds an `arm64` image from config, then retags it with a 12-character image-id suffix.
 - `scripts/agent/shared/hermes-agent-run` starts one selected workspace pod with gateway and dashboard role containers, mounts host paths into them, recreates a poisoned exact-match pod/container once, and prints startup diagnostics on failure.
 - Hermes pod names follow `<image-name>-<workspace>`; role containers inside the pod use `<image-name>-<workspace>-gateway` and `<image-name>-<workspace>-dashboard`, and infra containers use `<image-name>-<workspace>-infrastructure`.
-- `scripts/agent/shared/hermes-agent-run` and `scripts/agent/shared/hermes-agent-shell` open interactive commands through ephemeral CLI containers named `<image-name>-<workspace>-cli`.
+- `scripts/agent/shared/hermes-agent-run` and `scripts/agent/shared/hermes-agent-shell` create interactive CLI containers first as the temporary exact name `<image-name>-<workspace>-cli`, then rename them to `<image-name>-<workspace>-cli-<12char-container-id>` before attach.
 - Ephemeral CLI containers share the same `/opt/data` and `/workspace/general` mounts as the persistent runtime containers, but they do not join the workspace pod and do not publish ports.
-- The wrapper clears stale same-workspace exact-name CLI containers before launch, while active or mount-mismatched exact-name containers fail with wrapper-owned errors instead of being removed implicitly.
+- The wrapper clears stale same-workspace exact-name CLI containers before launch, reclaims stale renamed same-workspace CLI session containers from interrupted runs, and fails with wrapper-owned errors when temporary exact-name or renamed same-workspace containers are still active.
 - `tests/agent/shared/*` verify behavior and layout, using focused source-text assertions where they check stable build or runtime contract strings.
 - The workspace pod owns Podman port publishing, while the wrapper keeps the published host port bound to `127.0.0.1`.
 - The run wrapper treats the container as ready when it is running and stable before attach; the browser opener waits for the published dashboard URL rather than probing Hermes internals.
