@@ -59,15 +59,32 @@ hermes_runtime_container_filter_regex() {
 
   escaped_basename="$(hermes_regex_escape "$HERMES_AGENT_IMAGE_BASENAME")"
   escaped_workspace="$(hermes_regex_escape "$workspace")"
-  printf '^%s-[0-9][0-9.]*-[0-9]{8}-[0-9]{6}-[0-9a-f]{12}-%s$\n' "$escaped_basename" "$escaped_workspace"
+  printf '^%s-[0-9][0-9.]*-[0-9]{8}-[0-9]{6}-[0-9a-f]{12}-%s-gateway$\n' "$escaped_basename" "$escaped_workspace"
 }
 
-# This builds the canonical Hermes container or pod name for one image and workspace.
-hermes_container_name() {
+# This builds the canonical workspace pod name for one image and workspace.
+hermes_pod_name() {
   local image_name="$1"
   local workspace="$2"
 
   printf '%s-%s\n' "$image_name" "$workspace"
+}
+
+# This builds a canonical role container name inside one workspace pod.
+hermes_role_container_name() {
+  local image_name="$1"
+  local workspace="$2"
+  local role="$3"
+
+  printf '%s-%s-%s\n' "$image_name" "$workspace" "$role"
+}
+
+# This builds the canonical Hermes gateway container name for one image and workspace.
+hermes_container_name() {
+  local image_name="$1"
+  local workspace="$2"
+
+  hermes_role_container_name "$image_name" "$workspace" gateway
 }
 
 # This matches one exact container name and nothing else.
@@ -802,7 +819,7 @@ hermes_name_matches_other_configured_workspace() {
 
   for workspace in "${HERMES_AGENT_WORKSPACE_NAMES[@]}"; do
     [[ "$workspace" != "$requested_workspace" ]] || continue
-    regex="$(hermes_runtime_container_filter_regex "$workspace")"
+    regex="$(hermes_container_filter_regex "$workspace")"
     if [[ "$candidate_name" =~ $regex ]]; then
       return 0
     fi

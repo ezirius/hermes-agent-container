@@ -53,7 +53,7 @@ The image build starts from the official upstream `nousresearch/hermes-agent` im
 
 Successful builds use an image-id suffix in the final local tag: `hermes-agent-<version>-<YYYYMMDD-HHMMSS>-<12-character-image-id>`.
 
-Runtime container and pod names use `<image-name>-<workspace>`, without a project token or gateway/dashboard role suffix.
+Runtime pods use `<image-name>-<workspace>`. Role containers inside each pod use `<image-name>-<workspace>-gateway` and `<image-name>-<workspace>-dashboard`.
 
 ## Documentation
 

@@ -13,8 +13,8 @@ This repo keeps a small wrapper around the official Hermes Agent container with 
 - The derived image starts as root so the upstream entrypoint can drop privileges to the Hermes runtime user after bootstrapping mounted state.
 - `lib/shell/shared/common.sh` is the only shared shell library path.
 - `scripts/agent/shared/hermes-agent-build` builds an `arm64` image from config, then retags it with a 12-character image-id suffix.
-- `scripts/agent/shared/hermes-agent-run` starts one selected workspace pod and container, mounts host paths into it, recreates a poisoned exact-match pod/container once, and prints startup diagnostics on failure.
-- Hermes container and pod names follow `<image-name>-<workspace>`, matching the OpenCode-derived order without a project or role suffix.
+- `scripts/agent/shared/hermes-agent-run` starts one selected workspace pod with gateway and dashboard role containers, mounts host paths into them, recreates a poisoned exact-match pod/container once, and prints startup diagnostics on failure.
+- Hermes pod names follow `<image-name>-<workspace>`; role containers inside the pod use `<image-name>-<workspace>-gateway` and `<image-name>-<workspace>-dashboard`.
 - `scripts/agent/shared/hermes-agent-shell` connects to the existing workspace container and opens `nu` by default.
 - `tests/agent/shared/*` verify behavior and layout, using focused source-text assertions where they check stable build or runtime contract strings.
 - The workspace pod owns Podman port publishing, while the wrapper keeps the published host port bound to `127.0.0.1`.

@@ -63,8 +63,10 @@ old_containers="$(hermes_workspace_containers "$workspace")"
 old_pods="$(hermes_workspace_pods "$workspace")"
 
 host_port="$(hermes_workspace_published_port "$workspace")"
-container_name="$(hermes_container_name "$image_name" "$workspace")"
-pod_name="$container_name"
+pod_name="$(hermes_pod_name "$image_name" "$workspace")"
+gateway_container_name="$(hermes_role_container_name "$image_name" "$workspace" gateway)"
+dashboard_container_name="$(hermes_role_container_name "$image_name" "$workspace" dashboard)"
+container_name="$gateway_container_name"
 dashboard_url="$(hermes_workspace_published_url "$workspace")"
 reuse_container=0
 reuse_pod=0
@@ -118,12 +120,12 @@ exact_container_exists() {
   [[ "$matched_container" == "$container_name" ]]
 }
 
-# This creates the runtime container with the current image, mounts, and dashboard command.
-create_container() {
+# This creates the dashboard role container with the current image, mounts, and dashboard command.
+create_dashboard_container() {
   local container_id
 
   container_id="$(podman run -d \
-    --name "$container_name" \
+    --name "$dashboard_container_name" \
     --pod "$pod_name" \
     --workdir "$HERMES_AGENT_CONTAINER_WORKSPACE" \
     -v "$host_home:$HERMES_AGENT_CONTAINER_HOME" \
@@ -131,7 +133,31 @@ create_container() {
     "$image_name" \
     dashboard --host 0.0.0.0 --port "$HERMES_AGENT_DASHBOARD_PORT" --no-open --insecure)"
   runtime_created=1
-  printf 'Container ID: %s\n' "$container_id"
+  printf 'Dashboard container ID: %s\n' "$container_id"
+}
+
+# This creates the gateway role container so attach has a stable target in the workspace pod.
+create_gateway_container() {
+  local container_id
+
+  container_id="$(podman run -d \
+    --name "$gateway_container_name" \
+    --pod "$pod_name" \
+    --workdir "$HERMES_AGENT_CONTAINER_WORKSPACE" \
+    -v "$host_home:$HERMES_AGENT_CONTAINER_HOME" \
+    -v "$host_workspace:$HERMES_AGENT_CONTAINER_WORKSPACE" \
+    "$image_name" \
+    sleep infinity)"
+  runtime_created=1
+  printf 'Gateway container ID: %s\n' "$container_id"
+}
+
+# This creates both workspace role containers after clearing any stale exact names.
+create_role_containers() {
+  podman rm -f "$dashboard_container_name" >/dev/null 2>&1 || true
+  podman rm -f "$gateway_container_name" >/dev/null 2>&1 || true
+  create_dashboard_container
+  create_gateway_container
 }
 
 # This makes sure the host folders exist before the container is started.
@@ -160,7 +186,8 @@ fi
 matching_container="$(podman ps --format '{{.Names}}' --filter "name=$(hermes_container_name_regex "$container_name")" | head -n 1)"
 # This forces a replacement when an exact pod exposes the dashboard with the wrong publish contract.
 if [[ "$reuse_pod" == "1" ]] && ! dashboard_port_matches_expected; then
-  podman rm -f "$container_name" >/dev/null 2>&1 || true
+  podman rm -f "$gateway_container_name" >/dev/null 2>&1 || true
+  podman rm -f "$dashboard_container_name" >/dev/null 2>&1 || true
   podman pod rm -f "$pod_name" >/dev/null 2>&1 || true
   reuse_container=0
   reuse_pod=0
@@ -169,7 +196,8 @@ fi
 
 # This clears exact-name stale mount conflicts before creating the replacement container.
 if exact_container_exists && ! hermes_container_workspace_matches "$container_name" "$workspace"; then
-  podman rm -f "$container_name" >/dev/null 2>&1 || true
+  podman rm -f "$gateway_container_name" >/dev/null 2>&1 || true
+  podman rm -f "$dashboard_container_name" >/dev/null 2>&1 || true
   reuse_container=0
   matching_container=""
 fi
@@ -179,7 +207,7 @@ if [[ "$reuse_container" != "1" ]]; then
   if [[ "$reuse_pod" != "1" ]]; then
     create_pod
   fi
-  create_container
+  create_role_containers
 elif [[ "$matching_container" != "$container_name" ]]; then
   podman start "$container_name" >/dev/null 2>&1 || true
   runtime_started=1
@@ -189,10 +217,11 @@ while true; do
   # This waits a little so the script only attaches after the container is really running.
   if ! hermes_wait_for_running_container "$container_name"; then
     if [[ "$reuse_container" == "1" && "$recreated_exact_match_container" != "1" ]]; then
-      podman rm -f "$container_name" >/dev/null 2>&1 || true
+      podman rm -f "$gateway_container_name" >/dev/null 2>&1 || true
+      podman rm -f "$dashboard_container_name" >/dev/null 2>&1 || true
       podman pod rm -f "$pod_name" >/dev/null 2>&1 || true
       create_pod
-      create_container
+      create_role_containers
       reuse_container=0
       recreated_exact_match_container=1
       continue
@@ -229,10 +258,11 @@ while true; do
   # This recreates a poisoned exact-match container once before giving up on attach.
   if ! hermes_wait_for_stable_running_container "$container_name"; then
     if [[ "$reuse_container" == "1" && "$recreated_exact_match_container" != "1" ]]; then
-      podman rm -f "$container_name" >/dev/null 2>&1 || true
+      podman rm -f "$gateway_container_name" >/dev/null 2>&1 || true
+      podman rm -f "$dashboard_container_name" >/dev/null 2>&1 || true
       podman pod rm -f "$pod_name" >/dev/null 2>&1 || true
       create_pod
-      create_container
+      create_role_containers
       reuse_container=0
       recreated_exact_match_container=1
       continue

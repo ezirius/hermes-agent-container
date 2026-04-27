@@ -105,9 +105,9 @@ case "$1" in
       if [[ "${HERMES_TEST_STALE_MODE:-present}" == 'present' ]]; then
         printf 'old-gateway\nold-dashboard\n'
       elif [[ "${HERMES_TEST_STALE_MODE:-present}" == 'same-name' ]]; then
-        printf 'hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha\n'
+        printf 'hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-gateway\n'
       elif [[ "${HERMES_TEST_STALE_MODE:-present}" == 'same-name-wrong-mount' ]]; then
-        printf 'hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha\n'
+        printf 'hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-gateway\n'
       elif [[ "${HERMES_TEST_STALE_MODE:-present}" == 'old-version' ]]; then
         printf 'hermes-agent-0.9.9-20260401-010101-aaaaaaaaaaaa-alpha\n'
       elif [[ "${HERMES_TEST_STALE_MODE:-present}" == 'legacy-role' && "$*" == *gateway* ]]; then
@@ -121,8 +121,8 @@ case "$1" in
 
     [[ "${HERMES_TEST_RUNNING_MODE:-running}" == 'never' ]] && exit 0
     case "$*" in
-      *beta*) printf 'hermes-agent-0.10.0-20260417-120000-abcdef123456-beta\n' ;;
-      *) printf 'hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha\n' ;;
+      *beta*) printf 'hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-gateway\n' ;;
+      *) printf 'hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-gateway\n' ;;
     esac
     ;;
   run)
@@ -159,7 +159,9 @@ case "$1" in
       container_name="${*: -1}"
       case "$container_name" in
         *-alpha-gateway)
-          if [[ "${HERMES_TEST_STALE_MODE:-present}" == 'workspace-collision' ]]; then
+          if [[ "${HERMES_TEST_STALE_MODE:-present}" == 'same-name-wrong-mount' ]]; then
+            printf '%s : /workspace/general\n' "$HERMES_TEST_BASE_PATH/not-alpha/hermes-agent-general"
+          elif [[ "${HERMES_TEST_STALE_MODE:-present}" == 'workspace-collision' ]]; then
             printf '%s : /workspace/general\n' "$HERMES_TEST_BASE_PATH/alpha-gateway/hermes-agent-general"
           else
             printf '%s : /workspace/general\n' "$HERMES_TEST_BASE_PATH/alpha/hermes-agent-general"
@@ -431,7 +433,7 @@ export HERMES_TEST_BASE_PATH="$TMP_DIR/base"
 PATH="$FAKE_BIN:/usr/bin:/bin" ROOT="$ROOT" OSTYPE='linux-gnu' HERMES_TEST_XDG_OPEN_MODE='fail' HERMES_TEST_OPEN_LOG="$OPEN_LOG" bash -c 'set -euo pipefail; source "$1"; hermes_open_published_url_detached "http://127.0.0.1:9434"' _ "$ROOT/lib/shell/shared/common.sh"
 wait_for_file_contains 'open http://127.0.0.1:9434' "$OPEN_LOG" 'published URL opener should fall back to gio open when xdg-open fails'
 
-# This normal case starts one pod and one runtime container for the selected workspace.
+# This normal case starts one pod with dashboard and gateway role containers for the selected workspace.
 : >"$OPEN_LOG"
 printf '2\n' | PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" >"$RUN_STDOUT" 2>"$RUN_STDERR"
 
@@ -439,12 +441,11 @@ assert_file_contains 'Selection:' "$RUN_STDERR" 'run should show an explicit sel
 assert_file_contains 'api.github.com/repos/NousResearch/hermes-agent/releases/latest' "$CURL_LOG" 'run should check the latest upstream Hermes Agent release before container work'
 assert_file_not_contains 'newer Hermes Agent version available' "$RUN_STDERR" 'run should not warn when the upstream release matches the pinned release tag'
 assert_file_contains 'pod create --userns keep-id --name hermes-agent-0.10.0-20260417-120000-abcdef123456-beta -p 127.0.0.1:9434:9234' "$PODMAN_LOG" 'run should put keep-id user namespace on the workspace pod for non-root runs'
-assert_file_contains 'run -d --name hermes-agent-0.10.0-20260417-120000-abcdef123456-beta' "$PODMAN_LOG" 'run should create one runtime container for the workspace'
-assert_file_contains_in_order 'run -d --name hermes-agent-0.10.0-20260417-120000-abcdef123456-beta' 'rm -f old-gateway' "$PODMAN_LOG" 'run should remove stale containers after replacement creation'
-assert_file_contains_in_order 'ps --format {{.Names}} --filter name=^hermes-agent-0\.10\.0-20260417-120000-abcdef123456-beta$' 'rm -f old-gateway' "$PODMAN_LOG" 'run should remove stale containers after a running-container check'
-assert_file_contains '--pod hermes-agent-0.10.0-20260417-120000-abcdef123456-beta' "$PODMAN_LOG" 'run should place the runtime container in the workspace pod'
-assert_file_not_contains 'hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-gateway' "$PODMAN_LOG" 'run should not create role-suffixed gateway runtime names'
-assert_file_not_contains 'hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-dashboard' "$PODMAN_LOG" 'run should not create role-suffixed dashboard runtime names'
+assert_file_contains 'run -d --name hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-dashboard' "$PODMAN_LOG" 'run should create a dashboard role container for the workspace'
+assert_file_contains 'run -d --name hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-gateway' "$PODMAN_LOG" 'run should create a gateway role container for the workspace'
+assert_file_contains_in_order 'run -d --name hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-gateway' 'rm -f old-gateway' "$PODMAN_LOG" 'run should remove stale containers after replacement creation'
+assert_file_contains_in_order 'ps --format {{.Names}} --filter name=^hermes-agent-0\.10\.0-20260417-120000-abcdef123456-beta-gateway$' 'rm -f old-gateway' "$PODMAN_LOG" 'run should remove stale containers after a running gateway check'
+assert_file_contains '--pod hermes-agent-0.10.0-20260417-120000-abcdef123456-beta' "$PODMAN_LOG" 'run should place role containers in the workspace pod'
 assert_file_contains '--userns keep-id' "$PODMAN_LOG" 'run should use Podman keep-id user mapping for mounted workspace paths'
 assert_file_not_contains '-e HERMES_UID=' "$PODMAN_LOG" 'run should not pass legacy UID environment variables to the upstream image'
 assert_file_not_contains '-e HERMES_GID=' "$PODMAN_LOG" 'run should not pass legacy GID environment variables to the upstream image'
@@ -454,7 +455,7 @@ assert_file_not_contains 'python -c' "$PODMAN_LOG" 'run health checks should not
 assert_file_not_contains 'curl -fsS' "$PODMAN_LOG" 'run health checks should not depend on curl being available in the derived image'
 assert_file_not_contains 'gateway_state.json' "$PODMAN_LOG" 'run should not inspect Hermes gateway internals before attaching'
 assert_file_not_contains 'config.yaml' "$PODMAN_LOG" 'run should not block attach on first-run setup files'
-assert_file_not_contains 'run -d --name hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-dashboard -e HERMES_UID=1000 -e HERMES_GID=1000 -p 127.0.0.1:9434:9234' "$PODMAN_LOG" 'run should publish dashboard ports on the pod, not the container'
+assert_file_not_contains 'run -d --name hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-dashboard -e HERMES_UID=1000 -e HERMES_GID=1000 -p 127.0.0.1:9434:9234' "$PODMAN_LOG" 'run should publish dashboard ports on the pod, not the dashboard container'
 assert_file_contains "$TMP_DIR/base/beta/hermes-agent-home:/opt/data" "$PODMAN_LOG" 'run should mount Hermes state at the official data path'
 assert_file_contains "$TMP_DIR/base/beta/hermes-agent-general:/workspace/general" "$PODMAN_LOG" 'run should mount the workspace path'
 assert_file_contains 'rm -f old-gateway' "$PODMAN_LOG" 'run should remove stale containers only after replacements are healthy'
@@ -465,7 +466,7 @@ assert_file_contains 'pod rm -f old-gateway-pod' "$PODMAN_LOG" 'run should remov
 assert_file_contains 'pod rm -f old-dashboard-pod' "$PODMAN_LOG" 'run should remove stale dashboard pods even when their containers are gone'
 assert_file_contains 'http://127.0.0.1:9434' "$OPEN_LOG" 'run should open the derived dashboard URL'
 assert_file_contains 'http://127.0.0.1:9434' "$CURL_LOG" 'run should wait for the published dashboard URL before opening the browser'
-assert_file_contains 'exec -i --workdir /workspace/general hermes-agent-0.10.0-20260417-120000-abcdef123456-beta /opt/hermes/docker/entrypoint.sh' "$PODMAN_LOG" 'run should attach through the upstream entrypoint so Hermes runs from its virtualenv'
+assert_file_contains 'exec -i --workdir /workspace/general hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-gateway /opt/hermes/docker/entrypoint.sh' "$PODMAN_LOG" 'run should attach through the gateway role container so Hermes runs from its virtualenv'
 
 # This checks that sudo-launched root runs restore caller ownership.
 : >"$CHOWN_LOG"
@@ -490,8 +491,9 @@ assert_file_not_contains 'http://127.0.0.1:9334' "$OPEN_LOG" 'run should not reo
 # This checks that exact-name containers with stale mounts are removed before recreation.
 : >"$PODMAN_LOG"
 PATH="$FAKE_BIN:$PATH" OSTYPE='linux-gnu' HERMES_TEST_STALE_MODE='same-name-wrong-mount' HERMES_TEST_POD_MODE='present' HERMES_TEST_STALE_POD_MODE='missing' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" alpha >"$RUN_STDOUT" 2>"$RUN_STDERR"
-assert_file_contains 'rm -f hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha' "$PODMAN_LOG" 'run should remove exact-name containers whose workspace mount no longer matches'
-assert_file_contains 'run -d --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha' "$PODMAN_LOG" 'run should recreate exact-name wrong-mount containers after removal'
+assert_file_contains 'rm -f hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-gateway' "$PODMAN_LOG" 'run should remove exact-name gateway containers whose workspace mount no longer matches'
+assert_file_contains 'rm -f hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-dashboard' "$PODMAN_LOG" 'run should remove exact-name dashboard containers when the gateway mount no longer matches'
+assert_file_contains 'run -d --name hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-gateway' "$PODMAN_LOG" 'run should recreate exact-name wrong-mount gateway containers after removal'
 
 # This checks that a reused exact pod with the wrong loopback port is replaced before runtime creation.
 : >"$PODMAN_LOG"
@@ -535,7 +537,7 @@ assert_file_contains 'pod rm -f hermes-agent-0.10.0-20260417-120000-abcdef123456
 : >"$OPEN_LOG"
 : >"$CURL_LOG"
 PATH="$FAKE_BIN:$PATH" HERMES_TEST_UNAME='Darwin' HERMES_TEST_CURL_READY_MODE='never' HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" alpha >"$RUN_STDOUT" 2>"$RUN_STDERR"
-assert_file_contains 'exec -i --workdir /workspace/general hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha /opt/hermes/docker/entrypoint.sh' "$PODMAN_LOG" 'run should still attach through the upstream entrypoint when published dashboard URL never becomes ready'
+assert_file_contains 'exec -i --workdir /workspace/general hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-gateway /opt/hermes/docker/entrypoint.sh' "$PODMAN_LOG" 'run should still attach through the gateway entrypoint when published dashboard URL never becomes ready'
 test ! -s "$OPEN_LOG" || fail 'run should not open browser before published dashboard URL is ready'
 
 # This checks that blocking macOS browser open does not block attach.
@@ -544,7 +546,7 @@ test ! -s "$OPEN_LOG" || fail 'run should not open browser before published dash
 : >"$EVENT_LOG"
 PATH="$FAKE_BIN:$PATH" HERMES_TEST_UNAME='Darwin' HERMES_TEST_OPEN_BLOCK='1' HERMES_TEST_EVENT_LOG="$EVENT_LOG" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_OPEN_LOG="$OPEN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" bash "$ROOT/scripts/agent/shared/hermes-agent-run" alpha >"$RUN_STDOUT" 2>"$RUN_STDERR"
 wait_for_file_contains 'open-start http://127.0.0.1:9334' "$EVENT_LOG" 'run should start macOS browser opener'
-wait_for_file_contains 'attach exec -i --workdir /workspace/general hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha /opt/hermes/docker/entrypoint.sh' "$EVENT_LOG" 'run should attach through the upstream entrypoint while browser opener is detached'
+wait_for_file_contains 'attach exec -i --workdir /workspace/general hermes-agent-0.10.0-20260417-120000-abcdef123456-alpha-gateway /opt/hermes/docker/entrypoint.sh' "$EVENT_LOG" 'run should attach through the gateway entrypoint while browser opener is detached'
 
 # This checks that failed starts still reach the wrapper's startup diagnostics.
 : >"$PODMAN_LOG"
