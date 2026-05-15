@@ -13,12 +13,12 @@
 ### Task 1: Lock Official Gateway Runtime Contract
 
 **Files:**
-- Modify: `tests/agent/shared/test-hermes-agent-run.sh`
-- Modify: `scripts/agent/shared/hermes-agent-run`
+- Modify: `tests/shared/hermes-agent/test-hermes-agent-run.sh`
+- Modify: `scripts/shared/hermes-agent/hermes-agent-run`
 
 - [ ] **Step 1: Write the failing test**
 
-In `tests/agent/shared/test-hermes-agent-run.sh`, update the normal-run assertions near the existing gateway role checks so they require the gateway role container to start with `gateway run` and forbid the placeholder command:
+In `tests/shared/hermes-agent/test-hermes-agent-run.sh`, update the normal-run assertions near the existing gateway role checks so they require the gateway role container to start with `gateway run` and forbid the placeholder command:
 
 ```bash
 assert_file_contains 'run -d --name hermes-agent-0.10.0-20260417-120000-abcdef123456-beta-gateway' "$PODMAN_LOG" 'run should create a gateway role container for the workspace'
@@ -31,14 +31,14 @@ assert_file_not_contains 'sleep infinity' "$PODMAN_LOG" 'run should not keep the
 Run:
 
 ```bash
-bash tests/agent/shared/test-hermes-agent-run.sh
+bash tests/shared/hermes-agent/test-hermes-agent-run.sh
 ```
 
 Expected: `FAIL` because the fake Podman log currently contains `sleep infinity`, and it does not contain `gateway run` for the gateway role container.
 
 - [ ] **Step 3: Write minimal implementation**
 
-In `scripts/agent/shared/hermes-agent-run`, replace the gateway container command in `create_gateway_container()`:
+In `scripts/shared/hermes-agent/hermes-agent-run`, replace the gateway container command in `create_gateway_container()`:
 
 ```bash
     "$image_name" \
@@ -59,7 +59,7 @@ with no `sleep infinity` command remaining.
 Run:
 
 ```bash
-bash tests/agent/shared/test-hermes-agent-run.sh
+bash tests/shared/hermes-agent/test-hermes-agent-run.sh
 ```
 
 Expected: `hermes-agent-run behavior checks passed`.
@@ -69,7 +69,7 @@ Expected: `hermes-agent-run behavior checks passed`.
 Run:
 
 ```bash
-bash tests/agent/shared/test-all.sh
+bash tests/shared/hermes-agent/test-all.sh
 ```
 
 Expected: all Hermes wrapper checks pass.

@@ -1,55 +1,57 @@
-# Hermes Agent Wrapper Repo
+# Hermes Agent Wrapper
 
-This repository builds a small local image derived from the official Hermes Agent container, then runs one per-workspace runtime pod with repository-owned configuration, wrapper scripts, shell helpers, and shell tests.
+This repository builds a small local image derived from the official Hermes Agent container, then runs one per-workspace runtime pod with repo-owned configuration, wrapper scripts, an app-local helper library, and shell tests.
 
 ## Layout
 
-The repository uses a normalized path shape:
+The repository follows the family layout already used across this repo:
 
 ```text
-category/subcategory/scope
+category/scope/family
 ```
 
 Current layout:
 
 ```text
-config/agent/shared/hermes-agent-settings-shared.conf
-config/containers/shared/Containerfile
-docs/usage/shared/usage.md
-docs/usage/shared/architecture.md
-lib/shell/shared/common.sh
-scripts/agent/shared/hermes-agent-build
-scripts/agent/shared/hermes-agent-run
-scripts/agent/shared/hermes-agent-shell
-tests/agent/shared/test-asserts.sh
-tests/agent/shared/test-all.sh
-tests/agent/shared/test-hermes-agent-build.sh
-tests/agent/shared/test-hermes-agent-layout.sh
-tests/agent/shared/test-hermes-agent-run.sh
-tests/agent/shared/test-hermes-agent-shell.sh
+configs/shared/hermes-agent/hermes-agent-settings.conf
+configs/shared/hermes-agent/Containerfile
+docs/shared/hermes-agent/usage.md
+docs/shared/hermes-agent/architecture.md
+docs/shared/hermes-agent/plans/20260418-165535-config-driven-base-images.md
+docs/shared/hermes-agent/plans/20260427-000000-hermes-official-gateway-command.md
+scripts/shared/hermes-agent/common.sh
+scripts/shared/hermes-agent/hermes-agent-build
+scripts/shared/hermes-agent/hermes-agent-run
+scripts/shared/hermes-agent/hermes-agent-shell
+tests/shared/shared/test-asserts.sh
+tests/shared/hermes-agent/test-all.sh
+tests/shared/hermes-agent/test-hermes-agent-build.sh
+tests/shared/hermes-agent/test-hermes-agent-layout.sh
+tests/shared/hermes-agent/test-hermes-agent-run.sh
+tests/shared/hermes-agent/test-hermes-agent-shell.sh
 ```
 
 ## Commands
 
-- Build the image: `scripts/agent/shared/hermes-agent-build`
-- Start a configured workspace: `scripts/agent/shared/hermes-agent-run`
-- Open nushell in an ephemeral workspace CLI container: `scripts/agent/shared/hermes-agent-shell`
+- Build the image: `scripts/shared/hermes-agent/hermes-agent-build`
+- Start a configured workspace: `scripts/shared/hermes-agent/hermes-agent-run`
+- Open nushell in an ephemeral workspace CLI container: `scripts/shared/hermes-agent/hermes-agent-shell`
 
 ## Configuration
 
 Repo-owned runtime and build settings live in:
 
 ```text
-config/agent/shared/hermes-agent-settings-shared.conf
+configs/shared/hermes-agent/hermes-agent-settings.conf
 ```
 
 Container build configuration lives in:
 
 ```text
-config/containers/shared/Containerfile
+configs/shared/hermes-agent/Containerfile
 ```
 
-The image build starts from the official upstream `nousresearch/hermes-agent` image for `arm64` and only adds repo-local customization packages. Today that customization is `nushell` from the official Nushell Debian package source, which is the default shell opened by `hermes-agent-shell`.
+The image build starts from the official upstream `nousresearch/hermes-agent` image for `arm64` and only adds repo-local shell tooling. It prefers the distro `nushell` package first and otherwise falls back to the configured Nushell binary version and checksums, which stays the default shell opened by `hermes-agent-shell`.
 
 Successful builds use an image-id suffix in the final local tag: `hermes-agent-<version>-<YYYYMMDD-HHMMSS>-<12-character-image-id>`.
 
@@ -57,8 +59,9 @@ Runtime pods use `<image-name>-<workspace>`. Role containers inside each pod use
 
 ## Documentation
 
-- Usage guide: `docs/usage/shared/usage.md`
-- Architecture notes: `docs/usage/shared/architecture.md`
+- Usage guide: `docs/shared/hermes-agent/usage.md`
+- Architecture notes: `docs/shared/hermes-agent/architecture.md`
+- Historical plans: `docs/shared/hermes-agent/plans/`
 - Repository authoring rules: `AGENTS.md`
 
 ## Security Note
@@ -72,14 +75,14 @@ If a matching workspace container dies before attach, the wrapper removes it and
 Run the shell suite sequentially because tests temporarily rewrite the shared config file:
 
 ```text
-bash tests/agent/shared/test-all.sh
+bash tests/shared/hermes-agent/test-all.sh
 ```
 
 Or run the individual checks in order:
 
 ```text
-bash tests/agent/shared/test-hermes-agent-layout.sh
-bash tests/agent/shared/test-hermes-agent-build.sh
-bash tests/agent/shared/test-hermes-agent-run.sh
-bash tests/agent/shared/test-hermes-agent-shell.sh
+bash tests/shared/hermes-agent/test-hermes-agent-layout.sh
+bash tests/shared/hermes-agent/test-hermes-agent-build.sh
+bash tests/shared/hermes-agent/test-hermes-agent-run.sh
+bash tests/shared/hermes-agent/test-hermes-agent-shell.sh
 ```

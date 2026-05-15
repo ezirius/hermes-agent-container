@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-# This file holds the shared shell helpers used by the wrapper scripts.
+# This file holds the internal shell helpers used by the wrapper scripts.
 # It loads the saved repo config once and gives the scripts small helper tools to reuse.
 
 # This finds the repo root when a script did not pass it in first.
@@ -12,7 +12,7 @@ fi
 
 # This loads the saved repo settings so the helpers all read the same values.
 # shellcheck disable=SC1090
-source "$ROOT/config/agent/shared/hermes-agent-settings-shared.conf"
+source "$ROOT/configs/shared/hermes-agent/hermes-agent-settings.conf"
 
 declare -a HERMES_AGENT_WORKSPACE_NAMES=()
 declare -a HERMES_AGENT_WORKSPACE_OFFSETS=()
@@ -155,7 +155,7 @@ hermes_should_wrap_podman_tty_with_script() {
 
 # This prints a warning in a consistent format for non-blocking automation and terminals.
 hermes_warn() {
-  printf 'warning: %s\n' "$1" >&2
+  printf 'Warning: %s\n' "$1" >&2
 }
 
 # This pauses only when a person can see stderr and answer on stdin.
@@ -163,9 +163,8 @@ hermes_pause_for_interactive_warning() {
   local _pressed_key
 
   if [[ -t 0 && -t 2 ]]; then
-    printf 'Press any key to continue...' >&2
-    IFS= read -r -n 1 -s _pressed_key
-    printf '\n' >&2
+    printf 'Press Enter to continue.\n' >&2
+    IFS= read -r _pressed_key
   fi
 }
 
@@ -173,12 +172,30 @@ hermes_pause_for_interactive_warning() {
 hermes_latest_upstream_version() {
   local release_json tag_regex
 
-  if ! release_json="$(curl -fsSL --connect-timeout 2 --max-time 5 'https://api.github.com/repos/NousResearch/hermes-agent/releases/latest' 2>/dev/null)"; then
+  if ! release_json="$(curl -fsSL --connect-timeout "$HERMES_AGENT_RELEASE_CONNECT_TIMEOUT_SECONDS" --max-time "$HERMES_AGENT_RELEASE_MAX_TIMEOUT_SECONDS" "$HERMES_AGENT_RELEASE_API_URL" 2>/dev/null)"; then
     printf '\n'
     return 0
   fi
 
   tag_regex='"tag_name"[[:space:]]*:[[:space:]]*"v([0-9]+\.[0-9]+\.[0-9]+)"'
+  if [[ "$release_json" =~ $tag_regex ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+
+  printf '\n'
+}
+
+# This fetches the latest stable Nushell release without failing callers.
+hermes_latest_nushell_version() {
+  local release_json tag_regex
+
+  if ! release_json="$(curl -fsSL --connect-timeout "$HERMES_AGENT_RELEASE_CONNECT_TIMEOUT_SECONDS" --max-time "$HERMES_AGENT_RELEASE_MAX_TIMEOUT_SECONDS" "$HERMES_AGENT_NUSHELL_RELEASE_API_URL" 2>/dev/null)"; then
+    printf '\n'
+    return 0
+  fi
+
+  tag_regex='"tag_name"[[:space:]]*:[[:space:]]*"v?([0-9]+\.[0-9]+\.[0-9]+)"'
   if [[ "$release_json" =~ $tag_regex ]]; then
     printf '%s\n' "${BASH_REMATCH[1]}"
     return 0
@@ -203,16 +220,44 @@ hermes_version_is_newer_than() {
   (( candidate_patch > pinned_patch ))
 }
 
+# This checks whether a configured base dashboard port is valid before offsets are added.
+hermes_validate_dashboard_port() {
+  if [[ ! "$HERMES_AGENT_DASHBOARD_PORT" =~ ^[0-9]+$ ]] || (( HERMES_AGENT_DASHBOARD_PORT < 1 || HERMES_AGENT_DASHBOARD_PORT > 65535 )); then
+    printf 'HERMES_AGENT_DASHBOARD_PORT must be a numeric port from 1 to 65535.\n' >&2
+    exit 1
+  fi
+}
+
+# This checks whether one workspace can publish a valid dashboard port with the current offset rule.
+hermes_workspace_port_is_possible() {
+  local workspace="$1"
+  local port_offset published_port
+
+  hermes_validate_dashboard_port
+  port_offset="$(hermes_workspace_offset_rule "$workspace")"
+  published_port="$((HERMES_AGENT_DASHBOARD_PORT + port_offset))"
+  (( published_port >= 1 && published_port <= 65535 ))
+}
+
 # This warns when the pinned Hermes Agent release is not the latest upstream release.
 hermes_warn_if_pinned_version_is_stale() {
-  local latest_version
+  local latest_version latest_nushell_version warned=0
 
   latest_version="$(hermes_latest_upstream_version)"
-  [[ -n "$latest_version" ]] || return 0
-  hermes_version_is_newer_than "$latest_version" "$HERMES_AGENT_RELEASE_TAG" || return 0
+  if [[ -n "$latest_version" ]] && hermes_version_is_newer_than "$latest_version" "$HERMES_AGENT_RELEASE_TAG"; then
+    hermes_warn "newer stable Hermes Agent version available: $latest_version"
+    warned=1
+  fi
 
-  hermes_warn "newer Hermes Agent version available (${latest_version}); continuing with pinned release ${HERMES_AGENT_RELEASE_TAG}"
-  hermes_pause_for_interactive_warning
+  latest_nushell_version="$(hermes_latest_nushell_version)"
+  if [[ -n "$latest_nushell_version" ]] && hermes_version_is_newer_than "$latest_nushell_version" "$HERMES_AGENT_NUSHELL_FALLBACK_VERSION"; then
+    hermes_warn "newer stable Nushell fallback version available: $latest_nushell_version"
+    warned=1
+  fi
+
+  if [[ "$warned" == '1' ]]; then
+    hermes_pause_for_interactive_warning
+  fi
 }
 
 # This runs interactive Podman commands in a way that still works from pipes and macOS hosts.
@@ -541,42 +586,48 @@ hermes_require_clean_committed_checkout() {
   hermes_require_build_ready_branch "$checkout_root"
 }
 
-# This reads the saved workspace list and splits it into names and offsets.
+# This reads real workspace directories from the base path and assigns family offsets.
 hermes_load_workspaces() {
-  local entry name offset
+  local base_path name
 
   HERMES_AGENT_WORKSPACE_NAMES=()
   HERMES_AGENT_WORKSPACE_OFFSETS=()
 
-  for entry in $HERMES_AGENT_WORKSPACES; do
-    name="${entry%%:*}"
-    offset="${entry#*:}"
-
-    if [[ -z "$name" || -z "$offset" || "$name" == "$offset" ]]; then
-      printf 'Each HERMES_AGENT_WORKSPACES entry must look like name:offset.\n' >&2
-      exit 1
-    fi
-
-    hermes_validate_workspace_name "$name"
-
-    if [[ ! "$offset" =~ ^[0-9]+$ ]]; then
-      printf 'Workspace offset for %s must be numeric.\n' "$name" >&2
-      exit 1
-    fi
-
-    HERMES_AGENT_WORKSPACE_NAMES+=("$name")
-    HERMES_AGENT_WORKSPACE_OFFSETS+=("$offset")
-  done
+  base_path="$(hermes_expand_home_path "$HERMES_AGENT_BASE_PATH")"
+  if [[ -d "$base_path" ]]; then
+    while IFS= read -r name; do
+      [[ -n "$name" ]] || continue
+      [[ -d "$base_path/$name" ]] || continue
+      [[ ! -L "$base_path/$name" ]] || continue
+      hermes_validate_workspace_name "$name"
+      hermes_workspace_port_is_possible "$name" || continue
+      HERMES_AGENT_WORKSPACE_NAMES+=("$name")
+      HERMES_AGENT_WORKSPACE_OFFSETS+=("$(hermes_workspace_offset_rule "$name")")
+    done < <(ls -1 "$base_path" 2>/dev/null | sort)
+  fi
 
   if [[ ${#HERMES_AGENT_WORKSPACE_NAMES[@]} -eq 0 ]]; then
-    printf 'Please configure at least one workspace in HERMES_AGENT_WORKSPACES.\n' >&2
+    printf 'No workspaces found under: %s\n' "$base_path" >&2
     exit 1
   fi
+}
+
+# This returns the family port offset for one discovered workspace.
+hermes_workspace_offset_rule() {
+  case "$1" in
+    ezirius) printf '10000\n' ;;
+    nala) printf '20000\n' ;;
+    *) printf '60000\n' ;;
+  esac
 }
 
 # This prints a small menu and returns the workspace the person picked.
 hermes_pick_workspace() {
   local selection index
+
+  if [[ ${#HERMES_AGENT_WORKSPACE_NAMES[@]} -eq 0 ]]; then
+    hermes_load_workspaces
+  fi
 
   while true; do
     # This sends the menu to stderr so command substitution only keeps the answer.
@@ -616,6 +667,10 @@ hermes_pick_workspace() {
 hermes_resolve_workspace_arg() {
   local selection="$1"
   local index
+
+  if [[ ${#HERMES_AGENT_WORKSPACE_NAMES[@]} -eq 0 ]]; then
+    hermes_load_workspaces
+  fi
 
   if [[ "$selection" =~ ^[0-9]+$ ]]; then
     if (( selection >= 1 && selection <= ${#HERMES_AGENT_WORKSPACE_NAMES[@]} )); then
@@ -663,10 +718,7 @@ hermes_workspace_published_port() {
   local workspace="$1"
   local port_offset published_port
 
-  if [[ ! "$HERMES_AGENT_DASHBOARD_PORT" =~ ^[0-9]+$ ]] || (( HERMES_AGENT_DASHBOARD_PORT < 1 || HERMES_AGENT_DASHBOARD_PORT > 65535 )); then
-    printf 'HERMES_AGENT_DASHBOARD_PORT must be a numeric port from 1 to 65535.\n' >&2
-    exit 1
-  fi
+  hermes_validate_dashboard_port
 
   port_offset="$(hermes_workspace_offset "$workspace")"
   published_port="$((HERMES_AGENT_DASHBOARD_PORT + port_offset))"
@@ -751,7 +803,7 @@ hermes_validate_safe_host_dirname() {
 # This checks both host dirname settings before path creation or mounts.
 hermes_validate_safe_host_dirnames() {
   hermes_validate_safe_host_dirname 'HERMES_AGENT_HOST_HOME_DIRNAME' "$HERMES_AGENT_HOST_HOME_DIRNAME"
-  hermes_validate_safe_host_dirname 'HERMES_AGENT_HOST_WORKSPACE_DIRNAME' "$HERMES_AGENT_HOST_WORKSPACE_DIRNAME"
+  hermes_validate_safe_host_dirname 'HERMES_AGENT_HOST_DOCS_DIRNAME' "$HERMES_AGENT_HOST_DOCS_DIRNAME"
 }
 
 # This rejects symlinked managed paths before root ownership repair can recurse through them.
@@ -791,13 +843,18 @@ hermes_host_home_dir() {
   printf '%s/%s/%s\n' "$base_path" "$workspace" "$HERMES_AGENT_HOST_HOME_DIRNAME"
 }
 
-# This returns the host-side mounted project path for one workspace.
-hermes_host_workspace_dir() {
+# This returns the host-side mounted docs path for one workspace.
+hermes_host_docs_dir() {
   local workspace="$1"
   local base_path
 
   base_path="$(hermes_expand_home_path "$HERMES_AGENT_BASE_PATH")"
-  printf '%s/%s/%s\n' "$base_path" "$workspace" "$HERMES_AGENT_HOST_WORKSPACE_DIRNAME"
+  printf '%s/%s/%s\n' "$base_path" "$workspace" "$HERMES_AGENT_HOST_DOCS_DIRNAME"
+}
+
+# This keeps the older helper name available while callers finish aligning.
+hermes_host_workspace_dir() {
+  hermes_host_docs_dir "$1"
 }
 
 # This finds the newest local image that matches the saved Hermes naming rules.
@@ -899,7 +956,7 @@ hermes_container_workspace_matches() {
   local workspace="$2"
   local mounts expected
 
-  expected="$(hermes_host_workspace_dir "$workspace"):$HERMES_AGENT_CONTAINER_WORKSPACE"
+  expected="$(hermes_host_docs_dir "$workspace"):$HERMES_AGENT_CONTAINER_DOCS"
   mounts="$(podman inspect --format '{{range .Mounts}}{{println .Source ":" .Destination}}{{end}}' "$container_name" 2>/dev/null || true)"
   printf '%s\n' "$mounts" | sed 's/[[:space:]]*:[[:space:]]*/:/g' | grep -Fqx -- "$expected"
 }
@@ -918,11 +975,11 @@ hermes_wait_for_running_container() {
   local container_name="$1"
   local attempt
 
-  for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+  for ((attempt = 1; attempt <= HERMES_AGENT_RUNNING_WAIT_ATTEMPTS; attempt++)); do
     if hermes_container_is_running "$container_name"; then
       return 0
     fi
-    sleep 1
+    sleep "$HERMES_AGENT_RUNNING_WAIT_SECONDS"
   done
 
   return 1
@@ -933,11 +990,11 @@ hermes_wait_for_stable_running_container() {
   local container_name="$1"
   local attempt
 
-  for attempt in 1 2; do
+  for ((attempt = 1; attempt <= HERMES_AGENT_STABLE_WAIT_ATTEMPTS; attempt++)); do
     if ! hermes_container_is_running "$container_name"; then
       return 1
     fi
-    sleep 1
+    sleep "$HERMES_AGENT_STABLE_WAIT_SECONDS"
   done
 
   hermes_container_is_running "$container_name"
@@ -1023,11 +1080,11 @@ hermes_wait_for_published_url() {
   local url="$1"
   local attempt
 
-  for attempt in 1 2 3 4 5; do
-    if curl -fsS --connect-timeout 1 --max-time 1 "$url" >/dev/null 2>&1; then
+  for ((attempt = 1; attempt <= HERMES_AGENT_PUBLISHED_URL_WAIT_ATTEMPTS; attempt++)); do
+    if curl -fsS --connect-timeout "$HERMES_AGENT_PUBLISHED_URL_CONNECT_TIMEOUT_SECONDS" --max-time "$HERMES_AGENT_PUBLISHED_URL_MAX_TIMEOUT_SECONDS" "$url" >/dev/null 2>&1; then
       return 0
     fi
-    sleep 1
+    sleep "$HERMES_AGENT_PUBLISHED_URL_WAIT_SECONDS"
   done
 
   return 1
@@ -1043,12 +1100,31 @@ hermes_open_published_url_detached() {
   fi
 
   if hermes_host_is_linux; then
-    nohup bash -c '
-      if xdg-open "$1" >/dev/null 2>&1; then
-        exit 0
-      fi
-      gio open "$1" >/dev/null 2>&1 || true
-    ' _ "$dashboard_url" >/dev/null 2>&1 < /dev/null &
+    # This keeps Linux browser opening detached while still allowing a quick gio fallback.
+    hermes_open_linux_published_url_detached "$dashboard_url"
+  fi
+}
+
+# This starts the Linux browser opener without blocking attach, while keeping gio as a quick fallback.
+hermes_open_linux_published_url_detached() {
+  local dashboard_url="$1"
+  local opener_pid=0
+
+  if command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "$dashboard_url" >/dev/null 2>&1 < /dev/null &
+    opener_pid="$!"
+    sleep 0.1
+    if kill -0 "$opener_pid" >/dev/null 2>&1; then
+      return 0
+    fi
+
+    if wait "$opener_pid"; then
+      return 0
+    fi
+  fi
+
+  if command -v gio >/dev/null 2>&1; then
+    gio open "$dashboard_url" >/dev/null 2>&1 < /dev/null &
   fi
 }
 

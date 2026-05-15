@@ -1,13 +1,13 @@
 # AGENTS
 
-This file defines the repository structure, naming rules, and safe-editing rules for agents creating or reorganizing content in this repo.
+This file defines the repository structure, naming rules, and safe-editing rules for agents changing this repo.
 
 ## Core Shape
 
-- Canonical directory shape is `category/subcategory/scope`.
+- Canonical directory shape is `category/scope/family`.
 - `category` is the top-level bucket.
-- `subcategory` is the functional family inside that category.
 - `scope` describes OS applicability only.
+- `family` is the product or functional family inside that category.
 
 ## Allowed Scope Values
 
@@ -32,55 +32,49 @@ Meaning:
 
 Common categories in this repo are:
 
-- `config`
+- `configs`
 - `scripts`
 - `tests`
 - `docs`
 - `lib`
 
-## Canonical Subcategories For This Repo
+## Current Repo Paths
 
-Use the most specific functional family that fits the content.
+Use the existing family path that best fits the content.
 
-Current canonical subcategories in this repo are:
+Current repo paths in active use are:
 
-- `config/agent/...`
-- `config/containers/...`
-- `scripts/agent/...`
-- `tests/agent/...`
-- `docs/usage/...`
-- `lib/shell/...`
+- `configs/shared/hermes-agent/...`
+- `docs/shared/hermes-agent/...`
+- `scripts/shared/hermes-agent/...`
+- `tests/shared/hermes-agent/...`
+- `tests/shared/shared/...`
+- `docs/shared/hermes-agent/plans/...`
 
-Future-facing subcategories, only when needed, are:
-
-- `docs/plans/...`
-- `docs/specs/...` if plans and designs are split later
-
-Do not reuse the application name as a generic subcategory when a stronger functional family exists.
+Do not split one product family across several ad hoc subcategories when one family directory fits.
 
 ## Config Filename Rule
 
-The special filename convention applies only to files under `config`.
+The special filename convention applies only to files under `configs`.
 
 Format:
 
 ```text
-<subcategory>-<filejob>-<host>.<ext>
+<family>-<filejob>.<ext>
 ```
 
 Rules:
 
 - `filejob` describes what the file does, not an internal object name.
-- `host` is `shared` for all hosts in that OS scope, or a hostname token for one machine.
-- Prefer descriptive `filejob` terms such as `settings`, `runtime`, `packages`, `service`, or `machine-settings`.
+- Prefer descriptive `filejob` terms such as `settings`, `runtime`, `packages`, or `service`.
 
 Examples:
 
-- `config/agent/shared/hermes-agent-settings-shared.conf`
-- `config/podman/macos/podman-machine-settings-shared.conf`
-- `config/podman/macos/podman-runtime-settings-maldoria.conf`
-- `config/caddy/shared/caddy-runtime-shared.Caddyfile`
-- `config/brew/shared/brew-packages-shared.Brewfile`
+- `configs/shared/hermes-agent/hermes-agent-settings.conf`
+- `configs/shared/podman/podman-machine-settings.conf`
+- `configs/macos/podman/podman-runtime.conf`
+- `configs/shared/caddy/Caddyfile`
+- `configs/shared/brew/brew-packages.Brewfile`
 
 ## Script Naming Rule
 
@@ -99,17 +93,15 @@ These basenames are exceptions to the config naming pattern when appropriate:
 - root metadata files such as `README.md` and `AGENTS.md`
 - timestamped superpowers planning documents
 
-## Superpowers Documents
+## Planning Documents
 
-- Superpowers planning documents belong under `docs/plans/<scope>/`.
+- Historical and planning documents for this app belong under `docs/shared/hermes-agent/plans/`.
 - Timed or date-dependent document names must start with `YYYYMMDD-HHMMSS-`.
 - Example:
 
 ```text
-docs/plans/shared/20260417-104635-hermes-agent-layout-migration.md
+docs/shared/hermes-agent/plans/20260417-104635-hermes-agent-layout-migration.md
 ```
-
-- If future design documents are kept separately from plans, place them in a separate sibling subcategory such as `docs/specs/<scope>/`.
 
 ## Required Comment Rules
 
@@ -125,20 +117,20 @@ docs/plans/shared/20260417-104635-hermes-agent-layout-migration.md
 
 Current stable paths in this repo are:
 
-- `config/agent/shared/hermes-agent-settings-shared.conf`
-- `config/containers/shared/Containerfile`
-- `docs/usage/shared/usage.md`
-- `docs/usage/shared/architecture.md`
-- `lib/shell/shared/common.sh`
-- `scripts/agent/shared/hermes-agent-build`
-- `scripts/agent/shared/hermes-agent-run`
-- `scripts/agent/shared/hermes-agent-shell`
-- `tests/agent/shared/test-asserts.sh`
-- `tests/agent/shared/test-all.sh`
-- `tests/agent/shared/test-hermes-agent-build.sh`
-- `tests/agent/shared/test-hermes-agent-layout.sh`
-- `tests/agent/shared/test-hermes-agent-run.sh`
-- `tests/agent/shared/test-hermes-agent-shell.sh`
+- `configs/shared/hermes-agent/hermes-agent-settings.conf`
+- `configs/shared/hermes-agent/Containerfile`
+- `docs/shared/hermes-agent/usage.md`
+- `docs/shared/hermes-agent/architecture.md`
+- `scripts/shared/hermes-agent/common.sh`
+- `scripts/shared/hermes-agent/hermes-agent-build`
+- `scripts/shared/hermes-agent/hermes-agent-run`
+- `scripts/shared/hermes-agent/hermes-agent-shell`
+- `tests/shared/shared/test-asserts.sh`
+- `tests/shared/hermes-agent/test-all.sh`
+- `tests/shared/hermes-agent/test-hermes-agent-build.sh`
+- `tests/shared/hermes-agent/test-hermes-agent-layout.sh`
+- `tests/shared/hermes-agent/test-hermes-agent-run.sh`
+- `tests/shared/hermes-agent/test-hermes-agent-shell.sh`
 
 ## Root Files
 
@@ -154,29 +146,29 @@ Current stable paths in this repo are:
 
 ## Current Behavioral Rules
 
-- Repo-owned runtime and build settings live in `config/agent/shared/hermes-agent-settings-shared.conf`.
-- Container build configuration lives in `config/containers/shared/Containerfile` and derives from the official upstream Hermes Agent image.
-- Shared shell helpers live in `lib/shell/shared/common.sh`.
-- User-facing documentation lives in `docs/usage/shared/`.
-- Shell tests live in `tests/agent/shared/`.
+- Repo-owned runtime and build settings live in `configs/shared/hermes-agent/hermes-agent-settings.conf`.
+- Container build configuration lives in `configs/shared/hermes-agent/Containerfile` and derives from the official upstream Hermes Agent image.
+- App-local shell helpers live in `scripts/shared/hermes-agent/common.sh`.
+- User-facing documentation and retained plans live under `docs/shared/hermes-agent/`.
+- Shell tests live in `tests/shared/hermes-agent/`.
 - The shell tests mutate the shared config file during execution, so they must be run sequentially.
-- `scripts/agent/shared/hermes-agent-build` must only build from a clean, committed checkout.
-- `scripts/agent/shared/hermes-agent-build` requires main to track `origin/main` and prints `Build requires main to be pushed and in sync with origin/main` when ahead, behind, or diverged.
+- `scripts/shared/hermes-agent/hermes-agent-build` must only build from a clean, committed checkout.
+- `scripts/shared/hermes-agent/hermes-agent-build` requires main to track `origin/main` and prints `Build requires main to be pushed and in sync with origin/main` when ahead, behind, or diverged.
 - Non-main remote-tracking branches must not be used for builds; use a clean committed local worktree branch or main tracking `origin/main`.
 - Local image names must include the 12-character image-id suffix after the timestamp.
 - Hermes container and pod names follow the OpenCode-derived `<image-name>-<workspace>` order.
 - Meaningful tracked changes, meaningful untracked files, and executable-bit changes all count as dirty for build safety.
 - Harmless host junk such as `.DS_Store` should not count as a dirty checkout by itself.
-- `scripts/agent/shared/hermes-agent-run` must only remove older workspace pods and containers after the replacement container is running.
-- `scripts/agent/shared/hermes-agent-run` must use `--userns keep-id` for non-root runtime containers and repair mounted host path ownership while skipping rootless `keep-id` mode when launched as root.
-- `scripts/agent/shared/hermes-agent-run` delegates first-run setup and state bootstrapping to the upstream Hermes entrypoint.
+- `scripts/shared/hermes-agent/hermes-agent-run` must only remove older workspace pods and containers after the replacement container is running.
+- `scripts/shared/hermes-agent/hermes-agent-run` must use `--userns keep-id` for non-root runtime containers and repair mounted host path ownership while skipping rootless `keep-id` mode when launched as root.
+- `scripts/shared/hermes-agent/hermes-agent-run` delegates first-run setup and state bootstrapping to the upstream Hermes entrypoint.
 - Hermes pod names follow `<image-name>-<workspace>`; role containers inside the pod use `<image-name>-<workspace>-gateway` and `<image-name>-<workspace>-dashboard`, and infra containers use `<image-name>-<workspace>-infrastructure`.
-- Interactive CLI containers use the exact name `<image-name>-<workspace>-cli`, share the same `/opt/data` and `/workspace/general` mounts as the persistent runtime, do not join the workspace pod, do not publish ports, and may only remove stale stopped same-workspace exact-name containers.
-- Shared interactive Podman exec behavior lives in `lib/shell/shared/common.sh` and must preserve non-TTY stdin behavior as well as interactive-host behavior.
-- `tests/agent/shared/test-hermes-agent-layout.sh` is the layout guard for the normalized repository structure and key headline comments.
+- Interactive CLI containers use the exact name `<image-name>-<workspace>-cli`, share the same `/opt/data` and `/workspace/docs` mounts as the persistent runtime, do not join the workspace pod, do not publish ports, and may only remove stale stopped same-workspace exact-name containers.
+- Shared interactive Podman exec behavior lives in `scripts/shared/hermes-agent/common.sh` and must preserve non-TTY stdin behavior as well as interactive-host behavior.
+- `tests/shared/hermes-agent/test-hermes-agent-layout.sh` is the layout guard for the normalized repository structure and key headline comments.
 
 ## Current Implementation Notes
 
-- Container lookup and stale cleanup are workspace-scoped across Hermes image versions in the shared shell helpers.
-- Version-bump work should review `lib/shell/shared/common.sh`, `scripts/agent/shared/hermes-agent-run`, and `scripts/agent/shared/hermes-agent-shell` carefully so older workspace containers do not become unmanaged or invisible by accident.
+- Container lookup and stale cleanup are workspace-scoped across Hermes image versions in the app-local helper library.
+- Version-bump work should review `scripts/shared/hermes-agent/common.sh`, `scripts/shared/hermes-agent/hermes-agent-run`, and `scripts/shared/hermes-agent/hermes-agent-shell` carefully so older workspace containers do not become unmanaged or invisible by accident.
 - Treat these notes as current implementation constraints, not as the ideal long-term design.

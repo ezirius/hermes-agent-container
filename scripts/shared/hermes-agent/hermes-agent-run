@@ -7,32 +7,35 @@ set -euo pipefail
 # This finds the repo root so the script can reach shared helpers.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-source "$ROOT/lib/shell/shared/common.sh"
+source "$ROOT/scripts/shared/hermes-agent/common.sh"
+
+# This prints the run usage in the shared family style.
+print_help() {
+  printf 'Usage: scripts/shared/hermes-agent/hermes-agent-run [workspace]\n'
+  printf 'This script takes zero or one argument: [workspace]. See --help.\n'
+}
+
+# This command either uses the picker or accepts one direct workspace name.
+if [[ $# -gt 0 ]]; then
+  case "$1" in
+    --help)
+      print_help
+      exit 0
+      ;;
+    -*)
+      printf 'Unsupported option: %s. See --help.\n' "$1" >&2
+      exit 1
+      ;;
+  esac
+fi
+
+if [[ $# -gt 1 ]]; then
+  printf 'This script takes zero or one argument: [workspace]. See --help.\n' >&2
+  exit 1
+fi
 
 # This loads the saved workspace list before the script picks or validates a workspace.
 hermes_load_workspaces
-
-# This command either uses the picker or accepts one direct workspace name.
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --)
-      shift
-      break
-      ;;
-    -*)
-      printf 'Unsupported option: %s\n' "$1" >&2
-      exit 1
-      ;;
-    *)
-      break
-      ;;
-  esac
-done
-
-if [[ $# -gt 1 ]]; then
-  printf 'This script takes zero or one argument: [workspace].\n' >&2
-  exit 1
-fi
 
 # This warns about stale release pins before image lookup and container work begin.
 hermes_warn_if_pinned_version_is_stale
@@ -41,7 +44,7 @@ hermes_warn_if_pinned_version_is_stale
 image_name="$(hermes_latest_image)"
 
 if [[ -z "$image_name" ]]; then
-  printf 'No built Hermes Agent image found. Run scripts/agent/shared/hermes-agent-build first.\n' >&2
+  printf 'No built Hermes Agent image found. Run scripts/shared/hermes-agent/hermes-agent-build first.\n' >&2
   exit 1
 fi
 
@@ -58,7 +61,7 @@ hermes_validate_safe_host_dirnames
 
 # This builds the host paths and names around the selected workspace.
 host_home="$(hermes_host_home_dir "$workspace")"
-host_workspace="$(hermes_host_workspace_dir "$workspace")"
+host_docs="$(hermes_host_docs_dir "$workspace")"
 old_containers="$(hermes_workspace_containers "$workspace")"
 old_pods="$(hermes_workspace_pods "$workspace")"
 
@@ -88,7 +91,7 @@ cleanup_cli_container() {
 
 # This rejects symlinked managed mount paths before creation or ownership repair.
 hermes_reject_symlinked_managed_path "$host_home"
-hermes_reject_symlinked_managed_path "$host_workspace"
+hermes_reject_symlinked_managed_path "$host_docs"
 
 # This checks whether an existing pod publishes the dashboard on the expected host loopback port.
 dashboard_port_matches_expected() {
@@ -150,34 +153,28 @@ exact_container_exists() {
 
 # This creates the dashboard role container with the current image, mounts, and dashboard command.
 create_dashboard_container() {
-  local container_id
-
-  container_id="$(podman run -d \
+  podman run -d \
     --name "$dashboard_container_name" \
     --pod "$pod_name" \
-    --workdir "$HERMES_AGENT_CONTAINER_WORKSPACE" \
+    --workdir "$HERMES_AGENT_CONTAINER_DOCS" \
     -v "$host_home:$HERMES_AGENT_CONTAINER_HOME" \
-    -v "$host_workspace:$HERMES_AGENT_CONTAINER_WORKSPACE" \
+    -v "$host_docs:$HERMES_AGENT_CONTAINER_DOCS" \
     "$image_name" \
-    dashboard --host 0.0.0.0 --port "$HERMES_AGENT_DASHBOARD_PORT" --no-open --insecure)"
+    dashboard --host 0.0.0.0 --port "$HERMES_AGENT_DASHBOARD_PORT" --no-open --insecure >/dev/null
   runtime_created=1
-  printf 'Dashboard container ID: %s\n' "$container_id"
 }
 
 # This creates the gateway role container so attach has a stable target in the workspace pod.
 create_gateway_container() {
-  local container_id
-
-  container_id="$(podman run -d \
+  podman run -d \
     --name "$gateway_container_name" \
     --pod "$pod_name" \
-    --workdir "$HERMES_AGENT_CONTAINER_WORKSPACE" \
+    --workdir "$HERMES_AGENT_CONTAINER_DOCS" \
     -v "$host_home:$HERMES_AGENT_CONTAINER_HOME" \
-    -v "$host_workspace:$HERMES_AGENT_CONTAINER_WORKSPACE" \
+    -v "$host_docs:$HERMES_AGENT_CONTAINER_DOCS" \
     "$image_name" \
-    gateway run)"
+    gateway run >/dev/null
   runtime_created=1
-  printf 'Gateway container ID: %s\n' "$container_id"
 }
 
 # This creates both workspace role containers after clearing any stale exact names.
@@ -189,11 +186,11 @@ create_role_containers() {
 }
 
 # This makes sure the host folders exist before the container is started.
-mkdir -p "$host_home" "$host_workspace"
+mkdir -p "$host_home" "$host_docs"
 
 # This keeps root-launched runs from leaving host paths owned by root.
 if [[ "$(id -u)" == '0' ]]; then
-  chown -R "$(hermes_host_uid):$(hermes_host_gid)" "$host_home" "$host_workspace"
+  chown -R "$(hermes_host_uid):$(hermes_host_gid)" "$host_home" "$host_docs"
   runtime_userns_args=()
 fi
 
@@ -335,12 +332,17 @@ done < <(hermes_podman_create_interactive_args)
 podman create \
   "${create_interactive_args[@]}" \
   --name "$cli_container_name" \
-  --workdir "$HERMES_AGENT_CONTAINER_WORKSPACE" \
+  --workdir "$HERMES_AGENT_CONTAINER_DOCS" \
   -v "$host_home:$HERMES_AGENT_CONTAINER_HOME" \
-  -v "$host_workspace:$HERMES_AGENT_CONTAINER_WORKSPACE" \
+  -v "$host_docs:$HERMES_AGENT_CONTAINER_DOCS" \
   "$image_name" \
   "$HERMES_AGENT_CHAT_COMMAND" >/dev/null
 
 cleanup_cli_container_name="$cli_container_name"
 trap cleanup_cli_container EXIT
+
+# This keeps the success output short and user-facing before attach takes over.
+printf 'Started workspace: %s\n' "$workspace"
+printf 'Dashboard: http://localhost:%s\n' "$host_port"
+
 hermes_run_podman_attached_start_command "$cli_container_name"

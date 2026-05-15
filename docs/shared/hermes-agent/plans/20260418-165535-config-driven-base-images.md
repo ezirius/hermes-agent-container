@@ -1,6 +1,6 @@
 # Config-Driven Base Images Implementation Plan
 
-> Historical note: this plan is retained for context and does not describe the current Hermes runtime architecture. Current behavior derives from the official upstream Hermes Agent image and is documented in `docs/usage/shared/architecture.md`.
+> Historical note: this plan is retained for context and does not describe the current Hermes runtime architecture. Current behavior derives from the official upstream Hermes Agent image and is documented in `docs/shared/hermes-agent/architecture.md`.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -15,9 +15,9 @@
 ### Task 1: Add failing tests for config-driven base images
 
 **Files:**
-- Modify: `tests/agent/shared/test-hermes-agent-build.sh`
-- Modify: `tests/agent/shared/test-hermes-agent-layout.sh`
-- Test: `tests/agent/shared/test-hermes-agent-build.sh`
+- Modify: `tests/shared/hermes-agent/test-hermes-agent-build.sh`
+- Modify: `tests/shared/hermes-agent/test-hermes-agent-layout.sh`
+- Test: `tests/shared/hermes-agent/test-hermes-agent-build.sh`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -26,31 +26,31 @@ Add assertions for these behaviors:
 ```bash
 assert_file_contains '--build-arg HERMES_AGENT_NODE_IMAGE=node:22-bookworm-slim' "$PODMAN_LOG" 'build should pass the configured Node base image to the container build'
 assert_file_contains '--build-arg HERMES_AGENT_RUNTIME_IMAGE=ubuntu:24.04' "$PODMAN_LOG" 'build should pass the configured runtime base image to the container build'
-assert_file_contains 'ARG HERMES_AGENT_NODE_IMAGE' "$ROOT/config/containers/shared/Containerfile" 'container build should declare the configured Node base image arg'
-assert_file_contains 'ARG HERMES_AGENT_RUNTIME_IMAGE' "$ROOT/config/containers/shared/Containerfile" 'container build should declare the configured runtime base image arg'
-assert_file_contains 'FROM ${HERMES_AGENT_NODE_IMAGE} AS hermes-web-builder' "$ROOT/config/containers/shared/Containerfile" 'frontend builder should use the configured Node base image'
-assert_file_contains 'FROM ${HERMES_AGENT_RUNTIME_IMAGE}' "$ROOT/config/containers/shared/Containerfile" 'runtime image should use the configured runtime base image'
+assert_file_contains 'ARG HERMES_AGENT_NODE_IMAGE' "$ROOT/configs/shared/hermes-agent/Containerfile" 'container build should declare the configured Node base image arg'
+assert_file_contains 'ARG HERMES_AGENT_RUNTIME_IMAGE' "$ROOT/configs/shared/hermes-agent/Containerfile" 'container build should declare the configured runtime base image arg'
+assert_file_contains 'FROM ${HERMES_AGENT_NODE_IMAGE} AS hermes-web-builder' "$ROOT/configs/shared/hermes-agent/Containerfile" 'frontend builder should use the configured Node base image'
+assert_file_contains 'FROM ${HERMES_AGENT_RUNTIME_IMAGE}' "$ROOT/configs/shared/hermes-agent/Containerfile" 'runtime image should use the configured runtime base image'
 ```
 
 Add layout assertions for the new config keys:
 
 ```bash
-grep -q '^HERMES_AGENT_NODE_IMAGE="node:22-bookworm-slim"$' "$ROOT/config/agent/shared/hermes-agent-settings-shared.conf"
-grep -q '^HERMES_AGENT_RUNTIME_IMAGE="ubuntu:24.04"$' "$ROOT/config/agent/shared/hermes-agent-settings-shared.conf"
+grep -q '^HERMES_AGENT_NODE_IMAGE="node:22-bookworm-slim"$' "$ROOT/configs/shared/hermes-agent/hermes-agent-settings.conf"
+grep -q '^HERMES_AGENT_RUNTIME_IMAGE="ubuntu:24.04"$' "$ROOT/configs/shared/hermes-agent/hermes-agent-settings.conf"
 ```
 
 - [ ] **Step 2: Run the failing test**
 
-Run: `bash tests/agent/shared/test-hermes-agent-build.sh`
+Run: `bash tests/shared/hermes-agent/test-hermes-agent-build.sh`
 Expected: FAIL because the build script and `Containerfile` do not yet carry the new image settings.
 
 ### Task 2: Implement config-driven pinned base images
 
 **Files:**
-- Modify: `config/agent/shared/hermes-agent-settings-shared.conf`
-- Modify: `scripts/agent/shared/hermes-agent-build`
-- Modify: `config/containers/shared/Containerfile`
-- Test: `tests/agent/shared/test-hermes-agent-build.sh`
+- Modify: `configs/shared/hermes-agent/hermes-agent-settings.conf`
+- Modify: `scripts/shared/hermes-agent/hermes-agent-build`
+- Modify: `configs/shared/hermes-agent/Containerfile`
+- Test: `tests/shared/hermes-agent/test-hermes-agent-build.sh`
 
 - [ ] **Step 1: Add the pinned image refs to shared config**
 
@@ -84,21 +84,21 @@ FROM ${HERMES_AGENT_RUNTIME_IMAGE}
 
 - [ ] **Step 4: Re-run the tests**
 
-Run: `bash tests/agent/shared/test-hermes-agent-build.sh`
+Run: `bash tests/shared/hermes-agent/test-hermes-agent-build.sh`
 Expected: PASS
 
 ### Task 3: Verify the repo guards still pass
 
 **Files:**
-- Test: `tests/agent/shared/test-hermes-agent-layout.sh`
-- Test: `tests/agent/shared/test-hermes-agent-build.sh`
+- Test: `tests/shared/hermes-agent/test-hermes-agent-layout.sh`
+- Test: `tests/shared/hermes-agent/test-hermes-agent-build.sh`
 
 - [ ] **Step 1: Run the layout test**
 
-Run: `bash tests/agent/shared/test-hermes-agent-layout.sh`
+Run: `bash tests/shared/hermes-agent/test-hermes-agent-layout.sh`
 Expected: PASS
 
 - [ ] **Step 2: Run the build test again**
 
-Run: `bash tests/agent/shared/test-hermes-agent-build.sh`
+Run: `bash tests/shared/hermes-agent/test-hermes-agent-build.sh`
 Expected: PASS

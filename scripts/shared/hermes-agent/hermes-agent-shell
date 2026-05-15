@@ -7,7 +7,25 @@ set -euo pipefail
 # This finds the repo root so the script can reach shared helpers.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-source "$ROOT/lib/shell/shared/common.sh"
+source "$ROOT/scripts/shared/hermes-agent/common.sh"
+
+# This prints the shell usage in the shared family style.
+print_help() {
+  printf 'Usage: scripts/shared/hermes-agent/hermes-agent-shell [workspace] [command...]\n'
+}
+
+if [[ $# -gt 0 ]]; then
+  case "$1" in
+    --help)
+      print_help
+      exit 0
+      ;;
+    -*)
+      printf 'Unsupported option: %s. See --help.\n' "$1" >&2
+      exit 1
+      ;;
+  esac
+fi
 
 # This loads the saved workspace list before the script picks or validates a workspace.
 hermes_load_workspaces
@@ -17,9 +35,7 @@ if [[ $# -eq 0 ]]; then
   workspace="$(hermes_pick_workspace)"
   command=("$HERMES_AGENT_SHELL_COMMAND")
 else
-  workspace="$1"
-  hermes_validate_workspace_name "$workspace"
-  hermes_workspace_offset "$workspace" >/dev/null
+  workspace="$(hermes_resolve_workspace_arg "$1")"
   shift
 
   if [[ $# -eq 0 ]]; then
@@ -33,13 +49,13 @@ fi
 image_name="$(hermes_latest_image)"
 
 if [[ -z "$image_name" ]]; then
-  printf 'No built Hermes Agent image found. Run scripts/agent/shared/hermes-agent-build first.\n' >&2
+  printf 'No built Hermes Agent image found. Run scripts/shared/hermes-agent/hermes-agent-build first.\n' >&2
   exit 1
 fi
 
 # This builds the host paths and CLI container name around the selected workspace.
 host_home="$(hermes_host_home_dir "$workspace")"
-host_workspace="$(hermes_host_workspace_dir "$workspace")"
+host_docs="$(hermes_host_docs_dir "$workspace")"
 container_name="$(hermes_cli_container_name "$image_name" "$workspace")"
 launch_lock_file="$host_home/.hermes-agent-shell-launch.lock"
 cleanup_container_name=""
@@ -87,8 +103,8 @@ cleanup_launch_lock() {
 hermes_validate_safe_host_base_path
 hermes_validate_safe_host_dirnames
 hermes_reject_symlinked_managed_path "$host_home"
-hermes_reject_symlinked_managed_path "$host_workspace"
-mkdir -p "$host_home" "$host_workspace"
+hermes_reject_symlinked_managed_path "$host_docs"
+mkdir -p "$host_home" "$host_docs"
 
 # This serializes launch work so one shell session cannot race another and kill it.
 if ! ( set -o noclobber; printf '%s\n' "$launch_lock_token" >"$launch_lock_file" ) 2>/dev/null; then
@@ -152,9 +168,9 @@ done < <(hermes_podman_create_interactive_args)
 podman create \
   "${create_interactive_args[@]}" \
   --name "$container_name" \
-  --workdir "$HERMES_AGENT_CONTAINER_WORKSPACE" \
+  --workdir "$HERMES_AGENT_CONTAINER_DOCS" \
   -v "$host_home:$HERMES_AGENT_CONTAINER_HOME" \
-  -v "$host_workspace:$HERMES_AGENT_CONTAINER_WORKSPACE" \
+  -v "$host_docs:$HERMES_AGENT_CONTAINER_DOCS" \
   "$image_name" \
   "${command[@]}" >/dev/null
 

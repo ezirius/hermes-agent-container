@@ -6,10 +6,10 @@ set -euo pipefail
 
 # This finds the repo root so the test can reach the script, config, and shared helpers.
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-source "$ROOT/tests/agent/shared/test-asserts.sh"
+source "$ROOT/tests/shared/shared/test-asserts.sh"
 
 # This points at the shared config file the test rewrites for a short time.
-CONFIG_PATH="$ROOT/config/agent/shared/hermes-agent-settings-shared.conf"
+CONFIG_PATH="$ROOT/configs/shared/hermes-agent/hermes-agent-settings.conf"
 CONFIG_BACKUP="$(mktemp)"
 TMP_DIR="$(mktemp -d)"
 REAL_SMOKE_IMAGE_NAME=""
@@ -76,7 +76,7 @@ run_real_image_smoke_check() {
 
   list_real_smoke_images "$before_images"
 
-  if ! bash "$ROOT/scripts/agent/shared/hermes-agent-build" >/dev/null 2>"$build_stderr"; then
+  if ! bash "$ROOT/scripts/shared/hermes-agent/hermes-agent-build" >/dev/null 2>"$build_stderr"; then
     cat "$build_stderr" >&2
     fail 'real smoke check expected hermes-agent-build to succeed'
   fi
@@ -310,7 +310,7 @@ case "$1 $2 ${3:-}" in
     ;;
   'diff --numstat '|'diff --summary '|'diff --cached --numstat'|'diff --cached --summary')
     if [[ "${HERMES_TEST_GIT_MODE:-clean}" == "dirty" ]]; then
-      printf '1\t0\tscripts/agent/shared/hermes-agent-build\n'
+      printf '1\t0\tscripts/shared/hermes-agent/hermes-agent-build\n'
     fi
     ;;
   'ls-files --others --exclude-standard')
@@ -340,31 +340,36 @@ if [[ -n "${HERMES_TEST_CURL_LOG:-}" ]]; then
 fi
 
 case "$*" in
-  *'--connect-timeout 2 --max-time 5'*) ;;
+  *'--connect-timeout 7 --max-time 11'*) ;;
   *)
     printf 'curl missing bounded timeout arguments: %s\n' "$*" >&2
     exit 2
     ;;
 esac
 
-case "${HERMES_TEST_LATEST_HERMES_VERSION:-same}" in
-  same)
-    printf '{"tag_name":"v2026.4.16"}\n'
+case "$*" in
+  *'NousResearch/hermes-agent/releases/latest'*)
+    case "${HERMES_TEST_LATEST_HERMES_VERSION:-same}" in
+      same) printf '{"tag_name":"v2026.4.16"}\n' ;;
+      newer) printf '{"tag_name":"v2026.4.17"}\n' ;;
+      older) printf '{"tag_name":"v2026.4.15"}\n' ;;
+      empty) printf '{}\n' ;;
+      fail) exit 7 ;;
+      *) printf '{"tag_name":"v%s"}\n' "$HERMES_TEST_LATEST_HERMES_VERSION" ;;
+    esac
     ;;
-  newer)
-    printf '{"tag_name":"v2026.4.17"}\n'
-    ;;
-  older)
-    printf '{"tag_name":"v2026.4.15"}\n'
-    ;;
-  empty)
-    printf '{}\n'
-    ;;
-  fail)
-    exit 7
+  *'nushell/nushell/releases/latest'*)
+    case "${HERMES_TEST_LATEST_NUSHELL_VERSION:-same}" in
+      same) printf '{"tag_name":"0.103.0"}\n' ;;
+      newer) printf '{"tag_name":"0.103.1"}\n' ;;
+      older) printf '{"tag_name":"0.102.9"}\n' ;;
+      empty) printf '{}\n' ;;
+      fail) exit 7 ;;
+      *) printf '{"tag_name":"%s"}\n' "$HERMES_TEST_LATEST_NUSHELL_VERSION" ;;
+    esac
     ;;
   *)
-    printf '{"tag_name":"v%s"}\n' "$HERMES_TEST_LATEST_HERMES_VERSION"
+    printf '{}\n'
     ;;
 esac
 EOF
@@ -381,19 +386,32 @@ HERMES_AGENT_UID="1000"
 HERMES_AGENT_GID="1000"
 HERMES_AGENT_VERSION="0.10.0"
 HERMES_AGENT_RELEASE_TAG="v2026.4.16"
+HERMES_AGENT_NUSHELL_FALLBACK_VERSION="0.103.0"
+HERMES_AGENT_NUSHELL_FALLBACK_SHA256_AARCH64="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+HERMES_AGENT_NUSHELL_FALLBACK_SHA256_X86_64="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+HERMES_AGENT_RELEASE_CONNECT_TIMEOUT_SECONDS="7"
+HERMES_AGENT_RELEASE_MAX_TIMEOUT_SECONDS="11"
 HERMES_AGENT_DASHBOARD_PORT="9234"
 HERMES_AGENT_CHAT_COMMAND="hermes"
 HERMES_AGENT_SHELL_COMMAND="nu"
 HERMES_AGENT_BASE_PATH="${HOME}/tmp/hermes-agent"
-HERMES_AGENT_WORKSPACES="alpha:100 beta:200"
 HERMES_AGENT_CONTAINER_HOME="/opt/data"
-HERMES_AGENT_CONTAINER_WORKSPACE="/workspace/general"
+HERMES_AGENT_CONTAINER_DOCS="/workspace/docs"
 HERMES_AGENT_HOST_HOME_DIRNAME="hermes-agent-home"
-HERMES_AGENT_HOST_WORKSPACE_DIRNAME="hermes-agent-general"
+HERMES_AGENT_HOST_DOCS_DIRNAME="hermes-agent-docs"
+HERMES_AGENT_RELEASE_API_URL="https://api.github.com/repos/NousResearch/hermes-agent/releases/latest"
+HERMES_AGENT_NUSHELL_RELEASE_API_URL="https://api.github.com/repos/nushell/nushell/releases/latest"
 EOF
 
 # This loads the test config so the optional real smoke check can reuse the saved values.
 source "$CONFIG_PATH"
+
+# These checks prove the helper reads release timeout settings from the shared config.
+ROOT="$ROOT" bash -c 'set -euo pipefail; source "$1"; source "$2"; log_path="$3"; curl() { printf "%s\n" "$*" >"$log_path"; printf "{\"tag_name\":\"v2026.4.16\"}\n"; }; hermes_latest_upstream_version >/dev/null' _ "$ROOT/scripts/shared/hermes-agent/common.sh" "$CONFIG_PATH" "$TMP_DIR/hermes-release-curl.log"
+assert_file_contains '--connect-timeout 7 --max-time 11' "$TMP_DIR/hermes-release-curl.log" 'release lookup should use the configured Hermes timeout settings'
+
+ROOT="$ROOT" bash -c 'set -euo pipefail; source "$1"; source "$2"; log_path="$3"; curl() { printf "%s\n" "$*" >"$log_path"; printf "{\"tag_name\":\"0.103.0\"}\n"; }; hermes_latest_nushell_version >/dev/null' _ "$ROOT/scripts/shared/hermes-agent/common.sh" "$CONFIG_PATH" "$TMP_DIR/nushell-release-curl.log"
+assert_file_contains '--connect-timeout 7 --max-time 11' "$TMP_DIR/nushell-release-curl.log" 'release lookup should use the configured Nushell timeout settings'
 
 # These logs capture the fake command calls so the test can check behavior.
 PODMAN_LOG="$TMP_DIR/podman.log"
@@ -404,8 +422,14 @@ BUILD_STDERR="$TMP_DIR/build.stderr"
 PODMAN_IMAGES_PHASE_FILE="$TMP_DIR/podman-images.phase"
 printf 'before\n' >"$PODMAN_IMAGES_PHASE_FILE"
 
+# This checks that build help prints the family-style usage contract.
+PATH="$FAKE_BIN:$PATH" bash "$ROOT/scripts/shared/hermes-agent/hermes-agent-build" --help >"$TMP_DIR/build-help.stdout" 2>"$TMP_DIR/build-help.stderr"
+assert_file_contains 'Usage: scripts/shared/hermes-agent/hermes-agent-build' "$TMP_DIR/build-help.stdout" 'build help should print the family-style usage line'
+assert_file_contains 'This script takes no arguments. See --help.' "$TMP_DIR/build-help.stdout" 'build help should explain the zero-argument contract'
+test ! -s "$TMP_DIR/build-help.stderr" || fail 'build help should not write to stderr'
+
 # This clean case should build and should check commit state before building.
-PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_PODMAN_IMAGES_PHASE_FILE="$PODMAN_IMAGES_PHASE_FILE" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" HERMES_TEST_GIT_MODE="clean" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >"$BUILD_STDOUT" 2>"$BUILD_STDERR"
+PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_PODMAN_IMAGES_PHASE_FILE="$PODMAN_IMAGES_PHASE_FILE" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" HERMES_TEST_GIT_MODE="clean" bash "$ROOT/scripts/shared/hermes-agent/hermes-agent-build" >"$BUILD_STDOUT" 2>"$BUILD_STDERR"
 
 # These checks prove the build used saved config values, retagged by image id, and asked git about checkout state.
 built_image_line="$(grep '^Built image:' "$BUILD_STDOUT" || true)"
@@ -419,7 +443,9 @@ if [[ ! "$built_image_name" =~ $expected_image_regex ]]; then
 fi
 assert_file_contains 'image inspect --format {{.Id}} hermes-agent-0.10.0-' "$PODMAN_LOG" 'build should inspect the temporary image id after building'
 assert_file_contains 'api.github.com/repos/NousResearch/hermes-agent/releases/latest' "$CURL_LOG" 'build should check the latest upstream Hermes Agent release before build work'
-assert_file_not_contains 'newer Hermes Agent version available' "$BUILD_STDERR" 'build should not warn when the upstream release matches the pinned release tag'
+assert_file_contains 'api.github.com/repos/nushell/nushell/releases/latest' "$CURL_LOG" 'build should check the latest stable Nushell release before build work'
+assert_file_not_contains 'newer stable Hermes Agent version available' "$BUILD_STDERR" 'build should not warn when the upstream release matches the pinned release tag'
+assert_file_not_contains 'newer stable Nushell fallback version available' "$BUILD_STDERR" 'build should not warn when the fallback Nushell version matches the latest stable release'
 assert_file_contains 'tag hermes-agent-0.10.0-' "$PODMAN_LOG" 'build should retag the temporary image into the final image name'
 assert_file_contains 'rmi hermes-agent-0.10.0-' "$PODMAN_LOG" 'build should remove the temporary image tag after retagging'
 assert_file_not_contains 'Image ID:' "$BUILD_STDOUT" 'build should not print the old iidfile label'
@@ -430,19 +456,28 @@ assert_file_not_contains 'image prune' "$PODMAN_LOG" 'build should not run a glo
 
 : >"$PODMAN_LOG"
 : >"$CURL_LOG"
-PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_LATEST_HERMES_VERSION='newer' HERMES_TEST_GIT_MODE="clean" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >"$TMP_DIR/build-newer.stdout" 2>"$TMP_DIR/build-newer.stderr"
-assert_file_contains 'warning: newer Hermes Agent version available (2026.4.17); continuing with pinned release v2026.4.16' "$TMP_DIR/build-newer.stderr" 'build should warn when upstream has a newer Hermes Agent release'
+PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_LATEST_HERMES_VERSION='newer' HERMES_TEST_GIT_MODE="clean" bash "$ROOT/scripts/shared/hermes-agent/hermes-agent-build" >"$TMP_DIR/build-newer.stdout" 2>"$TMP_DIR/build-newer.stderr"
+assert_file_contains 'Warning: newer stable Hermes Agent version available: 2026.4.17' "$TMP_DIR/build-newer.stderr" 'build should warn when upstream has a newer Hermes Agent release'
 assert_file_contains 'build -' "$PODMAN_LOG" 'build should continue after a newer-version warning'
 
 : >"$PODMAN_LOG"
 : >"$CURL_LOG"
-PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_LATEST_HERMES_VERSION='fail' HERMES_TEST_GIT_MODE="clean" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >"$TMP_DIR/build-curl-fail.stdout" 2>"$TMP_DIR/build-curl-fail.stderr"
-assert_file_not_contains 'newer Hermes Agent version available' "$TMP_DIR/build-curl-fail.stderr" 'build should not warn when the latest release lookup fails'
+PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_LATEST_NUSHELL_VERSION='newer' HERMES_TEST_GIT_MODE="clean" bash "$ROOT/scripts/shared/hermes-agent/hermes-agent-build" >"$TMP_DIR/build-nushell-newer.stdout" 2>"$TMP_DIR/build-nushell-newer.stderr"
+assert_file_contains 'Warning: newer stable Nushell fallback version available: 0.103.1' "$TMP_DIR/build-nushell-newer.stderr" 'build should warn when upstream has a newer stable Nushell fallback release'
+assert_file_contains 'build -' "$PODMAN_LOG" 'build should continue after a newer Nushell-version warning'
+
+: >"$PODMAN_LOG"
+: >"$CURL_LOG"
+PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_CURL_LOG="$CURL_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_LATEST_HERMES_VERSION='fail' HERMES_TEST_GIT_MODE="clean" bash "$ROOT/scripts/shared/hermes-agent/hermes-agent-build" >"$TMP_DIR/build-curl-fail.stdout" 2>"$TMP_DIR/build-curl-fail.stderr"
+assert_file_not_contains 'newer stable Hermes Agent version available' "$TMP_DIR/build-curl-fail.stderr" 'build should not warn when the latest release lookup fails'
 assert_file_contains 'build -' "$PODMAN_LOG" 'build should continue when the latest release lookup fails'
 assert_file_contains '--arch arm64' "$PODMAN_LOG" 'build should pass the configured target architecture to Podman'
 assert_file_contains '--build-arg HERMES_AGENT_UPSTREAM_IMAGE=docker.io/nousresearch/hermes-agent' "$PODMAN_LOG" 'build should pass the official upstream image from config'
 assert_file_contains '--build-arg HERMES_AGENT_RELEASE_TAG=v2026.4.16' "$PODMAN_LOG" 'build should pass release tag from config'
-assert_file_contains '--build-arg HERMES_AGENT_CONTAINER_WORKSPACE=/workspace/general' "$PODMAN_LOG" 'build should pass the configured image working directory into the Containerfile'
+assert_file_contains '--build-arg HERMES_AGENT_CONTAINER_DOCS=/workspace/docs' "$PODMAN_LOG" 'build should pass the configured image docs directory into the Containerfile'
+assert_file_contains '--build-arg HERMES_AGENT_NUSHELL_FALLBACK_VERSION=0.103.0' "$PODMAN_LOG" 'build should pass the fallback Nushell version from config'
+assert_file_contains '--build-arg HERMES_AGENT_NUSHELL_FALLBACK_SHA256_AARCH64=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' "$PODMAN_LOG" 'build should pass the fallback arm64 Nushell checksum from config'
+assert_file_contains '--build-arg HERMES_AGENT_NUSHELL_FALLBACK_SHA256_X86_64=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "$PODMAN_LOG" 'build should pass the fallback x86_64 Nushell checksum from config'
 assert_file_contains "-C $ROOT rev-parse --verify HEAD" "$GIT_LOG" 'build should check commit state for the repo root'
 assert_file_contains "-C $ROOT update-index -q --refresh" "$GIT_LOG" 'build should refresh the index before checking cleanliness'
 assert_file_contains "-C $ROOT diff --numstat" "$GIT_LOG" 'build should check unstaged content changes for the repo root'
@@ -452,7 +487,7 @@ assert_file_contains "-C $ROOT symbolic-ref --quiet --short HEAD" "$GIT_LOG" 'bu
 assert_file_contains "-C $ROOT rev-parse --abbrev-ref --symbolic-full-name @{upstream}" "$GIT_LOG" 'build should look up the upstream branch when building from main'
 assert_file_contains "-C $ROOT rev-list --left-right --count HEAD...@{upstream}" "$GIT_LOG" 'build should check ahead and behind counts when main tracks origin/main'
 # These checks lock in the official-image customization contract.
-containerfile_path="$ROOT/config/containers/shared/Containerfile"
+containerfile_path="$ROOT/configs/shared/hermes-agent/Containerfile"
 containerfile_text="$(<"$containerfile_path")"
 
 # This keeps the official image arg ahead of the first FROM so Podman can interpolate the base image.
@@ -471,45 +506,46 @@ if (( arg_line >= first_from_line )); then
   fail 'container build should declare HERMES_AGENT_UPSTREAM_IMAGE before the first FROM'
 fi
 
-assert_file_contains 'FROM ${HERMES_AGENT_UPSTREAM_IMAGE}:${HERMES_AGENT_RELEASE_TAG}' "$ROOT/config/containers/shared/Containerfile" 'container build should derive from the official upstream Hermes Agent image'
-assert_file_contains 'apt-get update' "$ROOT/config/containers/shared/Containerfile" 'container build should refresh apt package indexes'
-assert_file_contains 'https://apt.fury.io/nushell/gpg.key' "$ROOT/config/containers/shared/Containerfile" 'container build should trust the official Nushell Debian package key'
-assert_file_contains '/etc/apt/keyrings/fury-nushell.gpg' "$ROOT/config/containers/shared/Containerfile" 'container build should store the Nushell package key in an apt keyring'
-assert_file_contains '/etc/apt/sources.list.d/fury-nushell.list' "$ROOT/config/containers/shared/Containerfile" 'container build should add the official Nushell Debian package source'
-assert_file_contains 'https://apt.fury.io/nushell/ /' "$ROOT/config/containers/shared/Containerfile" 'container build should install Nushell from the official Debian package source'
-assert_file_contains 'apt-get install -y --no-install-recommends nushell' "$ROOT/config/containers/shared/Containerfile" 'container build should use apt to install the local customization package'
-assert_file_contains 'nushell' "$ROOT/config/containers/shared/Containerfile" 'container build should install nushell for the default workspace shell'
-assert_file_contains 'rm -rf /var/lib/apt/lists/*' "$ROOT/config/containers/shared/Containerfile" 'container build should clean apt lists after installing nushell'
-assert_file_contains 'USER root' "$ROOT/config/containers/shared/Containerfile" 'container build should preserve upstream root entrypoint behavior'
-assert_file_contains 'WORKDIR ${HERMES_AGENT_CONTAINER_WORKSPACE}' "$ROOT/config/containers/shared/Containerfile" 'container build should set the configured workspace as the image workdir'
+assert_file_contains 'FROM ${HERMES_AGENT_UPSTREAM_IMAGE}:${HERMES_AGENT_RELEASE_TAG}' "$ROOT/configs/shared/hermes-agent/Containerfile" 'container build should derive from the official upstream Hermes Agent image'
+assert_file_contains 'apt-get update' "$ROOT/configs/shared/hermes-agent/Containerfile" 'container build should refresh apt package indexes'
+assert_file_contains 'ARG HERMES_AGENT_NUSHELL_FALLBACK_VERSION' "$ROOT/configs/shared/hermes-agent/Containerfile" 'container build should declare the fallback Nushell version as a build arg'
+assert_file_contains 'ARG HERMES_AGENT_NUSHELL_FALLBACK_SHA256_AARCH64' "$ROOT/configs/shared/hermes-agent/Containerfile" 'container build should declare the fallback arm64 Nushell checksum as a build arg'
+assert_file_contains 'ARG HERMES_AGENT_NUSHELL_FALLBACK_SHA256_X86_64' "$ROOT/configs/shared/hermes-agent/Containerfile" 'container build should declare the fallback x86_64 Nushell checksum as a build arg'
+assert_file_contains 'apt-cache show nushell' "$ROOT/configs/shared/hermes-agent/Containerfile" 'container build should try the official distro package first'
+assert_file_contains 'github.com/nushell/nushell/releases/download/${HERMES_AGENT_NUSHELL_FALLBACK_VERSION}' "$ROOT/configs/shared/hermes-agent/Containerfile" 'container build should fall back to the pinned upstream Nushell binary when the distro package is unavailable'
+assert_file_contains 'sha256sum -c -' "$ROOT/configs/shared/hermes-agent/Containerfile" 'container build should verify the fallback Nushell binary checksum'
+assert_file_contains 'nushell' "$ROOT/configs/shared/hermes-agent/Containerfile" 'container build should install nushell for the default workspace shell'
+assert_file_contains 'rm -rf /var/lib/apt/lists/*' "$ROOT/configs/shared/hermes-agent/Containerfile" 'container build should clean apt lists after installing nushell'
+assert_file_contains 'USER root' "$ROOT/configs/shared/hermes-agent/Containerfile" 'container build should preserve upstream root entrypoint behavior'
+assert_file_contains 'WORKDIR ${HERMES_AGENT_CONTAINER_DOCS}' "$ROOT/configs/shared/hermes-agent/Containerfile" 'container build should set the configured docs path as the image workdir'
 
-if grep -Fq 'ENTRYPOINT' "$ROOT/config/containers/shared/Containerfile"; then
+if grep -Fq 'ENTRYPOINT' "$ROOT/configs/shared/hermes-agent/Containerfile"; then
   fail 'container build should inherit the official upstream entrypoint'
 fi
 
 assert_file_contains '.worktrees/' "$ROOT/.dockerignore" 'dockerignore should ignore local worktree directories like the OpenCode template'
 assert_file_contains 'dist/' "$ROOT/.dockerignore" 'dockerignore should ignore local build output like the OpenCode template'
-assert_file_not_contains '!config/containers/shared/Containerfile' "$ROOT/.dockerignore" 'dockerignore should not use the old Containerfile-only allowlist'
+assert_file_not_contains '!configs/shared/hermes-agent/Containerfile' "$ROOT/.dockerignore" 'dockerignore should not use the old Containerfile-only allowlist'
 
-if grep -Eq 'npm ci|npm run build|uv pip install|curl -fsSL "https://github.com/NousResearch/hermes-agent' "$ROOT/config/containers/shared/Containerfile"; then
+if grep -Eq 'npm ci|npm run build|uv pip install|curl -fsSL "https://github.com/NousResearch/hermes-agent' "$ROOT/configs/shared/hermes-agent/Containerfile"; then
   fail 'container build should not rebuild Hermes or the upstream web frontend from source'
 fi
 
-if grep -Fq 'hermes-agent-entrypoint' "$ROOT/config/containers/shared/Containerfile"; then
+if grep -Fq 'hermes-agent-entrypoint' "$ROOT/configs/shared/hermes-agent/Containerfile"; then
   fail 'container build should use the official upstream entrypoint inherited from the base image'
 fi
 
-if grep -Fq 'COPY skills/' "$ROOT/config/containers/shared/Containerfile"; then
+if grep -Fq 'COPY skills/' "$ROOT/configs/shared/hermes-agent/Containerfile"; then
   fail 'runtime image should not copy the obsolete repo placeholder skills directory into the image'
 fi
 
-if grep -Fq 'CMD ["bash", "-lc", "exec hermes dashboard --host 0.0.0.0 --port \"$HERMES_AGENT_DASHBOARD_PORT\" --no-open --insecure"]' "$ROOT/config/containers/shared/Containerfile"; then
+if grep -Fq 'CMD ["bash", "-lc", "exec hermes dashboard --host 0.0.0.0 --port \"$HERMES_AGENT_DASHBOARD_PORT\" --no-open --insecure"]' "$ROOT/configs/shared/hermes-agent/Containerfile"; then
   fail 'runtime image should not keep the old dashboard-only default command when it inherits upstream startup behavior'
 fi
 
 # This dirty case should stop the build before Podman is used.
 : >"$PODMAN_LOG"
-if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="dirty" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >/dev/null 2>"$TMP_DIR/dirty.stderr"; then
+if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="dirty" bash "$ROOT/scripts/shared/hermes-agent/hermes-agent-build" >/dev/null 2>"$TMP_DIR/dirty.stderr"; then
   fail 'build should fail when the current checkout is dirty'
 fi
 
@@ -519,62 +555,68 @@ assert_file_not_contains 'tag hermes-agent-' "$PODMAN_LOG" 'dirty checkout failu
 
 # This no-commit case should stop the build before Podman is used.
 : >"$PODMAN_LOG"
-if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="no-commit" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >/dev/null 2>"$TMP_DIR/no-commit.stderr"; then
+if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="no-commit" bash "$ROOT/scripts/shared/hermes-agent/hermes-agent-build" >/dev/null 2>"$TMP_DIR/no-commit.stderr"; then
   fail 'build should fail when the current checkout has no commits'
 fi
+
+# This checks that extra build arguments use the family-style error wording.
+if PATH="$FAKE_BIN:$PATH" bash "$ROOT/scripts/shared/hermes-agent/hermes-agent-build" extra >/dev/null 2>"$TMP_DIR/build-extra-arg.stderr"; then
+  fail 'build should reject extra arguments'
+fi
+assert_file_contains 'This script takes no arguments. See --help.' "$TMP_DIR/build-extra-arg.stderr" 'build should explain extra arguments with the family-style wording'
 
 # This checks that the no-commit failure message stays clear.
 assert_file_contains 'Build requires the current checkout to have at least one commit.' "$TMP_DIR/no-commit.stderr" 'build should explain missing-commit failures'
 assert_file_not_contains 'build -' "$PODMAN_LOG" 'no-commit failures should stop before Podman build'
 
 # This detached-HEAD case should fail with a clear build-policy message.
-if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="detached" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >/dev/null 2>"$TMP_DIR/detached.stderr"; then
+if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="detached" bash "$ROOT/scripts/shared/hermes-agent/hermes-agent-build" >/dev/null 2>"$TMP_DIR/detached.stderr"; then
   fail 'build should fail when the checkout is detached'
 fi
 
 assert_file_contains 'Build requires a named branch; detached HEAD is not supported.' "$TMP_DIR/detached.stderr" 'build should explain detached HEAD failures'
 
 # This main-branch case should stop the build when local main is ahead of origin/main.
-if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="main-origin-ahead" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >/dev/null 2>"$TMP_DIR/main-ahead.stderr"; then
+if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="main-origin-ahead" bash "$ROOT/scripts/shared/hermes-agent/hermes-agent-build" >/dev/null 2>"$TMP_DIR/main-ahead.stderr"; then
   fail 'build should fail when local main is ahead of origin/main'
 fi
 
 assert_file_contains 'Build requires main to be pushed and in sync with origin/main.' "$TMP_DIR/main-ahead.stderr" 'build should refuse to run from main when local commits are not pushed'
 
 # This main-branch case should stop the build when local main is behind origin/main.
-if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="main-origin-behind" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >/dev/null 2>"$TMP_DIR/main-behind.stderr"; then
+if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="main-origin-behind" bash "$ROOT/scripts/shared/hermes-agent/hermes-agent-build" >/dev/null 2>"$TMP_DIR/main-behind.stderr"; then
   fail 'build should fail when local main is behind origin/main'
 fi
 
 assert_file_contains 'Build requires main to be pushed and in sync with origin/main.' "$TMP_DIR/main-behind.stderr" 'build should refuse to run from main when local commits are missing'
 
 # This main-branch case should stop the build when local main has diverged from origin/main.
-if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="main-origin-diverged" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >/dev/null 2>"$TMP_DIR/main-diverged.stderr"; then
+if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="main-origin-diverged" bash "$ROOT/scripts/shared/hermes-agent/hermes-agent-build" >/dev/null 2>"$TMP_DIR/main-diverged.stderr"; then
   fail 'build should fail when local main has diverged from origin/main'
 fi
 
 assert_file_contains 'Build requires main to be pushed and in sync with origin/main.' "$TMP_DIR/main-diverged.stderr" 'build should refuse to run from main when history diverged'
 
 # This main-branch case should stop the build when no upstream is configured.
-if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="main-no-upstream" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >/dev/null 2>"$TMP_DIR/main-no-upstream.stderr"; then
+if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="main-no-upstream" bash "$ROOT/scripts/shared/hermes-agent/hermes-agent-build" >/dev/null 2>"$TMP_DIR/main-no-upstream.stderr"; then
   fail 'build should fail when main has no upstream configured'
 fi
 
 assert_file_contains 'Build requires main to track origin/main.' "$TMP_DIR/main-no-upstream.stderr" 'build should refuse to run from main when no upstream remote is configured'
 
 # This non-main case should allow a clean committed checkout even with no upstream configured.
-PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="local-only" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >"$TMP_DIR/non-main-no-upstream.stdout"
+PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="local-only" bash "$ROOT/scripts/shared/hermes-agent/hermes-agent-build" >"$TMP_DIR/non-main-no-upstream.stdout"
 assert_file_contains 'Built image: hermes-agent-0.10.0-' "$TMP_DIR/non-main-no-upstream.stdout" 'build should allow a clean local-only non-main branch'
 
 # This non-main case should reject remote-tracking feature branches.
-if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="feature-upstream" bash "$ROOT/scripts/agent/shared/hermes-agent-build" >/dev/null 2>"$TMP_DIR/non-main-upstream.stderr"; then
+if PATH="$FAKE_BIN:$PATH" HERMES_TEST_PODMAN_LOG="$PODMAN_LOG" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="feature-upstream" bash "$ROOT/scripts/shared/hermes-agent/hermes-agent-build" >/dev/null 2>"$TMP_DIR/non-main-upstream.stderr"; then
   fail 'build should reject non-main branches with upstreams'
 fi
 assert_file_contains 'Build only allows remote-tracking builds from main. Use a clean committed local worktree branch or main tracking origin/main.' "$TMP_DIR/non-main-upstream.stderr" 'build should explain non-main upstream branch failures'
 
 # This broken-worktree case should explain cross-namespace gitdir failures clearly for a managed worktree path.
 mkdir -p "$TMP_DIR/.worktrees/fix-matrix-device-backport-2"
-if PATH="$FAKE_BIN:$PATH" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="broken-worktree" bash -c 'set -euo pipefail; source "$1"; hermes_require_clean_committed_checkout "$2"' _ "$ROOT/lib/shell/shared/common.sh" "$TMP_DIR/.worktrees/fix-matrix-device-backport-2" >/dev/null 2>"$TMP_DIR/broken-worktree.stderr"; then
+if PATH="$FAKE_BIN:$PATH" HERMES_TEST_GIT_LOG="$GIT_LOG" HERMES_TEST_GIT_MODE="broken-worktree" bash -c 'set -euo pipefail; source "$1"; hermes_require_clean_committed_checkout "$2"' _ "$ROOT/scripts/shared/hermes-agent/common.sh" "$TMP_DIR/.worktrees/fix-matrix-device-backport-2" >/dev/null 2>"$TMP_DIR/broken-worktree.stderr"; then
   fail 'build helper should fail when the checkout points at a missing managed worktree gitdir path'
 fi
 
@@ -587,12 +629,12 @@ WORKTREE_TMP="$TMP_DIR/worktree-paths"
 mkdir -p "$WORKTREE_TMP/.git/worktrees/feature" "$WORKTREE_TMP/.worktrees/feature"
 printf 'gitdir: /workspace/project/.git/worktrees/feature\n' >"$WORKTREE_TMP/.worktrees/feature/.git"
 
-rewritten_gitfile="$(bash -c 'set -euo pipefail; source "$1"; hermes_repair_relative_worktree_gitdir "$2"; cat "$2/.git"' _ "$ROOT/lib/shell/shared/common.sh" "$WORKTREE_TMP/.worktrees/feature")"
+rewritten_gitfile="$(bash -c 'set -euo pipefail; source "$1"; hermes_repair_relative_worktree_gitdir "$2"; cat "$2/.git"' _ "$ROOT/scripts/shared/hermes-agent/common.sh" "$WORKTREE_TMP/.worktrees/feature")"
 assert_equals 'gitdir: /workspace/project/.git/worktrees/feature' "$rewritten_gitfile" 'build helper should leave managed worktree gitdir links untouched'
 
 printf 'gitdir: /foreign/repo/.git/worktrees/feature\n' >"$WORKTREE_TMP/.worktrees/feature/.git"
 
-unchanged_gitfile="$(bash -c 'set -euo pipefail; source "$1"; hermes_repair_relative_worktree_gitdir "$2"; cat "$2/.git"' _ "$ROOT/lib/shell/shared/common.sh" "$WORKTREE_TMP/.worktrees/feature")"
+unchanged_gitfile="$(bash -c 'set -euo pipefail; source "$1"; hermes_repair_relative_worktree_gitdir "$2"; cat "$2/.git"' _ "$ROOT/scripts/shared/hermes-agent/common.sh" "$WORKTREE_TMP/.worktrees/feature")"
 assert_equals 'gitdir: /foreign/repo/.git/worktrees/feature' "$unchanged_gitfile" 'build helper should leave foreign absolute worktree links untouched'
 
 # This real git repo checks that executable-bit changes still count as dirty git changes.
@@ -606,7 +648,7 @@ git -C "$GIT_TMP" add tracked.txt >/dev/null 2>&1
 git -C "$GIT_TMP" commit -m 'test' >/dev/null 2>&1
 chmod +x "$GIT_TMP/tracked.txt"
 
-if bash -lc 'set -euo pipefail; ROOT="$2"; source "$1"; hermes_require_clean_committed_checkout "$3"' _ "$ROOT/lib/shell/shared/common.sh" "$ROOT" "$GIT_TMP" >/dev/null 2>"$TMP_DIR/mode-change.stderr"; then
+if bash -lc 'set -euo pipefail; ROOT="$2"; source "$1"; hermes_require_clean_committed_checkout "$3"' _ "$ROOT/scripts/shared/hermes-agent/common.sh" "$ROOT" "$GIT_TMP" >/dev/null 2>"$TMP_DIR/mode-change.stderr"; then
   fail 'build should fail when git records an executable-bit change'
 fi
 
